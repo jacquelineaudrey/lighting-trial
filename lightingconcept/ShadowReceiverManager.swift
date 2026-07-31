@@ -1,33 +1,27 @@
 import RealityKit
-import UIKit
 
 final class ShadowReceiverManager {
-    private var flatFallbackReceiver: ModelEntity?
+    private var shadowReceiver: ModelEntity?
 
     func setupReceiver(on anchor: AnchorEntity, usesFlatFallback: Bool) {
-        guard usesFlatFallback, flatFallbackReceiver == nil else {
-            if !usesFlatFallback {
-                print("[ARShadowLearning] Shadow receiver setup: LiDAR scene-understanding mesh mode")
-            }
+        guard shadowReceiver == nil else {
             return
         }
 
-        var material = PhysicallyBasedMaterial()
-        material.baseColor = .init(tint: UIColor(white: 0.55, alpha: 0.04))
-        material.roughness = .init(floatLiteral: 1)
-        material.blending = .transparent(opacity: 0.04)
-
-        let plane = ModelEntity(mesh: .generatePlane(width: 1.6, depth: 1.6), materials: [material])
-        plane.name = "Flat fallback shadow receiver"
-        plane.position.y = 0.001
-        plane.components.set(GroundingShadowComponent(castsShadow: false, receivesShadow: true))
+        let plane = ModelEntity(
+            mesh: .generatePlane(width: 2.4, depth: 2.4),
+            materials: [OcclusionMaterial(receivesDynamicLighting: true)]
+        )
+        plane.name = usesFlatFallback ? "Stable flat shadow receiver fallback" : "Stable AR shadow receiver"
+        plane.position.y = -0.002
+        plane.components.set(DynamicLightShadowComponent(castsShadow: false))
         anchor.addChild(plane)
-        flatFallbackReceiver = plane
-        print("[ARShadowLearning] Shadow receiver setup: flat fallback receiver")
+        shadowReceiver = plane
+        print("[ARShadowLearning] Shadow receiver setup: stable occlusion shadow catcher")
     }
 
     func reset() {
-        flatFallbackReceiver?.removeFromParent()
-        flatFallbackReceiver = nil
+        shadowReceiver?.removeFromParent()
+        shadowReceiver = nil
     }
 }

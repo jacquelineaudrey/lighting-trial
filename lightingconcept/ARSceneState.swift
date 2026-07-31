@@ -104,16 +104,16 @@ struct LightConfiguration: Identifiable, Equatable {
             name: "Light \(index)",
             type: .spot,
             color: Color(red: 1.0, green: 0.86, blue: 0.62),
-            intensity: 850,
+            intensity: 3200,
             position: SIMD3<Float>(-0.28, 0.48, 0.22),
             yawDegrees: -35,
             pitchDegrees: -42,
-            beamSpread: .medium
+            beamSpread: .spread
         )
     }
 }
 
-struct ShadowInfo {
+struct ShadowInfo: Equatable {
     var lightType: String = "Spot"
     var intensity: Float = 0
     var lightHeight: Float = 0
@@ -122,4 +122,18 @@ struct ShadowInfo {
     var beamSpread: String = "Medium"
     var shadowDirectionDegrees: Float?
     var shadowLength: Float?
+}
+
+struct SceneUpdateSignature: Equatable {
+    var objectType: LearningObjectType
+    var objectScale: Float
+    var objectYawDegrees: Float
+    var lights: [LightConfiguration]
+    var selectedLightID: UUID
+    var showLightDirection: Bool
+    var showLightRays: Bool
+    var showProjectionLines: Bool
+    var showGroundProjection: Bool
+    var showShadowLabels: Bool
+    var showShadowInformation: Bool
 }
