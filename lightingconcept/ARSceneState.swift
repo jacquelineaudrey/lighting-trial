@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import RealityKit
 
@@ -113,7 +114,7 @@ struct LightConfiguration: Identifiable, Equatable {
     }
 }
 
-struct ShadowInfo {
+struct ShadowInfo: Equatable {
     var lightType: String = "Spot"
     var intensity: Float = 0
     var lightHeight: Float = 0
