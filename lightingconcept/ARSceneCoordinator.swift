@@ -16,6 +16,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private let projectionRenderer = ProjectionLineRenderer()
     private let annotationManager = ShadowAnnotationManager()
     private let receiverManager = ShadowReceiverManager()
+    private let collisionManager = CollisionManager()
+    private static let lightObstacleRadius: Float = 0.07
     private var usesSceneReconstruction = false
 
     private var lastObjectType: LearningObjectType?
@@ -26,6 +28,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var lastResetSceneFlag = false
     private var lastRescanFlag = false
     private var defaultObjectPosition = SIMD3<Float>(0, 0, 0)
+    private var verticalLightPanStartHeight: Float?
     private var lastAppliedObjectYawDegrees: Float?
 
     init(viewModel: ARSceneViewModel) {
@@ -75,6 +78,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         if lastObjectType != viewModel.selectedObjectType || lastTexture != viewModel.selectedTexture {
             replaceObject(on: anchor)
             lastObjectType = viewModel.selectedObjectType
+            lastTexture = viewModel.selectedTexture
         } else if let objectEntity {
             applyObjectTransform(to: objectEntity)
         }
@@ -247,7 +251,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private func replaceObject(on anchor: AnchorEntity) {
         objectEntity?.removeFromParent()
-        let object = ObjectFactory.makeObject(type: viewModel.selectedObjectType)
+        let object = ObjectFactory.makeObject(type: viewModel.selectedObjectType, texture: viewModel.selectedTexture)
         applyObjectTransform(to: object)
         anchor.addChild(object)
         objectEntity = object
@@ -329,20 +333,20 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                 let entities = LightFactory.makeLight(configuration: effectiveLight, selected: selected)
                 anchor.addChild(entities.root)
                 lightEntities[light.id] = entities
+                collisionManager.registerObstacle(id: light.id, position: light.position, radius: Self.lightObstacleRadius)
                 viewModel.debugLog("Light creation: \(effectiveLight.name)")
             }
         }
     }
 
     private func updateEducationalOverlays() {
-        guard let objectEntity else { return }
+        guard objectEntity != nil else { return }
         let objectHeight = scaledObjectHeight
         let selectedLight = effectiveLightConfiguration(for: viewModel.selectedLight)
         projectionRenderer.update(
             objectType: viewModel.selectedObjectType,
             objectPosition: objectGroundPosition,
             objectHeight: objectHeight,
-            objectYawDegrees: viewModel.objectYawDegrees,
             selectedLight: selectedLight,
             toggles: OverlayToggles(
                 showLightDirection: viewModel.showLightDirection,
@@ -361,7 +365,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func updateShadowInfo() {
-        guard let objectEntity else { return }
+        guard objectEntity != nil else { return }
         let light = effectiveLightConfiguration(for: viewModel.selectedLight)
         let objectHeight = scaledObjectHeight
         let nextInfo = ShadowInfo(
@@ -386,6 +390,10 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
+    private var objectGroundPosition: SIMD3<Float> {
+        defaultObjectPosition
+    }
+
     private func resetObjectPosition() {
         defaultObjectPosition = .zero
         if let objectEntity {
@@ -396,37 +404,6 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         viewModel.debugLog("Object position reset")
     }
 
-    /// `defaultObjectPosition` and collision coordinates describe the contact
-    /// point on the floor; the model itself is raised by half its height.
-    private func renderedObjectPosition(for groundPosition: SIMD3<Float>) -> SIMD3<Float> {
-        groundPosition + SIMD3<Float>(0, ObjectFactory.groundOffset(for: viewModel.selectedObjectType), 0)
-    }
-
-    private func applyObjectTransform(to object: ModelEntity, groundPosition: SIMD3<Float>) {
-        object.position = renderedObjectPosition(for: groundPosition)
-        object.orientation = simd_quatf(
-            angle: viewModel.objectYawDegrees * .pi / 180,
-            axis: SIMD3<Float>(0, 1, 0)
-        )
-    }
-
-    private func groundPosition(of object: ModelEntity) -> SIMD3<Float> {
-        SIMD3<Float>(object.position.x, 0, object.position.z)
-    }
-
-    private func effectiveLightConfiguration(for light: LightConfiguration) -> LightConfiguration {
-        guard light.type == .spot, let objectEntity else { return light }
-
-        var adjusted = light
-        let objectCenter = objectEntity.position
-        let delta = objectCenter - light.position
-        let horizontalDistance = sqrt(delta.x * delta.x + delta.z * delta.z)
-        guard horizontalDistance > 0.001 || abs(delta.y) > 0.001 else { return adjusted }
-
-        adjusted.yawDegrees = atan2(delta.x, -delta.z) * 180 / .pi
-        adjusted.pitchDegrees = atan2(delta.y, horizontalDistance) * 180 / .pi
-        return adjusted
-    }
 
     private func resetScene() {
         sceneAnchor?.removeFromParent()
@@ -439,6 +416,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         annotationManager.clear()
         lastSceneSignature = nil
         lastObjectType = nil
+        lastTexture = nil
         viewModel.isObjectPlaced = false
         viewModel.surfaceState = .found
         viewModel.debugLog("Scene reset")
@@ -455,6 +433,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private func currentSceneSignature() -> SceneUpdateSignature {
         SceneUpdateSignature(
             objectType: viewModel.selectedObjectType,
+            selectedTexture: viewModel.selectedTexture,
             objectScale: viewModel.objectScale,
             objectYawDegrees: viewModel.objectYawDegrees,
             lights: viewModel.lights,

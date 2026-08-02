@@ -127,6 +127,7 @@ struct ShadowInfo: Equatable {
 
 struct SceneUpdateSignature: Equatable {
     var objectType: LearningObjectType
+    var selectedTexture: MaterialTexture
     var objectScale: Float
     var objectYawDegrees: Float
     var lights: [LightConfiguration]

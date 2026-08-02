@@ -5,6 +5,7 @@ import SwiftUI
 
 final class ARSceneViewModel: ObservableObject {
     @Published var selectedObjectType: LearningObjectType = .cube
+    @Published var selectedTexture: MaterialTexture = .defaultGrid
     @Published var objectScale: Float = 1
     @Published var objectYawDegrees: Float = 0
     @Published var interactionMode: InteractionMode = .moveObject
@@ -23,6 +24,7 @@ final class ARSceneViewModel: ObservableObject {
 
     @Published var selectedConcept: ShadowConcept?
     @Published var shadowInfo = ShadowInfo()
+    @Published var collisionWarning: String?
 
     @Published var pendingResetObject = false
     @Published var pendingResetScene = false
@@ -60,6 +62,11 @@ final class ARSceneViewModel: ObservableObject {
     func updateSelectedLight(_ update: (inout LightConfiguration) -> Void) {
         guard let index = lights.firstIndex(where: { $0.id == selectedLightID }) else { return }
         update(&lights[index])
+        sceneRevision += 1
+    }
+
+    func selectTexture(_ texture: MaterialTexture) {
+        selectedTexture = texture
         sceneRevision += 1
     }
 
