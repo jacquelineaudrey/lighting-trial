@@ -16,6 +16,12 @@ enum ObjectFactory {
         case .sphere:
             mesh = .generateSphere(radius: sphereRadius)
             height = sphereRadius * 2
+        case .cylinder:
+            mesh = .generateCylinder(height: cubeSize, radius: sphereRadius)
+            height = cubeSize
+        case .cone:
+            mesh = .generateCone(height: cubeSize, radius: sphereRadius)
+            height = cubeSize
         }
 
         let material = texture.makeMaterial()
@@ -33,6 +39,8 @@ enum ObjectFactory {
             cubeSize
         case .sphere:
             sphereRadius * 2
+        case .cylinder, .cone:
+            cubeSize
         }
     }
 

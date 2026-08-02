@@ -27,22 +27,27 @@ final class ShadowAnnotationManager {
         guard visible else { return }
 
         let concepts: [(ShadowConcept, SIMD3<Float>)]
+        let lightSide = horizontalDirection(from: objectPosition, to: selectedLight.position)
+        let shadowSide = -lightSide
+        let sideLift = SIMD3<Float>(0, objectHeight * 0.55, 0)
+        let topLift = SIMD3<Float>(0, objectHeight * 0.82, 0)
         if objectType == .cube {
             concepts = [
-                (.lightSide, objectPosition + SIMD3<Float>(-0.08, objectHeight * 0.72, 0)),
-                (.shadowSide, objectPosition + SIMD3<Float>(0.08, objectHeight * 0.5, 0)),
+                (.lightSide, objectPosition + lightSide * 0.11 + topLift),
+                (.shadowSide, objectPosition + shadowSide * 0.11 + sideLift),
                 (.castShadow, objectPosition + shadowOffset(light: selectedLight, object: objectPosition, scale: 0.24)),
-                (.contactShadow, objectPosition + SIMD3<Float>(0, 0.025, 0.08))
+                (.contactShadow, objectPosition + shadowSide * 0.08 + SIMD3<Float>(0, 0.025, 0))
             ]
         } else {
+            let perpendicular = SIMD3<Float>(-lightSide.z, 0, lightSide.x)
             concepts = [
-                (.highlight, objectPosition + SIMD3<Float>(-0.05, objectHeight * 0.86, 0)),
-                (.lightSide, objectPosition + SIMD3<Float>(-0.08, objectHeight * 0.62, 0)),
-                (.terminator, objectPosition + SIMD3<Float>(0, objectHeight * 0.72, 0.07)),
-                (.coreShadow, objectPosition + SIMD3<Float>(0.07, objectHeight * 0.5, 0)),
-                (.reflectedLight, objectPosition + SIMD3<Float>(0.04, objectHeight * 0.34, 0.06)),
+                (.highlight, objectPosition + lightSide * 0.07 + topLift),
+                (.lightSide, objectPosition + lightSide * 0.1 + sideLift),
+                (.terminator, objectPosition + perpendicular * 0.09 + SIMD3<Float>(0, objectHeight * 0.68, 0)),
+                (.coreShadow, objectPosition + shadowSide * 0.1 + SIMD3<Float>(0, objectHeight * 0.5, 0)),
+                (.reflectedLight, objectPosition + shadowSide * 0.06 + SIMD3<Float>(0, objectHeight * 0.32, 0)),
                 (.castShadow, objectPosition + shadowOffset(light: selectedLight, object: objectPosition, scale: 0.24)),
-                (.contactShadow, objectPosition + SIMD3<Float>(0, 0.025, 0.08))
+                (.contactShadow, objectPosition + shadowSide * 0.08 + SIMD3<Float>(0, 0.025, 0))
             ]
         }
 
@@ -65,8 +70,19 @@ final class ShadowAnnotationManager {
         label.name = "Label: \(concept.rawValue)"
         label.position = position
         label.scale = SIMD3<Float>(repeating: 0.6)
+        label.components.set(DynamicLightShadowComponent(castsShadow: false))
+        label.components.set(GroundingShadowComponent(castsShadow: false, receivesShadow: false))
         root.addChild(label)
         labels.append(label)
+    }
+
+    private func horizontalDirection(from start: SIMD3<Float>, to end: SIMD3<Float>) -> SIMD3<Float> {
+        let direction = SIMD3<Float>(end.x - start.x, 0, end.z - start.z)
+        let length = simd_length(direction)
+        guard length > 0.0001 else {
+            return SIMD3<Float>(-1, 0, 0)
+        }
+        return direction / length
     }
 
     private func shadowOffset(light: LightConfiguration, object: SIMD3<Float>, scale: Float) -> SIMD3<Float> {

@@ -4,6 +4,8 @@ struct ContentView: View {
     @StateObject private var viewModel = ARSceneViewModel()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isControlInspectorPresented = true
+    @State private var isControlSheetPresented = true
+    @State private var controlSheetDetent = PresentationDetent.medium
 
     var body: some View {
         Group {
@@ -26,16 +28,29 @@ struct ContentView: View {
                     }
             } else {
                 sceneCanvas
-                    .overlay(alignment: .bottom) {
+                    .onAppear {
+                        isControlSheetPresented = true
+                    }
+                    .sheet(isPresented: $isControlSheetPresented) {
                         SceneControlPanel(viewModel: viewModel)
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 10)
+                            .presentationDetents([.height(170), .medium, .large], selection: $controlSheetDetent)
+                            .presentationDragIndicator(.visible)
+                            .presentationBackground(.regularMaterial)
+                            .presentationBackgroundInteraction(.enabled(upThrough: .height(170)))
+                            .presentationContentInteraction(.scrolls)
+                            .interactiveDismissDisabled()
                     }
             }
         }
-        .sheet(item: $viewModel.selectedConcept) { concept in
-            ShadowConceptExplanationView(concept: concept)
-                .presentationDetents([.height(180)])
+        .alert(
+            viewModel.selectedConcept?.rawValue ?? "Shadow Concept",
+            isPresented: selectedConceptAlertBinding
+        ) {
+            Button("OK", role: .cancel) {
+                viewModel.selectedConcept = nil
+            }
+        } message: {
+            Text(viewModel.selectedConcept?.explanation ?? "")
         }
     }
 
@@ -44,13 +59,52 @@ struct ContentView: View {
             ARContainerView(viewModel: viewModel)
                 .ignoresSafeArea()
 
-            StatusBanner(
-                text: viewModel.collisionWarning ?? viewModel.surfaceGuidanceText,
-                isWarning: viewModel.collisionWarning != nil
-            )
+            VStack(spacing: 8) {
+                if viewModel.isLiDARAvailable, !viewModel.isObjectPlaced {
+                    LiDARScanProgressCard(viewModel: viewModel)
+                } else {
+                    StatusBanner(
+                        text: viewModel.collisionWarning ?? viewModel.surfaceGuidanceText,
+                        isWarning: viewModel.collisionWarning != nil
+                    )
+                }
+
+                if viewModel.isObjectPlaced || viewModel.surfaceState == .placed {
+                    InteractionModeControl(viewModel: viewModel)
+                }
+            }
             .padding(.top, 12)
             .padding(.horizontal)
         }
+    }
+}
+
+private extension ContentView {
+    var selectedConceptAlertBinding: Binding<Bool> {
+        Binding {
+            viewModel.selectedConcept != nil
+        } set: { isPresented in
+            if !isPresented {
+                viewModel.selectedConcept = nil
+            }
+        }
+    }
+}
+
+private struct InteractionModeControl: View {
+    @ObservedObject var viewModel: ARSceneViewModel
+
+    var body: some View {
+        Picker("Interaction Mode", selection: $viewModel.interactionMode) {
+            ForEach(InteractionMode.allCases) { mode in
+                Text(mode.rawValue).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 360)
+        .padding(8)
+        .background(.thinMaterial, in: Capsule())
+        .accessibilityLabel("Interaction Mode")
     }
 }
 
@@ -70,24 +124,32 @@ private struct StatusBanner: View {
     }
 }
 
-private struct ShadowConceptExplanationView: View {
-    let concept: ShadowConcept
+private struct LiDARScanProgressCard: View {
+    @ObservedObject var viewModel: ARSceneViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(concept.rawValue)
-                .font(.headline)
-            Text(concept.explanation)
-                .font(.body)
-            Spacer()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("LiDAR Surface Scan", systemImage: "cube.transparent")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text(viewModel.isReadyForPlacement ? "Ready" : "\(Int(viewModel.lidarPlacementProgress * 100))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            ProgressView(value: viewModel.lidarPlacementProgress)
+                .tint(viewModel.isReadyForPlacement ? .green : .cyan)
+
+            Text(viewModel.isReadyForPlacement
+                 ? "Area siap. Tap meja atau permukaan datar untuk menaruh object."
+                 : "Arahkan kamera perlahan ke meja, sisi benda, dan tepi permukaan. Area cyan adalah bagian yang sudah terbaca.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: 380)
     }
-}
-
-#Preview("iPhone") {
-    ContentView()
-}
-
-#Preview("iPad", traits: .fixedLayout(width: 1024, height: 768)) {
-    ContentView()
 }
