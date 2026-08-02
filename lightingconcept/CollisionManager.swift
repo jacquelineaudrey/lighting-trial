@@ -46,20 +46,26 @@ final class CollisionManager {
             var movedThisPass = false
 
             for (id, obstacle) in obstacles where id != excludingID {
-                let delta = SIMD3<Float>(resolved.x - obstacle.position.x, 0, resolved.z - obstacle.position.z)
-                let distance = simd_length(delta)
-                let minimumDistance = movingRadius + obstacle.radius
+                let combinedRadius = movingRadius + obstacle.radius
+                let verticalDistance = abs(resolved.y - obstacle.position.y)
+                guard verticalDistance < combinedRadius else { continue }
 
-                guard distance < minimumDistance - 0.0001 else { continue }
+                let delta = SIMD3<Float>(resolved.x - obstacle.position.x, 0, resolved.z - obstacle.position.z)
+                let horizontalDistance = simd_length(delta)
+                let minimumHorizontalDistance = sqrt(
+                    max(combinedRadius * combinedRadius - verticalDistance * verticalDistance, 0)
+                )
+
+                guard horizontalDistance < minimumHorizontalDistance - 0.0001 else { continue }
                 collided = true
                 movedThisPass = true
 
-                if distance > 0.0001 {
-                    let pushDirection = delta / distance
-                    resolved.x = obstacle.position.x + pushDirection.x * minimumDistance
-                    resolved.z = obstacle.position.z + pushDirection.z * minimumDistance
+                if horizontalDistance > 0.0001 {
+                    let pushDirection = delta / horizontalDistance
+                    resolved.x = obstacle.position.x + pushDirection.x * minimumHorizontalDistance
+                    resolved.z = obstacle.position.z + pushDirection.z * minimumHorizontalDistance
                 } else {
-                    resolved.x = obstacle.position.x + minimumDistance
+                    resolved.x = obstacle.position.x + minimumHorizontalDistance
                 }
             }
 

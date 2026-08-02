@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SceneControlPanel: View {
     @ObservedObject var viewModel: ARSceneViewModel
+    var isInspector = false
     @State private var selectedTab = ControlTab.object
 
     var body: some View {
@@ -28,7 +29,7 @@ struct SceneControlPanel: View {
                 }
             }
             .scrollIndicators(.hidden)
-            .frame(maxHeight: 330)
+            .frame(maxHeight: isInspector ? .infinity : 330)
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -74,18 +75,14 @@ struct SceneControlPanel: View {
                         Text(light.name).tag(light.id)
                     }
                 }
-                Button {
-                    viewModel.addLight()
-                } label: {
-                    Image(systemName: "plus")
-                }
+                Button("Add Light", systemImage: "plus", action: viewModel.addLight)
+                    .labelStyle(.iconOnly)
+                    .frame(minWidth: 44, minHeight: 44)
                 .disabled(viewModel.lights.count >= 3)
 
-                Button {
-                    viewModel.removeSelectedLight()
-                } label: {
-                    Image(systemName: "minus")
-                }
+                Button("Remove Light", systemImage: "minus", action: viewModel.removeSelectedLight)
+                    .labelStyle(.iconOnly)
+                    .frame(minWidth: 44, minHeight: 44)
                 .disabled(viewModel.lights.count <= 1)
             }
 
