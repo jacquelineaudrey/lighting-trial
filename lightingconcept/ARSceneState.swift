@@ -105,11 +105,11 @@ struct LightConfiguration: Identifiable, Equatable {
             name: "Light \(index)",
             type: .spot,
             color: Color(red: 1.0, green: 0.86, blue: 0.62),
-            intensity: 850,
+            intensity: 3200,
             position: SIMD3<Float>(-0.28, 0.48, 0.22),
             yawDegrees: -35,
             pitchDegrees: -42,
-            beamSpread: .medium
+            beamSpread: .spread
         )
     }
 }

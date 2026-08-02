@@ -15,6 +15,7 @@ final class ARSceneViewModel: ObservableObject {
 
     @Published var selectedObjectType: LearningObjectType = .cube
     @Published var selectedTexture: MaterialTexture = .defaultGrid
+    @Published var objectYawDegrees: Float = 0
 
     @Published var interactionMode: InteractionMode = .moveObject
     @Published var surfaceState: SurfaceDetectionState = .scanning

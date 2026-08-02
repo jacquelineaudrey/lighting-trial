@@ -17,7 +17,7 @@ enum ShadowGeometryCalculator {
     ) -> SIMD3<Float>? {
         guard abs(rayDirection.y) > 0.0001 else { return nil }
         let t = (planeY - rayOrigin.y) / rayDirection.y
-        guard t > 0 else { return nil }
+        guard t > 0, t.isFinite, t <= maximumProjectionDistance else { return nil }
         return rayOrigin + rayDirection * t
     }
 
@@ -62,7 +62,8 @@ enum ShadowGeometryCalculator {
             0,
             objectGroundPosition.z - lightPosition.z
         ))
-        let heightAboveObject = lightPosition.y - objectGroundPosition.y
+        let objectTopY = objectGroundPosition.y + objectHeight
+        let heightAboveObject = lightPosition.y - objectTopY
         guard heightAboveObject > 0.01 else { return nil }
         let length = (objectHeight * horizontalDistance) / heightAboveObject
         return min(length, maximumProjectionDistance)
@@ -73,17 +74,24 @@ enum ShadowGeometryCalculator {
     /// lines for the cube object.
     static func cubeProjectionPoints(
         lightPosition: SIMD3<Float>,
-        cubeCenter: SIMD3<Float>
+        cubeCenter: SIMD3<Float>,
+        yawDegrees: Float = 0
     ) -> [SIMD3<Float>] {
         let half = ObjectFactory.cubeSize / 2
-        let topVertices = [
-            cubeCenter + SIMD3<Float>(half, half, half),
-            cubeCenter + SIMD3<Float>(-half, half, half),
-            cubeCenter + SIMD3<Float>(half, half, -half),
-            cubeCenter + SIMD3<Float>(-half, half, -half)
+        let rotation = simd_quatf(angle: yawDegrees * .pi / 180, axis: SIMD3<Float>(0, 1, 0))
+        let localVertices = [
+            SIMD3<Float>( half,  half,  half),
+            SIMD3<Float>(-half,  half,  half),
+            SIMD3<Float>( half,  half, -half),
+            SIMD3<Float>(-half,  half, -half),
+            SIMD3<Float>( half, -half,  half),
+            SIMD3<Float>(-half, -half,  half),
+            SIMD3<Float>( half, -half, -half),
+            SIMD3<Float>(-half, -half, -half)
         ]
 
-        return topVertices.compactMap { vertex in
+        return localVertices.compactMap { localVertex in
+            let vertex = cubeCenter + rotation.act(localVertex)
             let direction = simd_normalize(vertex - lightPosition)
             return rayPlaneIntersection(rayOrigin: lightPosition, rayDirection: direction)
         }

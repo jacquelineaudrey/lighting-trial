@@ -163,6 +163,19 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
 
+                if viewModel.selectedObjectType == .cube {
+                    VStack(alignment: .leading) {
+                        Text("Cube rotation: \(Int(viewModel.objectYawDegrees))°").font(.caption)
+                        Slider(value: Binding(
+                            get: { viewModel.objectYawDegrees },
+                            set: { newValue in
+                                viewModel.objectYawDegrees = newValue
+                                viewModel.bumpRevision()
+                            }
+                        ), in: -180...180, step: 1)
+                    }
+                }
+
                 if isRegularWidth {
                     VStack(alignment: .leading, spacing: 8) {
                         Button("Reset Object") { viewModel.pendingResetObject.toggle() }
@@ -240,7 +253,7 @@ struct ContentView: View {
                     Slider(value: Binding(
                         get: { viewModel.selectedLight.intensity },
                         set: { newValue in viewModel.updateSelectedLight { $0.intensity = newValue } }
-                    ), in: 100...2000)
+                    ), in: 100...6000)
                 }
 
                 VStack(alignment: .leading) {
@@ -248,7 +261,23 @@ struct ContentView: View {
                     Slider(value: Binding(
                         get: { viewModel.selectedLight.position.y },
                         set: { newValue in viewModel.updateSelectedLight { $0.position.y = newValue } }
-                    ), in: 0.1...1.0)
+                    ), in: -0.2...2.0)
+                }
+
+                VStack(alignment: .leading) {
+                    Text("X position: \(String(format: "%.2f", viewModel.selectedLight.position.x))m").font(.caption)
+                    Slider(value: Binding(
+                        get: { viewModel.selectedLight.position.x },
+                        set: { newValue in viewModel.updateSelectedLight { $0.position.x = newValue } }
+                    ), in: -0.9...0.9)
+                }
+
+                VStack(alignment: .leading) {
+                    Text("Z position: \(String(format: "%.2f", viewModel.selectedLight.position.z))m").font(.caption)
+                    Slider(value: Binding(
+                        get: { viewModel.selectedLight.position.z },
+                        set: { newValue in viewModel.updateSelectedLight { $0.position.z = newValue } }
+                    ), in: -0.9...0.9)
                 }
 
                 Picker("Beam", selection: Binding(

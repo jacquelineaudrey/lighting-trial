@@ -22,7 +22,7 @@ enum ObjectFactory {
         // Needed for the new collision feature: lets CollisionManager /
         // RealityKit reason about this entity's footprint.
         entity.generateCollisionShapes(recursive: true)
-        entity.components.set(GroundingShadowComponent(castsShadow: true))
+        entity.components.set(DynamicLightShadowComponent(castsShadow: true))
 
         return entity
     }
@@ -51,5 +51,19 @@ enum ObjectFactory {
         case .cube: cubeSize * 0.75 // half-diagonal-ish, a bit generous
         case .sphere: sphereRadius
         }
+    }
+
+    static func cubeVertices(center: SIMD3<Float>) -> [SIMD3<Float>] {
+        let half = cubeSize / 2
+        return [
+            center + SIMD3<Float>( half,  half,  half),
+            center + SIMD3<Float>(-half,  half,  half),
+            center + SIMD3<Float>( half,  half, -half),
+            center + SIMD3<Float>(-half,  half, -half),
+            center + SIMD3<Float>( half, -half,  half),
+            center + SIMD3<Float>(-half, -half,  half),
+            center + SIMD3<Float>( half, -half, -half),
+            center + SIMD3<Float>(-half, -half, -half)
+        ]
     }
 }

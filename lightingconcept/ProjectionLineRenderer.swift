@@ -35,6 +35,7 @@ final class ProjectionLineRenderer {
         objectType: LearningObjectType,
         objectPosition: SIMD3<Float>,
         objectHeight: Float,
+        objectYawDegrees: Float,
         selectedLight: LightConfiguration,
         toggles: OverlayToggles
     ) {
@@ -42,20 +43,33 @@ final class ProjectionLineRenderer {
         overlayRoot.children.removeAll()
 
         if toggles.showLightDirection {
-            addLine(to: overlayRoot, from: selectedLight.position, to: objectPosition, color: .systemYellow, thickness: 0.004)
+            let target = objectPosition + SIMD3<Float>(0, objectHeight / 2, 0)
+            addLine(to: overlayRoot, from: selectedLight.position, to: target, color: .systemYellow, thickness: 0.004)
         }
 
-        if toggles.showLightRays, objectType == .cube {
+        if toggles.showLightRays {
+            let targetCenter = objectPosition + SIMD3<Float>(0, objectHeight / 2, 0)
+            let offsets: [SIMD3<Float>] = [
+                SIMD3<Float>(0, 0, 0),
+                SIMD3<Float>(0.04, 0.02, 0),
+                SIMD3<Float>(-0.04, 0.02, 0),
+                SIMD3<Float>(0, -0.02, 0.04)
+            ]
+            for offset in offsets {
+                addLine(to: overlayRoot, from: selectedLight.position, to: targetCenter + offset, color: .systemOrange, thickness: 0.0025)
+            }
+        }
+
+        if toggles.showProjectionLines, objectType == .cube {
             let cubeCenter = SIMD3<Float>(objectPosition.x, ObjectFactory.cubeSize / 2, objectPosition.z)
             let points = ShadowGeometryCalculator.cubeProjectionPoints(
                 lightPosition: selectedLight.position,
-                cubeCenter: cubeCenter
+                cubeCenter: cubeCenter,
+                yawDegrees: objectYawDegrees
             )
             for point in points {
-                addSphere(to: overlayRoot, at: point, color: .systemOrange, radius: 0.006)
-                if toggles.showProjectionLines {
-                    addLine(to: overlayRoot, from: selectedLight.position, to: point, color: .systemOrange, thickness: 0.0025)
-                }
+                addSphere(to: overlayRoot, at: point, color: .systemPurple, radius: 0.006)
+                addLine(to: overlayRoot, from: selectedLight.position, to: point, color: .systemPurple, thickness: 0.0025)
             }
         }
 

@@ -43,10 +43,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         self.arView = arView
         arView.automaticallyConfigureSession = false
         arView.environment.lighting.intensityExponent = 0
-        arView.renderOptions.remove(.disableMotionBlur)
-        // On LiDAR devices, RealityKit uses the reconstructed room mesh to
-        // hide virtual content correctly behind real walls and furniture.
-        arView.environment.sceneUnderstanding.options.insert(.occlusion)
+        arView.renderOptions.insert(.disableMotionBlur)
+        arView.renderOptions.insert(.disableDepthOfField)
+        arView.renderOptions.insert(.disablePersonOcclusion)
+        arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
+        arView.environment.sceneUnderstanding.options.insert(.collision)
+        arView.environment.sceneUnderstanding.options.insert(.physics)
 
         arView.session.delegate = self
         addCoachingOverlay(to: arView)
@@ -79,6 +81,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             replaceObject(on: anchor)
             lastObjectType = viewModel.selectedObjectType
             lastTexture = viewModel.selectedTexture
+        } else if let objectEntity {
+            applyObjectTransform(to: objectEntity, groundPosition: defaultObjectPosition)
         }
 
         syncLights(on: anchor)
@@ -137,6 +141,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         configuration.environmentTexturing = .automatic
         if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
             configuration.sceneReconstruction = .meshWithClassification
+            viewModel.debugLog("LiDAR scene reconstruction enabled")
+        } else {
+            viewModel.debugLog("LiDAR scene reconstruction unavailable")
         }
 
         let options: ARSession.RunOptions = resetTracking ? [.resetTracking, .removeExistingAnchors] : []
@@ -189,7 +196,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             guard let startHeight = verticalLightPanStartHeight else { return }
             let translation = gesture.translation(in: arView)
             // Dragging upward raises the light; 500 points spans one metre.
-            let height = clamped(startHeight - Float(translation.y) / 500, 0.05, 2.0)
+            let height = clamped(startHeight - Float(translation.y) / 500, -0.2, 2.0)
             viewModel.updateSelectedLight { $0.position.y = height }
             synchronizeScene()
         case .ended, .cancelled, .failed:
@@ -237,7 +244,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private func replaceObject(on anchor: AnchorEntity) {
         objectEntity?.removeFromParent()
         let object = ObjectFactory.makeObject(type: viewModel.selectedObjectType, texture: viewModel.selectedTexture)
-        object.position = renderedObjectPosition(for: defaultObjectPosition)
+        applyObjectTransform(to: object, groundPosition: defaultObjectPosition)
         anchor.addChild(object)
         objectEntity = object
 
@@ -268,7 +275,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         localPosition = resolution.position
         localPosition.y = 0
 
-        objectEntity.position = renderedObjectPosition(for: localPosition)
+        applyObjectTransform(to: objectEntity, groundPosition: localPosition)
         defaultObjectPosition = localPosition
         collisionManager.updatePosition(id: objectObstacleID, position: localPosition)
         viewModel.collisionWarning = resolution.didCollide ? "Object blocked by another object" : nil
@@ -286,8 +293,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             result.worldTransform.columns.3.z
         )
         var localPosition = anchor.convert(position: worldPosition, from: nil)
-        localPosition.x = clamped(localPosition.x, -0.7, 0.7)
-        localPosition.z = clamped(localPosition.z, -0.7, 0.7)
+        localPosition.x = clamped(localPosition.x, -0.9, 0.9)
+        localPosition.z = clamped(localPosition.z, -0.9, 0.9)
 
         let selectedID = viewModel.selectedLightID
         let resolution = collisionManager.resolvedPosition(
@@ -299,8 +306,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         viewModel.collisionWarning = resolution.didCollide ? "Light blocked by another object" : nil
 
         viewModel.updateSelectedLight { light in
-            light.position.x = clamped(localPosition.x, -0.7, 0.7)
-            light.position.z = clamped(localPosition.z, -0.7, 0.7)
+            light.position.x = clamped(localPosition.x, -0.9, 0.9)
+            light.position.z = clamped(localPosition.z, -0.9, 0.9)
         }
         collisionManager.updatePosition(id: selectedID, position: viewModel.selectedLight.position)
         synchronizeScene()
@@ -317,22 +324,23 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
 
         for light in viewModel.lights {
+            let effectiveLight = effectiveLightConfiguration(for: light)
             let selected = light.id == viewModel.selectedLightID
             if let entities = lightEntities[light.id] {
                 LightFactory.update(
                     light: entities.light,
                     marker: entities.marker,
                     ring: entities.selectionRing,
-                    configuration: light,
+                    configuration: effectiveLight,
                     selected: selected
                 )
                 collisionManager.updatePosition(id: light.id, position: light.position)
             } else {
-                let entities = LightFactory.makeLight(configuration: light, selected: selected)
+                let entities = LightFactory.makeLight(configuration: effectiveLight, selected: selected)
                 anchor.addChild(entities.root)
                 lightEntities[light.id] = entities
                 collisionManager.registerObstacle(id: light.id, position: light.position, radius: Self.lightObstacleRadius)
-                viewModel.debugLog("Light creation: \(light.name)")
+                viewModel.debugLog("Light creation: \(effectiveLight.name)")
             }
         }
     }
@@ -340,12 +348,13 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private func updateEducationalOverlays() {
         guard let objectEntity else { return }
         let objectHeight = ObjectFactory.objectHeight(for: viewModel.selectedObjectType)
-        let selectedLight = viewModel.selectedLight
+        let selectedLight = effectiveLightConfiguration(for: viewModel.selectedLight)
         let objectGroundPosition = groundPosition(of: objectEntity)
         projectionRenderer.update(
             objectType: viewModel.selectedObjectType,
             objectPosition: objectGroundPosition,
             objectHeight: objectHeight,
+            objectYawDegrees: viewModel.objectYawDegrees,
             selectedLight: selectedLight,
             toggles: OverlayToggles(
                 showLightDirection: viewModel.showLightDirection,
@@ -365,7 +374,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private func updateShadowInfo() {
         guard let objectEntity else { return }
-        let light = viewModel.selectedLight
+        let light = effectiveLightConfiguration(for: viewModel.selectedLight)
         let objectHeight = ObjectFactory.objectHeight(for: viewModel.selectedObjectType)
         let objectGroundPosition = groundPosition(of: objectEntity)
         let updatedShadowInfo = ShadowInfo(
@@ -396,7 +405,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private func resetObjectPosition() {
         defaultObjectPosition = .zero
-        objectEntity?.position = renderedObjectPosition(for: defaultObjectPosition)
+        if let objectEntity {
+            applyObjectTransform(to: objectEntity, groundPosition: defaultObjectPosition)
+        }
         updateEducationalOverlays()
         updateShadowInfo()
         viewModel.debugLog("Object position reset")
@@ -408,8 +419,30 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         groundPosition + SIMD3<Float>(0, ObjectFactory.groundOffset(for: viewModel.selectedObjectType), 0)
     }
 
+    private func applyObjectTransform(to object: ModelEntity, groundPosition: SIMD3<Float>) {
+        object.position = renderedObjectPosition(for: groundPosition)
+        object.orientation = simd_quatf(
+            angle: viewModel.objectYawDegrees * .pi / 180,
+            axis: SIMD3<Float>(0, 1, 0)
+        )
+    }
+
     private func groundPosition(of object: ModelEntity) -> SIMD3<Float> {
         SIMD3<Float>(object.position.x, 0, object.position.z)
+    }
+
+    private func effectiveLightConfiguration(for light: LightConfiguration) -> LightConfiguration {
+        guard light.type == .spot, let objectEntity else { return light }
+
+        var adjusted = light
+        let objectCenter = objectEntity.position
+        let delta = objectCenter - light.position
+        let horizontalDistance = sqrt(delta.x * delta.x + delta.z * delta.z)
+        guard horizontalDistance > 0.001 || abs(delta.y) > 0.001 else { return adjusted }
+
+        adjusted.yawDegrees = atan2(delta.x, -delta.z) * 180 / .pi
+        adjusted.pitchDegrees = atan2(delta.y, horizontalDistance) * 180 / .pi
+        return adjusted
     }
 
     private func resetScene() {
