@@ -23,6 +23,7 @@ final class ARSceneViewModel: ObservableObject {
     @Published var showShadowInformation = true
 
     @Published var selectedConcept: ShadowConcept?
+    @Published var selectedConceptTapLocation: CGPoint = .zero
     @Published var shadowInfo = ShadowInfo()
     @Published var collisionWarning: String?
 
