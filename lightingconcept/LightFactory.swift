@@ -1,12 +1,7 @@
-import Foundation
 import RealityKit
-import UIKit
 import SwiftUI
+import UIKit
 
-/// The RealityKit entities that represent one light in the scene: the
-/// actual light-emitting entity, a small visible marker (so learners can see
-/// where an invisible light is), and a selection ring shown when the light
-/// is the active one.
 struct LightSceneEntities {
     let root: Entity
     let light: Entity
@@ -14,35 +9,22 @@ struct LightSceneEntities {
     let selectionRing: ModelEntity
 }
 
-/// Creates and updates light entities. Adding a light = calling makeLight
-/// and attaching entities.root to the anchor. Deleting a light = removing
-/// entities.root from its parent (see ARSceneCoordinator.syncLights, which
-/// diffs viewModel.lights against the currently attached lights each frame).
 enum LightFactory {
     static func makeLight(configuration: LightConfiguration, selected: Bool) -> LightSceneEntities {
         let root = Entity()
-        root.name = "LightRoot-\(configuration.id.uuidString)"
+        root.name = configuration.name
 
         let light = Entity()
-        light.name = "Light-\(configuration.id.uuidString)"
+        light.name = "\(configuration.name) emitter"
         root.addChild(light)
 
-        let marker = ModelEntity(
-            mesh: .generateSphere(radius: 0.012),
-            materials: [SimpleMaterial(color: .yellow, isMetallic: false)]
-        )
-        marker.name = "LightMarker-\(configuration.id.uuidString)"
+        let marker = makeMarker(configuration: configuration)
         root.addChild(marker)
 
-        let ring = ModelEntity(
-            mesh: .generateSphere(radius: 0.02),
-            materials: [SimpleMaterial(color: .cyan, isMetallic: false)]
-        )
-        ring.name = "LightSelectionRing-\(configuration.id.uuidString)"
+        let ring = makeSelectionRing(visible: selected)
         root.addChild(ring)
 
         update(light: light, marker: marker, ring: ring, configuration: configuration, selected: selected)
-
         return LightSceneEntities(root: root, light: light, marker: marker, selectionRing: ring)
     }
 
@@ -53,39 +35,65 @@ enum LightFactory {
         configuration: LightConfiguration,
         selected: Bool
     ) {
-        light.position = configuration.position
-        let yaw = simd_quatf(angle: configuration.yawDegrees * .pi / 180, axis: [0, 1, 0])
-        let pitch = simd_quatf(angle: configuration.pitchDegrees * .pi / 180, axis: [1, 0, 0])
-        light.orientation = yaw * pitch
+        light.components.remove(PointLightComponent.self)
+        light.components.remove(SpotLightComponent.self)
+        light.components.remove(SpotLightComponent.Shadow.self)
 
         switch configuration.type {
         case .point:
-            var point = PointLightComponent()
-            point.color = UIColor(configuration.color)
-            point.intensity = configuration.intensity
-            point.attenuationRadius = 4
-            light.components.set(point)
-            light.components.remove(SpotLightComponent.self)
-            light.components.remove(SpotLightComponent.Shadow.self)
-
+            var component = PointLightComponent()
+            component.color = configuration.color.uiColor
+            component.intensity = configuration.intensity
+            component.attenuationRadius = 2.5
+            light.components.set(component)
         case .spot:
-            var spot = SpotLightComponent()
-            spot.color = UIColor(configuration.color)
-            spot.intensity = configuration.intensity
-            spot.innerAngleInDegrees = configuration.beamSpread.innerAngle
-            spot.outerAngleInDegrees = configuration.beamSpread.outerAngle
-            spot.attenuationRadius = 4
-            light.components.set(spot)
-            // SpotLightComponent.Shadow is its own component type, not a
-            // property on SpotLightComponent - it has to be added separately.
+            var component = SpotLightComponent()
+            component.color = configuration.color.uiColor
+            component.intensity = configuration.intensity
+            component.attenuationRadius = 3
+            component.innerAngleInDegrees = configuration.beamSpread.innerAngle
+            component.outerAngleInDegrees = configuration.beamSpread.outerAngle
+            light.components.set(component)
             light.components.set(SpotLightComponent.Shadow())
-            light.components.remove(PointLightComponent.self)
         }
 
+        light.position = configuration.position
+        light.orientation = orientation(yawDegrees: configuration.yawDegrees, pitchDegrees: configuration.pitchDegrees)
         marker.position = configuration.position
-        marker.model?.materials = [SimpleMaterial(color: UIColor(configuration.color), isMetallic: false)]
-
-        ring.position = configuration.position
+        marker.model?.materials = [markerMaterial(color: configuration.color)]
+        ring.position = configuration.position + SIMD3<Float>(0, -0.026, 0)
         ring.isEnabled = selected
+    }
+
+    static func orientation(yawDegrees: Float, pitchDegrees: Float) -> simd_quatf {
+        let yaw = simd_quatf(angle: yawDegrees.degreesToRadians, axis: SIMD3<Float>(0, 1, 0))
+        let pitch = simd_quatf(angle: pitchDegrees.degreesToRadians, axis: SIMD3<Float>(1, 0, 0))
+        return yaw * pitch
+    }
+
+    static func forwardVector(yawDegrees: Float, pitchDegrees: Float) -> SIMD3<Float> {
+        let orientation = orientation(yawDegrees: yawDegrees, pitchDegrees: pitchDegrees)
+        return simd_normalize(orientation.act(SIMD3<Float>(0, 0, -1)))
+    }
+
+    private static func makeMarker(configuration: LightConfiguration) -> ModelEntity {
+        let marker = ModelEntity(mesh: .generateSphere(radius: 0.035), materials: [markerMaterial(color: configuration.color)])
+        marker.name = "\(configuration.name) marker"
+        marker.generateCollisionShapes(recursive: false)
+        return marker
+    }
+
+    private static func makeSelectionRing(visible: Bool) -> ModelEntity {
+        let mesh = MeshResource.generateBox(size: SIMD3<Float>(0.07, 0.004, 0.07))
+        let material = UnlitMaterial(color: .systemCyan)
+        let ring = ModelEntity(mesh: mesh, materials: [material])
+        ring.name = "Selected light indicator"
+        ring.isEnabled = visible
+        ring.generateCollisionShapes(recursive: false)
+        return ring
+    }
+
+    private static func markerMaterial(color: Color) -> UnlitMaterial {
+        UnlitMaterial(color: color.uiColor)
     }
 }

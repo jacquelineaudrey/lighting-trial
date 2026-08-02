@@ -1,14 +1,3 @@
-//
-//  ContentView.swift
-//  lightingconcept
-//
-//  Responsive for iPhone and iPad (including iPad Pro 11"): compact-width
-//  devices get a floating bottom sheet, regular-width devices (iPad,
-//  iPhone Plus/Max landscape) get a fixed-width side panel so the AR camera
-//  view isn't mostly covered by controls.
-//
-
-import Foundation
 import SwiftUI
 
 private enum ControlTab: String, CaseIterable, Identifiable {
@@ -22,178 +11,54 @@ private enum ControlTab: String, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @StateObject private var viewModel = ARSceneViewModel()
-    @State private var selectedTab: ControlTab = .object
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
-    /// Regular width = iPad (any orientation/multitasking size above ~half
-    /// split view) and iPhone Plus/Max in landscape. Compact = iPhone
-    /// portrait and iPad narrow split view.
-    private var isRegularWidth: Bool { horizontalSizeClass == .regular }
 
     var body: some View {
-        Group {
-            if isRegularWidth {
-                regularWidthLayout
-            } else {
-                compactWidthLayout
-            }
-        }
-    }
-
-    // MARK: - Regular width (iPad): side panel, AR view fills the rest
-
-    private var regularWidthLayout: some View {
-        HStack(spacing: 0) {
-            ZStack(alignment: .top) {
-                ARContainerView(viewModel: viewModel)
-                statusBar
-                    .padding(.top, 16)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Divider()
-
-            VStack(spacing: 0) {
-                if let warning = viewModel.collisionWarning {
-                    collisionBanner(text: warning)
-                        .padding(.top, 12)
-                }
-                controlPanelContent
-                    .padding(16)
-            }
-            .frame(width: 380)
-            .frame(maxHeight: .infinity)
-            .background(.regularMaterial)
-        }
-        .ignoresSafeArea(edges: .top)
-    }
-
-    // MARK: - Compact width (iPhone): floating bottom sheet over the AR view
-
-    private var compactWidthLayout: some View {
-        ZStack(alignment: .bottom) {
-            ARContainerView(viewModel: viewModel)
+        ZStack {
+            ARViewContainer(viewModel: viewModel)
                 .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                statusBar
+            VStack {
+                StatusBanner(text: viewModel.surfaceGuidanceText)
                     .padding(.top, 12)
+
                 Spacer()
-                if let warning = viewModel.collisionWarning {
-                    collisionBanner(text: warning)
-                }
-                controlPanelContent
-                    .padding(12)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+
+                SceneControlPanel(viewModel: viewModel)
                     .padding(.horizontal, 12)
-                    .frame(maxHeight: 320)
+                    .padding(.bottom, 10)
             }
-            .padding(.bottom, 8)
+        }
+        .sheet(item: $viewModel.selectedConcept) { concept in
+            ShadowConceptExplanationView(concept: concept)
+                .presentationDetents([.height(180)])
         }
     }
+}
 
-    // MARK: - Shared chrome
+private struct StatusBanner: View {
+    let text: String
 
-    private var statusBar: some View {
-        Text(statusText)
-            .font(.subheadline.weight(.medium))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(.ultraThinMaterial, in: Capsule())
-    }
-
-    private var statusText: String {
-        switch viewModel.surfaceState {
-        case .scanning: "Move the device to find a surface"
-        case .found: "Tap the surface to place an object"
-        case .placed: "\(viewModel.selectedObjectType.rawValue) placed"
-        }
-    }
-
-    private func collisionBanner(text: String) -> some View {
+    var body: some View {
         Text(text)
-            .font(.footnote.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(.red.opacity(0.85), in: Capsule())
-            .padding(.bottom, 8)
-            .transition(.opacity)
+            .font(.callout.weight(.semibold))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(.thinMaterial, in: Capsule())
+            .accessibilityLabel(text)
     }
+}
 
-    /// Tab picker + the currently selected tab's body. Reused by both
-    /// layouts, just placed inside a different container.
-    private var controlPanelContent: some View {
-        VStack(spacing: 12) {
-            Picker("Tab", selection: $selectedTab) {
-                ForEach(ControlTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
+private struct ShadowConceptExplanationView: View {
+    let concept: ShadowConcept
 
-            Group {
-                switch selectedTab {
-                case .object: objectTab
-                case .light: lightTab
-                case .texture: textureTab
-                case .learn: learnTab
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        }
-    }
-
-    // MARK: - Object tab
-
-    private var objectTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                Picker("Object", selection: $viewModel.selectedObjectType) {
-                    ForEach(LearningObjectType.allCases) { type in
-                        Text(type.rawValue).tag(type)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                Picker("Mode", selection: $viewModel.interactionMode) {
-                    ForEach(InteractionMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                if viewModel.selectedObjectType == .cube {
-                    VStack(alignment: .leading) {
-                        Text("Cube rotation: \(Int(viewModel.objectYawDegrees))°").font(.caption)
-                        Slider(value: Binding(
-                            get: { viewModel.objectYawDegrees },
-                            set: { newValue in
-                                viewModel.objectYawDegrees = newValue
-                                viewModel.bumpRevision()
-                            }
-                        ), in: -180...180, step: 1)
-                    }
-                }
-
-                if isRegularWidth {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Button("Reset Object") { viewModel.pendingResetObject.toggle() }
-                        Button("Reset Scene") { viewModel.pendingResetScene.toggle() }
-                        Button("Rescan Surface") { viewModel.pendingRescanSurface.toggle() }
-                    }
-                    .buttonStyle(.bordered)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    HStack {
-                        Button("Reset Object") { viewModel.pendingResetObject.toggle() }
-                        Button("Reset Scene") { viewModel.pendingResetScene.toggle() }
-                        Button("Rescan Surface") { viewModel.pendingRescanSurface.toggle() }
-                    }
-                    .buttonStyle(.bordered)
-                    .font(.footnote)
-                }
-            }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(concept.rawValue)
+                .font(.headline)
+            Text(concept.explanation)
+                .font(.body)
+            Spacer()
         }
     }
 
@@ -384,7 +249,8 @@ struct ContentView: View {
     ContentView()
 }
 
-#Preview("iPad Pro 11-inch") {
-    ContentView()
-        .previewDevice("iPad Pro (11-inch) (4th generation)")
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+    }
 }

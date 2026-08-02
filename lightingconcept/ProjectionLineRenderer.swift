@@ -1,50 +1,45 @@
 import RealityKit
 import UIKit
-import simd
 
-/// Which of the "Learn" tab overlays are currently switched on.
-struct OverlayToggles {
-    var showLightDirection: Bool
-    var showLightRays: Bool
-    var showProjectionLines: Bool
-    var showGroundProjection: Bool
-}
-
-/// Draws the procedural, non-physical geometry that explains how shadows
-/// form: a line from the light to the object, rays from the light through
-/// the object's silhouette, and the ground-projection direction line.
 final class ProjectionLineRenderer {
-    private weak var anchor: AnchorEntity?
-    private var overlayRoot: Entity?
+    private let root = Entity()
+    private var lineEntities: [ModelEntity] = []
+
+    init() {
+        root.name = "Educational overlays"
+    }
 
     func attach(to anchor: AnchorEntity) {
-        self.anchor = anchor
-        let root = Entity()
-        root.name = "ProjectionOverlayRoot"
-        anchor.addChild(root)
-        overlayRoot = root
+        if root.parent == nil {
+            anchor.addChild(root)
+        }
     }
 
     func clear() {
-        overlayRoot?.removeFromParent()
-        overlayRoot = nil
-        anchor = nil
+        lineEntities.forEach { $0.removeFromParent() }
+        lineEntities.removeAll()
     }
 
     func update(
         objectType: LearningObjectType,
         objectPosition: SIMD3<Float>,
         objectHeight: Float,
-        objectYawDegrees: Float,
         selectedLight: LightConfiguration,
         toggles: OverlayToggles
     ) {
-        guard let overlayRoot else { return }
-        overlayRoot.children.removeAll()
+        clear()
 
         if toggles.showLightDirection {
-            let target = objectPosition + SIMD3<Float>(0, objectHeight / 2, 0)
-            addLine(to: overlayRoot, from: selectedLight.position, to: target, color: .systemYellow, thickness: 0.004)
+            let end: SIMD3<Float>
+            if selectedLight.type == .spot {
+                end = selectedLight.position + LightFactory.forwardVector(
+                    yawDegrees: selectedLight.yawDegrees,
+                    pitchDegrees: selectedLight.pitchDegrees
+                ) * 0.35
+            } else {
+                end = objectPosition + SIMD3<Float>(0, objectHeight / 2, 0)
+            }
+            addArrow(from: selectedLight.position, to: end, color: .systemYellow, radius: 0.004)
         }
 
         if toggles.showLightRays {
@@ -56,52 +51,76 @@ final class ProjectionLineRenderer {
                 SIMD3<Float>(0, -0.02, 0.04)
             ]
             for offset in offsets {
-                addLine(to: overlayRoot, from: selectedLight.position, to: targetCenter + offset, color: .systemOrange, thickness: 0.0025)
-            }
-        }
-
-        if toggles.showProjectionLines, objectType == .cube {
-            let cubeCenter = SIMD3<Float>(objectPosition.x, ObjectFactory.cubeSize / 2, objectPosition.z)
-            let points = ShadowGeometryCalculator.cubeProjectionPoints(
-                lightPosition: selectedLight.position,
-                cubeCenter: cubeCenter,
-                yawDegrees: objectYawDegrees
-            )
-            for point in points {
-                addSphere(to: overlayRoot, at: point, color: .systemPurple, radius: 0.006)
-                addLine(to: overlayRoot, from: selectedLight.position, to: point, color: .systemPurple, thickness: 0.0025)
+                addLine(from: selectedLight.position, to: targetCenter + offset, color: .systemOrange, radius: 0.0025)
             }
         }
 
         if toggles.showGroundProjection,
            let direction = ShadowGeometryCalculator.groundShadowDirection(
-               lightPosition: selectedLight.position,
-               objectPosition: objectPosition
+            lightPosition: selectedLight.position,
+            objectPosition: objectPosition
            ) {
-            let end = objectPosition + direction * 0.3
-            addLine(to: overlayRoot, from: objectPosition, to: end, color: .white, thickness: 0.003)
+            let start = SIMD3<Float>(objectPosition.x, 0.006, objectPosition.z)
+            addArrow(from: start, to: start + direction * 0.32, color: .systemBlue, radius: 0.004)
+        }
+
+        if toggles.showProjectionLines, objectType == .cube {
+            let vertices = ObjectFactory.cubeTopVertices(center: objectPosition)
+            for vertex in vertices {
+                guard let projected = ShadowGeometryCalculator.projectPointFromLight(
+                    lightPosition: selectedLight.position,
+                    objectPoint: vertex
+                ) else {
+                    continue
+                }
+                addLine(from: selectedLight.position, to: projected + SIMD3<Float>(0, 0.004, 0), color: .systemPurple, radius: 0.002)
+                addPoint(at: projected + SIMD3<Float>(0, 0.008, 0), color: .systemPurple)
+            }
         }
     }
 
-    private func addLine(to root: Entity, from start: SIMD3<Float>, to end: SIMD3<Float>, color: UIColor, thickness: Float) {
+    private func addArrow(from start: SIMD3<Float>, to end: SIMD3<Float>, color: UIColor, radius: Float) {
+        addLine(from: start, to: end, color: color, radius: radius)
+        let direction = simd_normalize(end - start)
+        let cone = ModelEntity(mesh: .generateCone(height: 0.035, radius: radius * 3), materials: [UnlitMaterial(color: color)])
+        cone.position = end
+        cone.orientation = orientationForCylinder(from: SIMD3<Float>(0, 1, 0), to: direction)
+        root.addChild(cone)
+        lineEntities.append(cone)
+    }
+
+    private func addLine(from start: SIMD3<Float>, to end: SIMD3<Float>, color: UIColor, radius: Float) {
         let vector = end - start
-        let distance = simd_length(vector)
-        guard distance > 0.001 else { return }
+        let length = simd_length(vector)
+        guard length > 0.002, length.isFinite else { return }
 
-        let mesh = MeshResource.generateCylinder(height: distance, radius: thickness)
-        let entity = ModelEntity(mesh: mesh, materials: [SimpleMaterial(color: color, isMetallic: false)])
+        let entity = ModelEntity(mesh: .generateCylinder(height: length, radius: radius), materials: [UnlitMaterial(color: color)])
         entity.position = (start + end) / 2
-
-        let up = SIMD3<Float>(0, 1, 0)
-        let direction = simd_normalize(vector)
-        entity.orientation = simd_quatf(from: up, to: direction)
+        entity.orientation = orientationForCylinder(from: SIMD3<Float>(0, 1, 0), to: simd_normalize(vector))
         root.addChild(entity)
+        lineEntities.append(entity)
     }
 
-    private func addSphere(to root: Entity, at position: SIMD3<Float>, color: UIColor, radius: Float) {
-        let mesh = MeshResource.generateSphere(radius: radius)
-        let entity = ModelEntity(mesh: mesh, materials: [SimpleMaterial(color: color, isMetallic: false)])
-        entity.position = position
-        root.addChild(entity)
+    private func addPoint(at position: SIMD3<Float>, color: UIColor) {
+        let point = ModelEntity(mesh: .generateSphere(radius: 0.01), materials: [UnlitMaterial(color: color)])
+        point.position = position
+        root.addChild(point)
+        lineEntities.append(point)
     }
+
+    private func orientationForCylinder(from: SIMD3<Float>, to: SIMD3<Float>) -> simd_quatf {
+        let axis = simd_cross(from, to)
+        let dot = simd_dot(from, to)
+        if simd_length(axis) < 0.0001 {
+            return dot > 0 ? simd_quatf() : simd_quatf(angle: .pi, axis: SIMD3<Float>(1, 0, 0))
+        }
+        return simd_quatf(angle: acos(clamped(dot, -1, 1)), axis: simd_normalize(axis))
+    }
+}
+
+struct OverlayToggles {
+    var showLightDirection: Bool
+    var showLightRays: Bool
+    var showProjectionLines: Bool
+    var showGroundProjection: Bool
 }

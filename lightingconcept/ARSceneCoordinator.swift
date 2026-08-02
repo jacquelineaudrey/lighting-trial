@@ -16,24 +16,17 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private let projectionRenderer = ProjectionLineRenderer()
     private let annotationManager = ShadowAnnotationManager()
     private let receiverManager = ShadowReceiverManager()
-    private let collisionManager = CollisionManager()
-
-    /// Fixed identity for the single learning object obstacle, so
-    /// CollisionManager can tell it apart from light obstacles.
-    private let objectObstacleID = UUID()
-
-    /// Approximate footprint used for light-vs-light and light-vs-object
-    /// collision checks. Lights are small marker spheres, not real geometry.
-    private static let lightObstacleRadius: Float = 0.04
+    private var usesSceneReconstruction = false
 
     private var lastObjectType: LearningObjectType?
     private var lastTexture: MaterialTexture?
     private var lastSceneRevision = -1
+    private var lastSceneSignature: SceneUpdateSignature?
     private var lastResetObjectFlag = false
     private var lastResetSceneFlag = false
     private var lastRescanFlag = false
     private var defaultObjectPosition = SIMD3<Float>(0, 0, 0)
-    private var verticalLightPanStartHeight: Float?
+    private var lastAppliedObjectYawDegrees: Float?
 
     init(viewModel: ARSceneViewModel) {
         self.viewModel = viewModel
@@ -76,18 +69,20 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
 
         guard let anchor = sceneAnchor else { return }
+        let signature = currentSceneSignature()
+        guard signature != lastSceneSignature || lastObjectType != viewModel.selectedObjectType else { return }
 
         if lastObjectType != viewModel.selectedObjectType || lastTexture != viewModel.selectedTexture {
             replaceObject(on: anchor)
             lastObjectType = viewModel.selectedObjectType
-            lastTexture = viewModel.selectedTexture
         } else if let objectEntity {
-            applyObjectTransform(to: objectEntity, groundPosition: defaultObjectPosition)
+            applyObjectTransform(to: objectEntity)
         }
 
         syncLights(on: anchor)
         updateEducationalOverlays()
         updateShadowInfo()
+        lastSceneSignature = signature
         lastSceneRevision = viewModel.sceneRevision
     }
 
@@ -141,9 +136,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         configuration.environmentTexturing = .automatic
         if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
             configuration.sceneReconstruction = .meshWithClassification
-            viewModel.debugLog("LiDAR scene reconstruction enabled")
+            usesSceneReconstruction = true
+            viewModel.debugLog("LiDAR scene reconstruction enabled; stable shadow catcher active")
         } else {
-            viewModel.debugLog("LiDAR scene reconstruction unavailable")
+            usesSceneReconstruction = false
+            viewModel.debugLog("LiDAR scene reconstruction unavailable; using flat fallback receiver")
         }
 
         let options: ARSession.RunOptions = resetTracking ? [.resetTracking, .removeExistingAnchors] : []
@@ -159,6 +156,13 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
            entity.name.hasPrefix("Label: ") {
             let conceptName = entity.name.replacingOccurrences(of: "Label: ", with: "")
             viewModel.selectedConcept = ShadowConcept.allCases.first { $0.rawValue == conceptName }
+            return
+        }
+
+        if let entity = arView.entity(at: location),
+           selectLight(containing: entity) {
+            viewModel.interactionMode = .moveLight
+            synchronizeScene()
             return
         }
 
@@ -178,9 +182,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
         switch viewModel.interactionMode {
         case .moveObject:
-            moveObject(to: result)
+            moveObject(to: result, logWhenMoved: gesture.state == .ended)
         case .moveLight:
-            moveSelectedLight(to: result)
+            moveSelectedLight(to: result, logWhenMoved: gesture.state == .ended)
         case .exploreShadow:
             break
         }
@@ -230,7 +234,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         sceneAnchor = anchor
         defaultObjectPosition = .zero
 
-        receiverManager.setupReceiver(on: anchor, usesFlatFallback: true)
+        receiverManager.setupReceiver(on: anchor, usesFlatFallback: !usesSceneReconstruction)
         projectionRenderer.attach(to: anchor)
         annotationManager.attach(to: anchor)
         replaceObject(on: anchor)
@@ -243,21 +247,14 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private func replaceObject(on anchor: AnchorEntity) {
         objectEntity?.removeFromParent()
-        let object = ObjectFactory.makeObject(type: viewModel.selectedObjectType, texture: viewModel.selectedTexture)
-        applyObjectTransform(to: object, groundPosition: defaultObjectPosition)
+        let object = ObjectFactory.makeObject(type: viewModel.selectedObjectType)
+        applyObjectTransform(to: object)
         anchor.addChild(object)
         objectEntity = object
-
-        collisionManager.registerObstacle(
-            id: objectObstacleID,
-            position: object.position,
-            radius: ObjectFactory.boundingRadius(for: viewModel.selectedObjectType)
-        )
-
-        viewModel.debugLog("Object switched to \(viewModel.selectedObjectType.rawValue), texture \(viewModel.selectedTexture.name)")
+        viewModel.debugLog("Shadow caster changed to \(viewModel.selectedObjectType.rawValue)")
     }
 
-    private func moveObject(to result: ARRaycastResult) {
+    private func moveObject(to result: ARRaycastResult, logWhenMoved: Bool = false) {
         guard let anchor = sceneAnchor, let objectEntity else { return }
         let worldPosition = SIMD3<Float>(
             result.worldTransform.columns.3.x,
@@ -266,26 +263,17 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         )
         var localPosition = anchor.convert(position: worldPosition, from: nil)
         localPosition.y = 0
-
-        let resolution = collisionManager.resolvedPosition(
-            candidatePosition: localPosition,
-            movingRadius: ObjectFactory.boundingRadius(for: viewModel.selectedObjectType),
-            excludingID: objectObstacleID
-        )
-        localPosition = resolution.position
-        localPosition.y = 0
-
-        applyObjectTransform(to: objectEntity, groundPosition: localPosition)
         defaultObjectPosition = localPosition
-        collisionManager.updatePosition(id: objectObstacleID, position: localPosition)
-        viewModel.collisionWarning = resolution.didCollide ? "Object blocked by another object" : nil
-
+        applyObjectTransform(to: objectEntity)
         updateEducationalOverlays()
         updateShadowInfo()
-        viewModel.debugLog("Object moved")
+        lastSceneSignature = currentSceneSignature()
+        if logWhenMoved {
+            viewModel.debugLog("Object moved")
+        }
     }
 
-    private func moveSelectedLight(to result: ARRaycastResult) {
+    private func moveSelectedLight(to result: ARRaycastResult, logWhenMoved: Bool = false) {
         guard let anchor = sceneAnchor else { return }
         let worldPosition = SIMD3<Float>(
             result.worldTransform.columns.3.x,
@@ -311,7 +299,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
         collisionManager.updatePosition(id: selectedID, position: viewModel.selectedLight.position)
         synchronizeScene()
-        viewModel.debugLog("Selected light moved")
+        if logWhenMoved {
+            viewModel.debugLog("Selected light moved")
+        }
     }
 
     private func syncLights(on anchor: AnchorEntity) {
@@ -339,7 +329,6 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                 let entities = LightFactory.makeLight(configuration: effectiveLight, selected: selected)
                 anchor.addChild(entities.root)
                 lightEntities[light.id] = entities
-                collisionManager.registerObstacle(id: light.id, position: light.position, radius: Self.lightObstacleRadius)
                 viewModel.debugLog("Light creation: \(effectiveLight.name)")
             }
         }
@@ -347,9 +336,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private func updateEducationalOverlays() {
         guard let objectEntity else { return }
-        let objectHeight = ObjectFactory.objectHeight(for: viewModel.selectedObjectType)
+        let objectHeight = scaledObjectHeight
         let selectedLight = effectiveLightConfiguration(for: viewModel.selectedLight)
-        let objectGroundPosition = groundPosition(of: objectEntity)
         projectionRenderer.update(
             objectType: viewModel.selectedObjectType,
             objectPosition: objectGroundPosition,
@@ -375,9 +363,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private func updateShadowInfo() {
         guard let objectEntity else { return }
         let light = effectiveLightConfiguration(for: viewModel.selectedLight)
-        let objectHeight = ObjectFactory.objectHeight(for: viewModel.selectedObjectType)
-        let objectGroundPosition = groundPosition(of: objectEntity)
-        let updatedShadowInfo = ShadowInfo(
+        let objectHeight = scaledObjectHeight
+        let nextInfo = ShadowInfo(
             lightType: light.type.rawValue,
             intensity: light.intensity,
             lightHeight: light.position.y,
@@ -394,19 +381,15 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                 objectHeight: objectHeight
             )
         )
-
-        // Do not publish an identical value. This method is also reached from
-        // SwiftUI-driven scene synchronization, so publishing unchanged data
-        // would request another render for no visible change.
-        if viewModel.shadowInfo != updatedShadowInfo {
-            viewModel.shadowInfo = updatedShadowInfo
+        if viewModel.shadowInfo != nextInfo {
+            viewModel.shadowInfo = nextInfo
         }
     }
 
     private func resetObjectPosition() {
         defaultObjectPosition = .zero
         if let objectEntity {
-            applyObjectTransform(to: objectEntity, groundPosition: defaultObjectPosition)
+            applyObjectTransform(to: objectEntity)
         }
         updateEducationalOverlays()
         updateShadowInfo()
@@ -453,6 +436,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         collisionManager.removeAll()
         receiverManager.reset()
         projectionRenderer.clear()
+        annotationManager.clear()
+        lastSceneSignature = nil
+        lastObjectType = nil
         viewModel.isObjectPlaced = false
         viewModel.surfaceState = .found
         viewModel.debugLog("Scene reset")
@@ -466,22 +452,78 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         viewModel.debugLog("Surface rescan requested")
     }
 
+    private func currentSceneSignature() -> SceneUpdateSignature {
+        SceneUpdateSignature(
+            objectType: viewModel.selectedObjectType,
+            objectScale: viewModel.objectScale,
+            objectYawDegrees: viewModel.objectYawDegrees,
+            lights: viewModel.lights,
+            selectedLightID: viewModel.selectedLightID,
+            showLightDirection: viewModel.showLightDirection,
+            showLightRays: viewModel.showLightRays,
+            showProjectionLines: viewModel.showProjectionLines,
+            showGroundProjection: viewModel.showGroundProjection,
+            showShadowLabels: viewModel.showShadowLabels,
+            showShadowInformation: viewModel.showShadowInformation
+        )
+    }
+
+    private func selectLight(containing entity: Entity) -> Bool {
+        for (id, entities) in lightEntities {
+            if entity == entities.marker || entity == entities.selectionRing {
+                viewModel.selectedLightID = id
+                viewModel.debugLog("Selected light changed")
+                return true
+            }
+        }
+        return false
+    }
+
+    private func applyObjectTransform(to object: ModelEntity) {
+        let scaledHeight = scaledObjectHeight
+        object.position = SIMD3<Float>(
+            defaultObjectPosition.x,
+            scaledHeight / 2,
+            defaultObjectPosition.z
+        )
+        object.scale = SIMD3<Float>(repeating: viewModel.objectScale)
+        object.orientation = simd_quatf(
+            angle: viewModel.objectYawDegrees.degreesToRadians,
+            axis: SIMD3<Float>(0, 1, 0)
+        )
+        if lastAppliedObjectYawDegrees != viewModel.objectYawDegrees {
+            lastAppliedObjectYawDegrees = viewModel.objectYawDegrees
+            viewModel.debugLog("Object rotation updated")
+        }
+    }
+
+    private var scaledObjectHeight: Float {
+        ObjectFactory.objectHeight(for: viewModel.selectedObjectType) * viewModel.objectScale
+    }
+
+    private func effectiveLightConfiguration(for light: LightConfiguration) -> LightConfiguration {
+        guard light.type == .spot, let objectEntity else { return light }
+
+        var adjusted = light
+        let target = objectEntity.position + SIMD3<Float>(0, scaledObjectHeight * 0.15, 0)
+        let delta = target - light.position
+        let horizontalDistance = sqrt(delta.x * delta.x + delta.z * delta.z)
+        guard horizontalDistance > 0.001 || abs(delta.y) > 0.001 else { return adjusted }
+
+        adjusted.yawDegrees = atan2(delta.x, -delta.z).radiansToDegrees
+        adjusted.pitchDegrees = atan2(delta.y, horizontalDistance).radiansToDegrees
+        return adjusted
+    }
+
     nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
-        handleDetectedHorizontalPlane(in: anchors)
-    }
-
-    nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
-        handleDetectedHorizontalPlane(in: anchors)
-    }
-
-    private nonisolated func handleDetectedHorizontalPlane(in anchors: [ARAnchor]) {
-        guard anchors.contains(where: { ($0 as? ARPlaneAnchor)?.alignment == .horizontal }) else { return }
         Task { @MainActor in
-            if self.viewModel.surfaceState == .scanning {
+            if anchors.contains(where: { $0 is ARPlaneAnchor }),
+               self.viewModel.surfaceState == .scanning {
                 self.viewModel.surfaceState = .found
                 self.coachingOverlay?.setActive(false, animated: true)
                 self.viewModel.debugLog("Horizontal plane detected")
             }
+
         }
     }
 

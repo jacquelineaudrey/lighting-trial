@@ -1,69 +1,52 @@
 import RealityKit
 import UIKit
 
-/// Builds the placed learning object (cube or sphere). Reconstructed from
-/// how ARSceneCoordinator and ShadowGeometryCalculatorTests use it.
 enum ObjectFactory {
-    static let cubeSize: Float = 0.14
-    static let sphereRadius: Float = 0.08
+    static let cubeSize: Float = 0.12
+    static let sphereRadius: Float = 0.06
 
-    static func makeObject(type: LearningObjectType, texture: MaterialTexture = .defaultGrid) -> ModelEntity {
+    static func makeObject(type: LearningObjectType) -> ModelEntity {
         let mesh: MeshResource
+        let height: Float
+
         switch type {
         case .cube:
             mesh = .generateBox(size: cubeSize)
+            height = cubeSize
         case .sphere:
             mesh = .generateSphere(radius: sphereRadius)
+            height = sphereRadius * 2
         }
 
-        let entity = ModelEntity(mesh: mesh, materials: [texture.makeMaterial()])
-        entity.name = "LearningObject"
+        var material = PhysicallyBasedMaterial()
+        material.baseColor = .init(tint: UIColor(white: 0.86, alpha: 1))
+        material.roughness = .init(floatLiteral: 0.72)
+        material.metallic = .init(floatLiteral: 0)
 
-        // Needed for the new collision feature: lets CollisionManager /
-        // RealityKit reason about this entity's footprint.
-        entity.generateCollisionShapes(recursive: true)
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+        entity.name = type.rawValue
+        entity.position.y = height / 2
+        entity.generateCollisionShapes(recursive: false)
         entity.components.set(DynamicLightShadowComponent(castsShadow: true))
-
         return entity
     }
 
     static func objectHeight(for type: LearningObjectType) -> Float {
         switch type {
-        case .cube: cubeSize
-        case .sphere: sphereRadius * 2
+        case .cube:
+            cubeSize
+        case .sphere:
+            sphereRadius * 2
         }
     }
 
-    /// RealityKit's primitive meshes are centred on their local origin. This
-    /// is the amount the object must be raised so its base rests on the AR
-    /// surface instead of being embedded halfway through it.
-    static func groundOffset(for type: LearningObjectType) -> Float {
-        switch type {
-        case .cube: cubeSize / 2
-        case .sphere: sphereRadius
-        }
-    }
-
-    /// Horizontal bounding radius used by CollisionManager to keep other
-    /// AR content from being dragged through this object.
-    static func boundingRadius(for type: LearningObjectType) -> Float {
-        switch type {
-        case .cube: cubeSize * 0.75 // half-diagonal-ish, a bit generous
-        case .sphere: sphereRadius
-        }
-    }
-
-    static func cubeVertices(center: SIMD3<Float>) -> [SIMD3<Float>] {
+    static func cubeTopVertices(center: SIMD3<Float>) -> [SIMD3<Float>] {
         let half = cubeSize / 2
         return [
-            center + SIMD3<Float>( half,  half,  half),
-            center + SIMD3<Float>(-half,  half,  half),
-            center + SIMD3<Float>( half,  half, -half),
-            center + SIMD3<Float>(-half,  half, -half),
-            center + SIMD3<Float>( half, -half,  half),
-            center + SIMD3<Float>(-half, -half,  half),
-            center + SIMD3<Float>( half, -half, -half),
-            center + SIMD3<Float>(-half, -half, -half)
+            center + SIMD3<Float>(-half, half, -half),
+            center + SIMD3<Float>(half, half, -half),
+            center + SIMD3<Float>(-half, half, half),
+            center + SIMD3<Float>(half, half, half)
         ]
     }
 }

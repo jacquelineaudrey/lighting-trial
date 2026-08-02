@@ -124,3 +124,17 @@ struct ShadowInfo: Equatable {
     var shadowDirectionDegrees: Float?
     var shadowLength: Float?
 }
+
+struct SceneUpdateSignature: Equatable {
+    var objectType: LearningObjectType
+    var objectScale: Float
+    var objectYawDegrees: Float
+    var lights: [LightConfiguration]
+    var selectedLightID: UUID
+    var showLightDirection: Bool
+    var showLightRays: Bool
+    var showProjectionLines: Bool
+    var showGroundProjection: Bool
+    var showShadowLabels: Bool
+    var showShadowInformation: Bool
+}

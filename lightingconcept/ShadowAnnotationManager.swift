@@ -1,19 +1,19 @@
 import RealityKit
 import UIKit
 
-/// Places the tappable "Light Side / Shadow Side / Terminator / ..." callout
-/// labels used by the Learn tab. Each label is named "Label: <ConceptName>"
-/// so ARSceneCoordinator.handleTap can identify which concept was tapped.
 final class ShadowAnnotationManager {
-    private weak var anchor: AnchorEntity?
-    private var labelRoot: Entity?
+    private let root = Entity()
+    private var labels: [ModelEntity] = []
 
     func attach(to anchor: AnchorEntity) {
-        self.anchor = anchor
-        let root = Entity()
-        root.name = "ShadowAnnotationRoot"
-        anchor.addChild(root)
-        labelRoot = root
+        if root.parent == nil {
+            anchor.addChild(root)
+        }
+    }
+
+    func clear() {
+        labels.forEach { $0.removeFromParent() }
+        labels.removeAll()
     }
 
     func update(
@@ -23,45 +23,56 @@ final class ShadowAnnotationManager {
         objectHeight: Float,
         selectedLight: LightConfiguration
     ) {
-        guard let labelRoot else { return }
-        labelRoot.children.removeAll()
+        clear()
         guard visible else { return }
 
-        let concepts: [(ShadowConcept, SIMD3<Float>)] = [
-            (.lightSide, objectPosition + SIMD3<Float>(0.12, objectHeight * 0.7, 0)),
-            (.shadowSide, objectPosition + SIMD3<Float>(-0.12, objectHeight * 0.7, 0)),
-            (.terminator, objectPosition + SIMD3<Float>(0, objectHeight * 0.9, 0.08)),
-            (.coreShadow, objectPosition + SIMD3<Float>(-0.08, objectHeight * 0.4, -0.04)),
-            (.castShadow, objectPosition + SIMD3<Float>(0.05, 0.002, 0.2)),
-            (.contactShadow, objectPosition + SIMD3<Float>(0, 0.002, objectHeight * 0.05)),
-            (.highlight, objectPosition + SIMD3<Float>(0.06, objectHeight * 0.85, 0.06)),
-            (.reflectedLight, objectPosition + SIMD3<Float>(-0.06, objectHeight * 0.2, 0.02))
-        ]
+        let concepts: [(ShadowConcept, SIMD3<Float>)]
+        if objectType == .cube {
+            concepts = [
+                (.lightSide, objectPosition + SIMD3<Float>(-0.08, objectHeight * 0.72, 0)),
+                (.shadowSide, objectPosition + SIMD3<Float>(0.08, objectHeight * 0.5, 0)),
+                (.castShadow, objectPosition + shadowOffset(light: selectedLight, object: objectPosition, scale: 0.24)),
+                (.contactShadow, objectPosition + SIMD3<Float>(0, 0.025, 0.08))
+            ]
+        } else {
+            concepts = [
+                (.highlight, objectPosition + SIMD3<Float>(-0.05, objectHeight * 0.86, 0)),
+                (.lightSide, objectPosition + SIMD3<Float>(-0.08, objectHeight * 0.62, 0)),
+                (.terminator, objectPosition + SIMD3<Float>(0, objectHeight * 0.72, 0.07)),
+                (.coreShadow, objectPosition + SIMD3<Float>(0.07, objectHeight * 0.5, 0)),
+                (.reflectedLight, objectPosition + SIMD3<Float>(0.04, objectHeight * 0.34, 0.06)),
+                (.castShadow, objectPosition + shadowOffset(light: selectedLight, object: objectPosition, scale: 0.24)),
+                (.contactShadow, objectPosition + SIMD3<Float>(0, 0.025, 0.08))
+            ]
+        }
 
         for (concept, position) in concepts {
-            let label = makeLabel(text: concept.rawValue)
-            label.name = "Label: \(concept.rawValue)"
-            label.position = position
-            labelRoot.addChild(label)
+            addLabel(concept: concept, position: position)
         }
     }
 
-    private func makeLabel(text: String) -> ModelEntity {
+    private func addLabel(concept: ShadowConcept, position: SIMD3<Float>) {
         let mesh = MeshResource.generateText(
-            text,
+            concept.rawValue,
             extrusionDepth: 0.001,
-            font: .systemFont(ofSize: 0.02),
-            containerFrame: .zero,
+            font: .systemFont(ofSize: 0.026, weight: .semibold),
+            containerFrame: CGRect(x: 0, y: 0, width: 0.24, height: 0.08),
             alignment: .center,
             lineBreakMode: .byWordWrapping
         )
-        let material = SimpleMaterial(color: .white, isMetallic: false)
-        let entity = ModelEntity(mesh: mesh, materials: [material])
-        entity.generateCollisionShapes(recursive: true)
-        // Keep labels facing the camera. If your installed SDK doesn't have
-        // BillboardComponent, delete the next line — labels will just face
-        // whatever direction they were created in.
-        entity.components.set(BillboardComponent())
-        return entity
+        let material = UnlitMaterial(color: .white)
+        let label = ModelEntity(mesh: mesh, materials: [material])
+        label.name = "Label: \(concept.rawValue)"
+        label.position = position
+        label.scale = SIMD3<Float>(repeating: 0.6)
+        root.addChild(label)
+        labels.append(label)
+    }
+
+    private func shadowOffset(light: LightConfiguration, object: SIMD3<Float>, scale: Float) -> SIMD3<Float> {
+        guard let direction = ShadowGeometryCalculator.groundShadowDirection(lightPosition: light.position, objectPosition: object) else {
+            return SIMD3<Float>(0, 0.02, 0.2)
+        }
+        return direction * scale + SIMD3<Float>(0, 0.025, 0)
     }
 }
