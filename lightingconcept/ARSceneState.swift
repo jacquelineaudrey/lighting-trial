@@ -5,8 +5,47 @@ import RealityKit
 enum LearningObjectType: String, CaseIterable, Identifiable {
     case cube = "Cube"
     case sphere = "Sphere"
+    case cuboid = "Cuboid"
+    case cylinder = "Cylinder"
+    case cone = "Cone"
+    case hemisphere = "Hemisphere"
+    case squarePyramid = "Square Pyramid"
+    case triangularPyramid = "Triangular Pyramid"
 
     var id: String { rawValue }
+
+    var supportsYawRotation: Bool {
+        switch self {
+        case .sphere, .hemisphere, .cylinder, .cone:
+            false
+        case .cube, .cuboid, .squarePyramid, .triangularPyramid:
+            true
+        }
+    }
+}
+
+struct ObjectConfiguration: Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    var type: LearningObjectType
+    var scale: Float
+    var yawDegrees: Float
+    var position: SIMD3<Float>
+
+    static func defaultObject(
+        index: Int = 1,
+        type: LearningObjectType = .cube,
+        position: SIMD3<Float> = .zero
+    ) -> ObjectConfiguration {
+        ObjectConfiguration(
+            id: UUID(),
+            name: "Object \(index)",
+            type: type,
+            scale: 1,
+            yawDegrees: 0,
+            position: position
+        )
+    }
 }
 
 enum LearningLightType: String, CaseIterable, Identifiable {
@@ -126,10 +165,9 @@ struct ShadowInfo: Equatable {
 }
 
 struct SceneUpdateSignature: Equatable {
-    var objectType: LearningObjectType
+    var objects: [ObjectConfiguration]
+    var selectedObjectID: UUID
     var selectedTexture: MaterialTexture
-    var objectScale: Float
-    var objectYawDegrees: Float
     var lights: [LightConfiguration]
     var selectedLightID: UUID
     var showLightDirection: Bool

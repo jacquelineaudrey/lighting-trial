@@ -4,10 +4,9 @@ import RealityKit
 import SwiftUI
 
 final class ARSceneViewModel: ObservableObject {
-    @Published var selectedObjectType: LearningObjectType = .cube
+    @Published var objects: [ObjectConfiguration]
+    @Published var selectedObjectID: UUID
     @Published var selectedTexture: MaterialTexture = .defaultGrid
-    @Published var objectScale: Float = 1
-    @Published var objectYawDegrees: Float = 0
     @Published var interactionMode: InteractionMode = .moveObject
     @Published var surfaceState: SurfaceDetectionState = .scanning
     @Published var isObjectPlaced = false
@@ -32,7 +31,10 @@ final class ARSceneViewModel: ObservableObject {
     @Published var sceneRevision = 0
 
     init() {
+        let initialObject = ObjectConfiguration.defaultObject()
         let initialLight = LightConfiguration.defaultLight()
+        objects = [initialObject]
+        selectedObjectID = initialObject.id
         lights = [initialLight]
         selectedLightID = initialLight.id
     }
@@ -57,6 +59,69 @@ final class ARSceneViewModel: ObservableObject {
             lights[index] = newValue
             sceneRevision += 1
         }
+    }
+
+    var selectedObject: ObjectConfiguration {
+        objects.first(where: { $0.id == selectedObjectID }) ?? objects[0]
+    }
+
+    var selectedObjectType: LearningObjectType {
+        get { selectedObject.type }
+        set { updateSelectedObject { $0.type = newValue } }
+    }
+
+    var objectScale: Float {
+        get { selectedObject.scale }
+        set { updateSelectedObject { $0.scale = newValue } }
+    }
+
+    var objectYawDegrees: Float {
+        get { selectedObject.yawDegrees }
+        set { updateSelectedObject { $0.yawDegrees = newValue } }
+    }
+
+    func updateSelectedObject(_ update: (inout ObjectConfiguration) -> Void) {
+        guard let index = objects.firstIndex(where: { $0.id == selectedObjectID }) else { return }
+        var object = objects[index]
+        update(&object)
+        guard object != objects[index] else { return }
+        objects[index] = object
+        sceneRevision += 1
+    }
+
+    func updateObjectPosition(id: UUID, position: SIMD3<Float>) {
+        guard let index = objects.firstIndex(where: { $0.id == id }),
+              objects[index].position != position else { return }
+        objects[index].position = position
+        sceneRevision += 1
+    }
+
+    func addObject() {
+        let index = objects.count
+        let slot = index - 1
+        let ring = Float(slot / 6)
+        let angle = Float(slot % 6) * (.pi / 3)
+        let radius: Float = 0.28 + ring * 0.25
+        let position = SIMD3<Float>(cos(angle) * radius, 0, sin(angle) * radius)
+        let object = ObjectConfiguration.defaultObject(
+            index: index + 1,
+            type: selectedObjectType,
+            position: position
+        )
+        objects.append(object)
+        selectedObjectID = object.id
+        interactionMode = .moveObject
+        sceneRevision += 1
+        debugLog("Additional object created: \(object.name)")
+    }
+
+    func removeSelectedObject() {
+        guard objects.count > 1 else { return }
+        let removedID = selectedObjectID
+        objects.removeAll { $0.id == removedID }
+        selectedObjectID = objects[0].id
+        sceneRevision += 1
+        debugLog("Selected object removed")
     }
 
     func updateSelectedLight(_ update: (inout LightConfiguration) -> Void) {

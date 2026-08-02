@@ -10,7 +10,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var coachingOverlay: ARCoachingOverlayView?
 
     private var sceneAnchor: AnchorEntity?
-    private var objectEntity: ModelEntity?
+    private var objectEntities: [UUID: ModelEntity] = [:]
+    private var objectTypes: [UUID: LearningObjectType] = [:]
     private var lightEntities: [UUID: LightSceneEntities] = [:]
 
     private let projectionRenderer = ProjectionLineRenderer()
@@ -22,16 +23,13 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private static let lidarClearance: Float = 0.006
     private var usesSceneReconstruction = false
 
-    private var lastObjectType: LearningObjectType?
     private var lastTexture: MaterialTexture?
     private var lastSceneRevision = -1
     private var lastSceneSignature: SceneUpdateSignature?
     private var lastResetObjectFlag = false
     private var lastResetSceneFlag = false
     private var lastRescanFlag = false
-    private var defaultObjectPosition = SIMD3<Float>(0, 0, 0)
     private var verticalLightPanStartHeight: Float?
-    private var lastAppliedObjectYawDegrees: Float?
 
     init(viewModel: ARSceneViewModel) {
         self.viewModel = viewModel
@@ -76,16 +74,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
         guard let anchor = sceneAnchor else { return }
         let signature = currentSceneSignature()
-        guard signature != lastSceneSignature || lastObjectType != viewModel.selectedObjectType else { return }
+        guard signature != lastSceneSignature else { return }
 
-        if lastObjectType != viewModel.selectedObjectType || lastTexture != viewModel.selectedTexture {
-            replaceObject(on: anchor)
-            lastObjectType = viewModel.selectedObjectType
-            lastTexture = viewModel.selectedTexture
-        } else if let objectEntity {
-            applyObjectTransform(to: objectEntity)
-        }
-
+        syncObjects(on: anchor)
         syncLights(on: anchor)
         updateEducationalOverlays()
         updateShadowInfo()
@@ -173,6 +164,13 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             return
         }
 
+        if let entity = arView.entity(at: location),
+           selectObject(containing: entity) {
+            viewModel.interactionMode = .moveObject
+            synchronizeScene()
+            return
+        }
+
         guard let result = raycastPlane(from: location) else { return }
 
         if sceneAnchor == nil {
@@ -239,12 +237,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         let anchor = AnchorEntity(world: result.worldTransform)
         arView.scene.addAnchor(anchor)
         sceneAnchor = anchor
-        defaultObjectPosition = .zero
 
         receiverManager.setupReceiver(on: anchor, usesFlatFallback: !usesSceneReconstruction)
         projectionRenderer.attach(to: anchor)
         annotationManager.attach(to: anchor)
-        replaceObject(on: anchor)
+        syncObjects(on: anchor)
         syncLights(on: anchor)
 
         viewModel.surfaceState = .placed
@@ -252,17 +249,10 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         viewModel.debugLog("Object placement completed on selected surface")
     }
 
-    private func replaceObject(on anchor: AnchorEntity) {
-        objectEntity?.removeFromParent()
-        let object = ObjectFactory.makeObject(type: viewModel.selectedObjectType, texture: viewModel.selectedTexture)
-        applyObjectTransform(to: object)
-        anchor.addChild(object)
-        objectEntity = object
-        viewModel.debugLog("Shadow caster changed to \(viewModel.selectedObjectType.rawValue)")
-    }
-
     private func moveObject(to result: ARRaycastResult, logWhenMoved: Bool = false) {
-        guard let anchor = sceneAnchor, let objectEntity else { return }
+        let selectedObject = viewModel.selectedObject
+        guard let anchor = sceneAnchor,
+              let objectEntity = objectEntities[selectedObject.id] else { return }
         let worldPosition = SIMD3<Float>(
             result.worldTransform.columns.3.x,
             result.worldTransform.columns.3.y,
@@ -270,16 +260,37 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         )
         var localPosition = anchor.convert(position: worldPosition, from: nil)
         localPosition.y = 0
-        let resolution = resolvedObjectPosition(
-            from: defaultObjectPosition,
+
+        let height = ObjectFactory.objectHeight(for: selectedObject.type) * selectedObject.scale
+        let centerOffset = SIMD3<Float>(0, height / 2, 0)
+        let virtualResolution = collisionManager.resolvedPosition(
+            candidatePosition: localPosition + centerOffset,
+            movingRadius: ObjectFactory.collisionRadius(for: selectedObject),
+            excludingID: selectedObject.id
+        )
+        localPosition = virtualResolution.position - centerOffset
+        localPosition.y = 0
+
+        let lidarResolution = resolvedObjectPosition(
+            object: selectedObject,
+            from: selectedObject.position,
             to: localPosition,
             relativeTo: anchor
         )
-        defaultObjectPosition = resolution.position
-        viewModel.collisionWarning = resolution.didCollide
-            ? "Object stopped by a scanned real-world surface."
-            : nil
-        applyObjectTransform(to: objectEntity)
+        viewModel.updateObjectPosition(id: selectedObject.id, position: lidarResolution.position)
+        let updatedObject = viewModel.selectedObject
+        collisionManager.updatePosition(
+            id: updatedObject.id,
+            position: obstaclePosition(for: updatedObject)
+        )
+        if lidarResolution.didCollide {
+            viewModel.collisionWarning = "Object stopped by a scanned real-world surface."
+        } else if virtualResolution.didCollide {
+            viewModel.collisionWarning = "Object stopped by another virtual object."
+        } else {
+            viewModel.collisionWarning = nil
+        }
+        applyObjectTransform(to: objectEntity, configuration: updatedObject)
         updateEducationalOverlays()
         updateShadowInfo()
         lastSceneSignature = currentSceneSignature()
@@ -337,8 +348,52 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
+    private func syncObjects(on anchor: AnchorEntity) {
+        let currentIDs = Set(viewModel.objects.map { $0.id })
+        for (id, entity) in objectEntities where !currentIDs.contains(id) {
+            entity.removeFromParent()
+            objectEntities[id] = nil
+            objectTypes[id] = nil
+            collisionManager.removeObstacle(id: id)
+            viewModel.debugLog("Object deletion cleaned up from scene")
+        }
+
+        let textureChanged = lastTexture != viewModel.selectedTexture
+        for configuration in viewModel.objects {
+            let needsReplacement = objectEntities[configuration.id] == nil
+                || objectTypes[configuration.id] != configuration.type
+                || textureChanged
+
+            let entity: ModelEntity
+            if needsReplacement {
+                objectEntities[configuration.id]?.removeFromParent()
+                entity = ObjectFactory.makeObject(
+                    type: configuration.type,
+                    texture: viewModel.selectedTexture
+                )
+                anchor.addChild(entity)
+                objectEntities[configuration.id] = entity
+                objectTypes[configuration.id] = configuration.type
+                viewModel.debugLog("Object synchronized: \(configuration.name) — \(configuration.type.rawValue)")
+            } else if let existingEntity = objectEntities[configuration.id] {
+                entity = existingEntity
+            } else {
+                continue
+            }
+
+            applyObjectTransform(to: entity, configuration: configuration)
+            collisionManager.registerObstacle(
+                id: configuration.id,
+                position: obstaclePosition(for: configuration),
+                radius: ObjectFactory.collisionRadius(for: configuration)
+            )
+        }
+
+        lastTexture = viewModel.selectedTexture
+    }
+
     private func syncLights(on anchor: AnchorEntity) {
-        let currentIDs = Set(viewModel.lights.map(\.id))
+        let currentIDs = Set(viewModel.lights.map { $0.id })
         for (id, entities) in lightEntities where !currentIDs.contains(id) {
             entities.root.removeFromParent()
             lightEntities[id] = nil
@@ -402,29 +457,30 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func resolvedObjectPosition(
+        object: ObjectConfiguration,
         from currentGroundPosition: SIMD3<Float>,
         to candidateGroundPosition: SIMD3<Float>,
         relativeTo anchor: Entity
     ) -> (position: SIMD3<Float>, didCollide: Bool) {
-        let height = scaledObjectHeight
+        let dimensions = ObjectFactory.baseDimensions(for: object.type) * object.scale
+        let height = dimensions.y
         let clearance = Self.lidarClearance
         let centerOffset = SIMD3<Float>(0, height / 2 + clearance, 0)
         let shape: ShapeResource
 
-        switch viewModel.selectedObjectType {
-        case .cube:
-            let horizontalSize = ObjectFactory.cubeSize * viewModel.objectScale
-            shape = .generateBox(size: SIMD3<Float>(
-                max(horizontalSize - clearance * 2, 0.001),
-                max(height - clearance * 2, 0.001),
-                max(horizontalSize - clearance * 2, 0.001)
-            ))
+        switch object.type {
         case .sphere:
             shape = .generateSphere(radius: max(height / 2 - clearance, 0.001))
+        case .cube, .cuboid, .cylinder, .cone, .hemisphere, .squarePyramid, .triangularPyramid:
+            shape = .generateBox(size: SIMD3<Float>(
+                max(dimensions.x - clearance * 2, 0.001),
+                max(height - clearance * 2, 0.001),
+                max(dimensions.z - clearance * 2, 0.001)
+            ))
         }
 
         let orientation = simd_quatf(
-            angle: viewModel.objectYawDegrees.degreesToRadians,
+            angle: object.yawDegrees.degreesToRadians,
             axis: SIMD3<Float>(0, 1, 0)
         )
         let resolution = resolvedLiDARPosition(
@@ -517,7 +573,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func updateEducationalOverlays() {
-        guard objectEntity != nil else { return }
+        guard objectEntities[viewModel.selectedObjectID] != nil else { return }
         let objectHeight = scaledObjectHeight
         let selectedLight = effectiveLightConfiguration(for: viewModel.selectedLight)
         projectionRenderer.update(
@@ -542,7 +598,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func updateShadowInfo() {
-        guard objectEntity != nil else { return }
+        guard objectEntities[viewModel.selectedObjectID] != nil else { return }
         let light = effectiveLightConfiguration(for: viewModel.selectedLight)
         let objectHeight = scaledObjectHeight
         let nextInfo = ShadowInfo(
@@ -568,13 +624,18 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private var objectGroundPosition: SIMD3<Float> {
-        defaultObjectPosition
+        viewModel.selectedObject.position
     }
 
     private func resetObjectPosition() {
-        defaultObjectPosition = .zero
-        if let objectEntity {
-            applyObjectTransform(to: objectEntity)
+        viewModel.updateSelectedObject { $0.position = .zero }
+        let selectedObject = viewModel.selectedObject
+        if let objectEntity = objectEntities[selectedObject.id] {
+            applyObjectTransform(to: objectEntity, configuration: selectedObject)
+            collisionManager.updatePosition(
+                id: selectedObject.id,
+                position: obstaclePosition(for: selectedObject)
+            )
         }
         updateEducationalOverlays()
         updateShadowInfo()
@@ -585,14 +646,14 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private func resetScene() {
         sceneAnchor?.removeFromParent()
         sceneAnchor = nil
-        objectEntity = nil
+        objectEntities.removeAll()
+        objectTypes.removeAll()
         lightEntities.removeAll()
         collisionManager.removeAll()
         receiverManager.reset()
         projectionRenderer.clear()
         annotationManager.clear()
         lastSceneSignature = nil
-        lastObjectType = nil
         lastTexture = nil
         viewModel.isObjectPlaced = false
         viewModel.surfaceState = .found
@@ -609,10 +670,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private func currentSceneSignature() -> SceneUpdateSignature {
         SceneUpdateSignature(
-            objectType: viewModel.selectedObjectType,
+            objects: viewModel.objects,
+            selectedObjectID: viewModel.selectedObjectID,
             selectedTexture: viewModel.selectedTexture,
-            objectScale: viewModel.objectScale,
-            objectYawDegrees: viewModel.objectYawDegrees,
             lights: viewModel.lights,
             selectedLightID: viewModel.selectedLightID,
             showLightDirection: viewModel.showLightDirection,
@@ -635,30 +695,48 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         return false
     }
 
-    private func applyObjectTransform(to object: ModelEntity) {
-        let scaledHeight = scaledObjectHeight
+    private func selectObject(containing entity: Entity) -> Bool {
+        for (id, object) in objectEntities where entity == object {
+            viewModel.selectedObjectID = id
+            viewModel.debugLog("Selected object changed")
+            return true
+        }
+        return false
+    }
+
+    private func applyObjectTransform(
+        to object: ModelEntity,
+        configuration: ObjectConfiguration
+    ) {
+        let scaledHeight = ObjectFactory.objectHeight(for: configuration.type) * configuration.scale
         object.position = SIMD3<Float>(
-            defaultObjectPosition.x,
+            configuration.position.x,
             scaledHeight / 2,
-            defaultObjectPosition.z
+            configuration.position.z
         )
-        object.scale = SIMD3<Float>(repeating: viewModel.objectScale)
+        object.scale = SIMD3<Float>(repeating: configuration.scale)
         object.orientation = simd_quatf(
-            angle: viewModel.objectYawDegrees.degreesToRadians,
+            angle: configuration.yawDegrees.degreesToRadians,
             axis: SIMD3<Float>(0, 1, 0)
         )
-        if lastAppliedObjectYawDegrees != viewModel.objectYawDegrees {
-            lastAppliedObjectYawDegrees = viewModel.objectYawDegrees
-            viewModel.debugLog("Object rotation updated")
-        }
     }
 
     private var scaledObjectHeight: Float {
-        ObjectFactory.objectHeight(for: viewModel.selectedObjectType) * viewModel.objectScale
+        let selectedObject = viewModel.selectedObject
+        return ObjectFactory.objectHeight(for: selectedObject.type) * selectedObject.scale
+    }
+
+    private func obstaclePosition(for object: ObjectConfiguration) -> SIMD3<Float> {
+        object.position + SIMD3<Float>(
+            0,
+            ObjectFactory.objectHeight(for: object.type) * object.scale / 2,
+            0
+        )
     }
 
     private func effectiveLightConfiguration(for light: LightConfiguration) -> LightConfiguration {
-        guard light.type == .spot, let objectEntity else { return light }
+        guard light.type == .spot,
+              let objectEntity = objectEntities[viewModel.selectedObjectID] else { return light }
 
         var adjusted = light
         let target = objectEntity.position + SIMD3<Float>(0, scaledObjectHeight * 0.15, 0)
