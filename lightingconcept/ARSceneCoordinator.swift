@@ -30,9 +30,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var lastSceneSignature: SceneUpdateSignature?
     private var lastResetSceneFlag = false
     private var lastRescanFlag = false
+    private var defaultObjectPosition = SIMD3<Float>(0, 0, 0)
     private var verticalLightPanStartHeight: Float?
     private var lastAppliedObjectYawDegrees: Float?
     private weak var selectedConceptEntity: Entity?
+    private var hasLoggedLiDARMeshOcclusion = false
 
     init(viewModel: ARSceneViewModel) {
         self.viewModel = viewModel
@@ -937,6 +939,18 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
+    private func updateLiDARMeshOcclusion(from anchors: [ARAnchor]) {
+        guard usesSceneReconstruction, let arView else { return }
+        let result = lidarMeshOcclusionManager.update(from: anchors, in: arView)
+        if result.updatedCount > 0 {
+            viewModel.updateLiDARScan(meshCount: result.meshCount, faceCount: result.faceCount)
+        }
+        if result.updatedCount > 0, !hasLoggedLiDARMeshOcclusion {
+            hasLoggedLiDARMeshOcclusion = true
+            viewModel.debugLog("LiDAR scan mesh visualization updated; ARKit scene understanding handles occlusion")
+        }
+    }
+    
     nonisolated func session(_ session: ARSession, didFailWithError error: Error) {
         Task { @MainActor in
             self.viewModel.debugLog("AR session error: \(error.localizedDescription)")
