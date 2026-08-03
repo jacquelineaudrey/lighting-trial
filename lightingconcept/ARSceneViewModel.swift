@@ -5,6 +5,7 @@ import SwiftUI
 
 final class ARSceneViewModel: ObservableObject {
     @Published var selectedObjectType: LearningObjectType = .cube
+    @Published var selectedTexture: MaterialTexture = .defaultGrid
     @Published var objectScale: Float = 1
     @Published var objectYawDegrees: Float = 0
     @Published var interactionMode: InteractionMode = .moveObject
@@ -23,6 +24,7 @@ final class ARSceneViewModel: ObservableObject {
 
     @Published var selectedConcept: ShadowConcept?
     @Published var shadowInfo = ShadowInfo()
+    @Published var collisionWarning: String?
 
     @Published var pendingResetObject = false
     @Published var pendingResetScene = false
@@ -38,7 +40,7 @@ final class ARSceneViewModel: ObservableObject {
     var surfaceGuidanceText: String {
         switch surfaceState {
         case .scanning:
-            "Move your iPhone to detect a surface."
+            "Move your device to detect a surface."
         case .found:
             "Tap the surface to place an object."
         case .placed:
@@ -60,6 +62,18 @@ final class ARSceneViewModel: ObservableObject {
     func updateSelectedLight(_ update: (inout LightConfiguration) -> Void) {
         guard let index = lights.firstIndex(where: { $0.id == selectedLightID }) else { return }
         update(&lights[index])
+        sceneRevision += 1
+    }
+
+    func updateLightPosition(id: UUID, position: SIMD3<Float>) {
+        guard let index = lights.firstIndex(where: { $0.id == id }),
+              lights[index].position != position else { return }
+        lights[index].position = position
+        sceneRevision += 1
+    }
+
+    func selectTexture(_ texture: MaterialTexture) {
+        selectedTexture = texture
         sceneRevision += 1
     }
 

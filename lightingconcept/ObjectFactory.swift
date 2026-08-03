@@ -5,7 +5,7 @@ enum ObjectFactory {
     static let cubeSize: Float = 0.12
     static let sphereRadius: Float = 0.06
 
-    static func makeObject(type: LearningObjectType) -> ModelEntity {
+    static func makeObject(type: LearningObjectType, texture: MaterialTexture = .defaultGrid) -> ModelEntity {
         let mesh: MeshResource
         let height: Float
 
@@ -18,11 +18,7 @@ enum ObjectFactory {
             height = sphereRadius * 2
         }
 
-        var material = PhysicallyBasedMaterial()
-        material.baseColor = .init(tint: UIColor(white: 0.86, alpha: 1))
-        material.roughness = .init(floatLiteral: 0.72)
-        material.metallic = .init(floatLiteral: 0)
-
+        let material = texture.makeMaterial()
         let entity = ModelEntity(mesh: mesh, materials: [material])
         entity.name = type.rawValue
         entity.position.y = height / 2
