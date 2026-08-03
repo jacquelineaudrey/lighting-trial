@@ -6,16 +6,19 @@ struct SceneControlPanel: View {
     @State private var selectedTab = ControlTab.object
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             Picker("Controls", selection: $selectedTab) {
                 ForEach(ControlTab.allCases) { tab in
                     Label(tab.title, systemImage: tab.symbol).tag(tab)
                 }
             }
             .pickerStyle(.segmented)
+            .padding(.horizontal, 20)
+            .padding(.top, 28)
+            .padding(.bottom, 12)
 
-            ScrollView {
-                Group {
+            Form {
+                Section(selectedTab.title) {
                     switch selectedTab {
                     case .object:
                         objectControls
@@ -28,11 +31,9 @@ struct SceneControlPanel: View {
                     }
                 }
             }
-            .scrollIndicators(.hidden)
-            .frame(maxHeight: isInspector ? .infinity : 330)
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         .alert(item: $viewModel.modelImportFailure) { failure in
             Alert(
@@ -119,12 +120,17 @@ struct SceneControlPanel: View {
                 showsSelection: !viewModel.selectedObject.isImportedModel
             )
 
-            Picker("Mode", selection: $viewModel.interactionMode) {
-                ForEach(InteractionMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+            Picker("Surface Material", selection: selectedTextureBinding) {
+                ForEach(MaterialTexture.library) { texture in
+                    Label(texture.name, systemImage: texture.previewSystemImage).tag(texture)
                 }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
+
+            Text(viewModel.selectedTexture.shadowExplanation)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             sliderRow("Object Size", value: $viewModel.objectScale, range: 0.35...1.6, step: 0.05, suffix: "x")
 
@@ -132,32 +138,36 @@ struct SceneControlPanel: View {
                 sliderRow("Object Rotation", value: $viewModel.objectYawDegrees, range: -180...180, step: 1, suffix: "deg")
             }
 
-            Button {
-                viewModel.resetObjectPosition()
-            } label: {
-                Label("Reset Object", systemImage: "arrow.counterclockwise")
-            }
-            .buttonStyle(.bordered)
         }
+        .padding(.vertical, 6)
     }
 
     private var lightControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Shadow Lights \(viewModel.lights.count)/3")
+                    .font(.caption.weight(.semibold))
+
                 Picker("Selected Light", selection: $viewModel.selectedLightID) {
                     ForEach(viewModel.lights) { light in
                         Text(light.name).tag(light.id)
                     }
                 }
-                Button("Add Light", systemImage: "plus", action: viewModel.addLight)
-                    .labelStyle(.iconOnly)
-                    .frame(minWidth: 44, minHeight: 44)
-                .disabled(viewModel.lights.count >= 3)
 
-                Button("Remove Light", systemImage: "minus", action: viewModel.removeSelectedLight)
-                    .labelStyle(.iconOnly)
-                    .frame(minWidth: 44, minHeight: 44)
-                .disabled(viewModel.lights.count <= 1)
+                HStack(spacing: 12) {
+                    Button(action: viewModel.addLight) {
+                        Text("Add Light")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(viewModel.lights.count >= 3)
+
+                    Button(role: .destructive, action: viewModel.removeSelectedLight) {
+                        Text("Remove")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(viewModel.lights.count <= 1)
+                }
+                .buttonStyle(.bordered)
             }
 
             Picker("Light Type", selection: selectedLightTypeBinding) {
@@ -170,78 +180,112 @@ struct SceneControlPanel: View {
             ColorPicker("Colour", selection: selectedLightColorBinding, supportsOpacity: false)
 
             sliderRow("Intensity", value: selectedIntensityBinding, range: 100...6000, step: 50, suffix: "lm")
-            sliderRow("Height", value: selectedHeightBinding, range: 0.12...0.9, step: 0.01, suffix: "m")
-            sliderRow("X Position", value: selectedXBinding, range: -0.7...0.7, step: 0.01, suffix: "m")
-            sliderRow("Z Position", value: selectedZBinding, range: -0.7...0.7, step: 0.01, suffix: "m")
+            sliderRow("Height", value: selectedHeightBinding, range: -0.25...1.2, step: 0.01, suffix: "m")
+            sliderRow("X Position", value: selectedXBinding, range: -0.9...0.9, step: 0.01, suffix: "m")
+            sliderRow("Z Position", value: selectedZBinding, range: -0.9...0.9, step: 0.01, suffix: "m")
 
             if viewModel.selectedLight.type == .spot {
-                sliderRow("Yaw", value: selectedYawBinding, range: -180...180, step: 1, suffix: "deg")
-                sliderRow("Pitch", value: selectedPitchBinding, range: -85...10, step: 1, suffix: "deg")
                 Picker("Beam Spread", selection: selectedBeamBinding) {
                     ForEach(BeamSpreadPreset.allCases) { preset in
                         Text(preset.rawValue).tag(preset)
                     }
                 }
                 .pickerStyle(.segmented)
-
-                Button {
-                    pointSelectedLightAtObject()
-                } label: {
-                    Label("Point at Object", systemImage: "scope")
-                }
-                .buttonStyle(.bordered)
+            } else {
+                Text("Point light changes object lighting, but this RealityKit SDK only exposes dynamic cast shadows for Spot and Directional lights. Use Spot for visible overlapping shadows.")
+                    .font(.caption2)
+                .foregroundStyle(.secondary)
             }
         }
+        .padding(.vertical, 6)
     }
 
     private var learnControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Show Light Direction", isOn: $viewModel.showLightDirection)
-            Toggle("Show Light Rays", isOn: $viewModel.showLightRays)
-            Toggle("Show Projection Lines", isOn: $viewModel.showProjectionLines)
-            Toggle("Show Ground Projection", isOn: $viewModel.showGroundProjection)
-            Toggle("Show Shadow Labels", isOn: $viewModel.showShadowLabels)
-            Toggle("Show Shadow Information", isOn: $viewModel.showShadowInformation)
+        VStack(alignment: .leading, spacing: 18) {
+            controlGroup("Guides") {
+                toggleRow("Light Direction", isOn: $viewModel.showLightDirection)
+                toggleRow("Light Rays", isOn: $viewModel.showLightRays)
+                toggleRow("Ground Projection", isOn: $viewModel.showGroundProjection)
+            }
+
+            controlGroup("Geometry") {
+                toggleRow("Projection Lines", isOn: $viewModel.showProjectionLines)
+                Text("Shows how rays from the selected light pass through cube corners and meet the ground.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            controlGroup("Annotations") {
+                toggleRow("Shadow Labels", isOn: $viewModel.showShadowLabels)
+                toggleRow("Shadow Information", isOn: $viewModel.showShadowInformation)
+            }
 
             if viewModel.showShadowInformation {
                 ShadowInformationPanel(info: viewModel.shadowInfo)
             }
         }
+        .padding(.vertical, 6)
+    }
+
+    private func controlGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
+        Toggle(title, isOn: isOn)
+            .padding(.vertical, 6)
     }
 
     private var sceneControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             Button {
                 viewModel.resetScene()
             } label: {
-                Label("Reset Scene", systemImage: "trash")
+                Text("Reset Virtual Scene")
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
+            Text("Removes the placed object, shadow receiver, labels, and light markers, then lets you place the scene again without restarting AR tracking.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             Button {
                 viewModel.rescanSurface()
             } label: {
-                Label("Re-scan Surface", systemImage: "viewfinder")
+                Text("Re-scan Surface")
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            Text("Restarts AR tracking and surface detection. Use this when the table/floor alignment or LiDAR mesh feels wrong.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             Text("On LiDAR devices, RealityKit uses scene-understanding geometry for real-world lighting interaction. Other devices use a faint flat receiver fallback.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        .padding(.vertical, 6)
     }
 
     private func sliderRow(_ title: String, value: Binding<Float>, range: ClosedRange<Float>, step: Float, suffix: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 8) {
+            let formattedValue = String(format: suffix == "m" ? "%.2f" : "%.1f", value.wrappedValue)
             HStack {
                 Text(title)
                 Spacer()
-                Text("\(value.wrappedValue, specifier: "%.1f") \(suffix)")
+                Text("\(formattedValue) \(suffix)")
                     .foregroundStyle(.secondary)
             }
             Slider(value: value, in: range, step: step)
         }
         .font(.caption)
+        .padding(.vertical, 4)
     }
 
     private var selectedLightTypeBinding: Binding<LearningLightType> {
@@ -292,22 +336,6 @@ struct SceneControlPanel: View {
         }
     }
 
-    private var selectedYawBinding: Binding<Float> {
-        Binding {
-            viewModel.selectedLight.yawDegrees
-        } set: { value in
-            viewModel.updateSelectedLight { $0.yawDegrees = value }
-        }
-    }
-
-    private var selectedPitchBinding: Binding<Float> {
-        Binding {
-            viewModel.selectedLight.pitchDegrees
-        } set: { value in
-            viewModel.updateSelectedLight { $0.pitchDegrees = value }
-        }
-    }
-
     private var selectedBeamBinding: Binding<BeamSpreadPreset> {
         Binding {
             viewModel.selectedLight.beamSpread
@@ -328,8 +356,14 @@ struct SceneControlPanel: View {
             light.yawDegrees = atan2(delta.x, -delta.z).radiansToDegrees
             let horizontal = sqrt(delta.x * delta.x + delta.z * delta.z)
             light.pitchDegrees = atan2(delta.y, horizontal).radiansToDegrees
+    private var selectedTextureBinding: Binding<MaterialTexture> {
+        Binding {
+            viewModel.selectedTexture
+        } set: { texture in
+            viewModel.selectTexture(texture)
         }
     }
+
 }
 
 private enum ControlTab: String, CaseIterable, Identifiable {
@@ -367,8 +401,6 @@ private struct ShadowInformationPanel: View {
             row("Type", info.lightType)
             row("Intensity", String(format: "%.0f lm", info.intensity))
             row("Height", String(format: "%.2f m", info.lightHeight))
-            row("Yaw", String(format: "%.0f deg", info.yawDegrees))
-            row("Pitch", String(format: "%.0f deg", info.pitchDegrees))
             row("Beam", info.beamSpread)
             row("Shadow Direction", info.shadowDirectionDegrees.map { String(format: "%.0f deg", $0) } ?? "Unavailable")
             row("Shadow Length", info.shadowLength.map { String(format: "%.2f m", $0) } ?? "Unavailable")

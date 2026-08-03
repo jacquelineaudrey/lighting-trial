@@ -4,6 +4,8 @@ struct ContentView: View {
     @StateObject private var viewModel = ARSceneViewModel()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isControlInspectorPresented = true
+    @State private var isControlSheetPresented = true
+    @State private var controlSheetDetent = PresentationDetent.medium
 
     var body: some View {
         Group {
@@ -27,16 +29,25 @@ struct ContentView: View {
             } else {
                 sceneCanvas
                     .overlay(alignment: .bottom) {
-                        SceneControlPanel(viewModel: viewModel)
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 10)
+                        if viewModel.selectedConcept == nil {
+                            SceneControlPanel(viewModel: viewModel)
+                                .padding(.horizontal, 12)
+                                .padding(.bottom, 10)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                     }
+                    .animation(.easeInOut(duration: 0.25), value: viewModel.selectedConcept)
             }
         }
-        .sheet(item: $viewModel.selectedConcept) { concept in
-            ShadowConceptExplanationView(concept: concept)
-                .presentationDetents([.height(180)])
+        .overlay {
+            if let concept = viewModel.selectedConcept {
+                ShadowConceptOverlayView(concept: concept, tapLocation: viewModel.selectedConceptTapLocation) {
+                    viewModel.selectedConcept = nil
+                }
+                .transition(.opacity)
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: viewModel.selectedConcept)
     }
 
     private var sceneCanvas: some View {
@@ -44,13 +55,52 @@ struct ContentView: View {
             ARContainerView(viewModel: viewModel)
                 .ignoresSafeArea()
 
-            StatusBanner(
-                text: viewModel.collisionWarning ?? viewModel.surfaceGuidanceText,
-                isWarning: viewModel.collisionWarning != nil
-            )
+            VStack(spacing: 8) {
+                if viewModel.isLiDARAvailable, !viewModel.isObjectPlaced {
+                    LiDARScanProgressCard(viewModel: viewModel)
+                } else {
+                    StatusBanner(
+                        text: viewModel.collisionWarning ?? viewModel.surfaceGuidanceText,
+                        isWarning: viewModel.collisionWarning != nil
+                    )
+                }
+
+                if viewModel.isObjectPlaced || viewModel.surfaceState == .placed {
+                    InteractionModeControl(viewModel: viewModel)
+                }
+            }
             .padding(.top, 12)
             .padding(.horizontal)
         }
+    }
+}
+
+private extension ContentView {
+    var selectedConceptAlertBinding: Binding<Bool> {
+        Binding {
+            viewModel.selectedConcept != nil
+        } set: { isPresented in
+            if !isPresented {
+                viewModel.selectedConcept = nil
+            }
+        }
+    }
+}
+
+private struct InteractionModeControl: View {
+    @ObservedObject var viewModel: ARSceneViewModel
+
+    var body: some View {
+        Picker("Interaction Mode", selection: $viewModel.interactionMode) {
+            ForEach(InteractionMode.allCases) { mode in
+                Text(mode.rawValue).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 360)
+        .padding(8)
+        .background(.thinMaterial, in: Capsule())
+        .accessibilityLabel("Interaction Mode")
     }
 }
 
@@ -70,24 +120,86 @@ private struct StatusBanner: View {
     }
 }
 
-private struct ShadowConceptExplanationView: View {
+private struct ShadowConceptOverlayView: View {
     let concept: ShadowConcept
+    let tapLocation: CGPoint
+    let onDismiss: () -> Void
+
+    private let holeRadius: CGFloat = 50
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(concept.rawValue)
-                .font(.headline)
-            Text(concept.explanation)
-                .font(.body)
-            Spacer()
+        ZStack {
+            SpotlightCutoutShape(holeCenter: tapLocation, holeRadius: holeRadius)
+                .fill(Color.black.opacity(0.55), style: FillStyle(eoFill: true))
+
+            Circle()
+                .stroke(Color.white.opacity(0.6), lineWidth: 2)
+                .frame(width: holeRadius * 2, height: holeRadius * 2)
+                .position(tapLocation)
+
+            VStack(alignment: .leading, spacing: 16) {
+                Text(concept.rawValue)
+                    .font(.title2.bold())
+                    .foregroundStyle(.white)
+                Text(concept.explanation)
+                    .font(.body)
+                    .foregroundStyle(.white)
+                Text("Tap to dismiss")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .padding(.top, 6)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .multilineTextAlignment(.leading)
+            .padding(.horizontal, 24)
         }
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onDismiss()
+        }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Tap to dismiss")
     }
 }
 
-#Preview("iPhone") {
-    ContentView()
+private struct SpotlightCutoutShape: Shape {
+    var holeCenter: CGPoint
+    var holeRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(holeCenter.x, holeCenter.y) }
+        set {
+            holeCenter.x = newValue.first
+            holeCenter.y = newValue.second
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.addRect(rect)
+        path.addEllipse(in: CGRect(
+            x: holeCenter.x - holeRadius,
+            y: holeCenter.y - holeRadius,
+            width: holeRadius * 2,
+            height: holeRadius * 2
+        ))
+        return path
+    }
 }
 
-#Preview("iPad", traits: .fixedLayout(width: 1024, height: 768)) {
-    ContentView()
+            ProgressView(value: viewModel.lidarPlacementProgress)
+                .tint(viewModel.isReadyForPlacement ? .green : .cyan)
+
+            Text(viewModel.isReadyForPlacement
+                 ? "Area siap. Tap meja atau permukaan datar untuk menaruh object."
+                 : "Arahkan kamera perlahan ke meja, sisi benda, dan tepi permukaan. Area cyan adalah bagian yang sudah terbaca.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: 380)
+    }
 }

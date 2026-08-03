@@ -5,6 +5,16 @@ enum ShadowGeometryCalculator {
     static let groundY: Float = 0
     static let maximumProjectionDistance: Float = 5.0
 
+    /// Menghitung titik potong ray dengan bidang horizontal.
+    ///
+    /// Rumus garis 3D:
+    /// P(t) = rayOrigin + rayDirection * t
+    ///
+    /// Karena bidang ground punya nilai y tetap (`planeY`), maka:
+    /// planeY = rayOrigin.y + rayDirection.y * t
+    /// t = (planeY - rayOrigin.y) / rayDirection.y
+    ///
+    /// Jika `rayDirection.y` hampir 0, ray sejajar bidang dan tidak punya titik potong stabil.
     static func rayPlaneIntersection(
         rayOrigin: SIMD3<Float>,
         rayDirection: SIMD3<Float>,
@@ -18,6 +28,8 @@ enum ShadowGeometryCalculator {
         return rayOrigin + rayDirection * t
     }
 
+    /// Memproyeksikan satu titik object ke ground dari posisi light.
+    /// Ini dipakai untuk overlay edukasi, bukan untuk membuat shadow render utama.
     static func projectPointFromLight(
         lightPosition: SIMD3<Float>,
         objectPoint: SIMD3<Float>,
@@ -28,6 +40,8 @@ enum ShadowGeometryCalculator {
         return rayPlaneIntersection(rayOrigin: lightPosition, rayDirection: simd_normalize(direction), planeY: planeY)
     }
 
+    /// Arah bayangan di ground untuk point/spot light sederhana.
+    /// Bayangan bergerak menjauhi posisi light secara horizontal.
     static func groundShadowDirection(lightPosition: SIMD3<Float>, objectPosition: SIMD3<Float>) -> SIMD3<Float>? {
         let away = SIMD3<Float>(objectPosition.x - lightPosition.x, 0, objectPosition.z - lightPosition.z)
         let length = simd_length(away)
@@ -40,6 +54,18 @@ enum ShadowGeometryCalculator {
         return atan2(direction.x, direction.z).radiansToDegrees
     }
 
+    /// Estimasi panjang shadow dengan model segitiga sebangun.
+    ///
+    /// Asumsi:
+    /// - ground datar di y = 0
+    /// - light berada di atas object
+    /// - object dianggap punya tinggi `objectHeight`
+    ///
+    /// Jika jarak horizontal light ke object = d dan tinggi light = H,
+    /// maka panjang shadow dari sisi object kira-kira:
+    /// shadowLength = objectHeight * d / (H - objectHeight)
+    ///
+    /// Fungsi ini hanya untuk panel informasi, bukan untuk merender shadow.
     static func approximateShadowLength(
         lightPosition: SIMD3<Float>,
         objectGroundPosition: SIMD3<Float>,
@@ -57,6 +83,8 @@ enum ShadowGeometryCalculator {
         return min(length, maximumProjectionDistance)
     }
 
+    /// Mengambil titik proyeksi dari vertex atas cube.
+    /// Ini menjelaskan kenapa shadow cube punya sudut/edge, terutama saat cube dirotasi.
     static func cubeProjectionPoints(lightPosition: SIMD3<Float>, cubeCenter: SIMD3<Float>) -> [SIMD3<Float>] {
         ObjectFactory.cubeTopVertices(center: cubeCenter).compactMap {
             projectPointFromLight(lightPosition: lightPosition, objectPoint: $0)

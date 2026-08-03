@@ -18,6 +18,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private let projectionRenderer = ProjectionLineRenderer()
     private let annotationManager = ShadowAnnotationManager()
     private let receiverManager = ShadowReceiverManager()
+    private let lidarMeshOcclusionManager = LiDARMeshOcclusionManager()
     private let collisionManager = CollisionManager()
     private static let lightObstacleRadius: Float = 0.07
     private static let lidarLightRadius: Float = 0.045
@@ -27,10 +28,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var lastTexture: MaterialTexture?
     private var lastSceneRevision = -1
     private var lastSceneSignature: SceneUpdateSignature?
-    private var lastResetObjectFlag = false
     private var lastResetSceneFlag = false
     private var lastRescanFlag = false
     private var verticalLightPanStartHeight: Float?
+    private var lastAppliedObjectYawDegrees: Float?
+    private weak var selectedConceptEntity: Entity?
 
     init(viewModel: ARSceneViewModel) {
         self.viewModel = viewModel
@@ -45,8 +47,6 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         arView.renderOptions.insert(.disablePersonOcclusion)
         arView.environment.sceneUnderstanding.options.insert(.occlusion)
         arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
-        arView.environment.sceneUnderstanding.options.insert(.collision)
-        arView.environment.sceneUnderstanding.options.insert(.physics)
 
         arView.session.delegate = self
         addCoachingOverlay(to: arView)
@@ -57,11 +57,6 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     func synchronizeScene() {
         guard arView != nil else { return }
-
-        if lastResetObjectFlag != viewModel.pendingResetObject {
-            lastResetObjectFlag = viewModel.pendingResetObject
-            resetObjectPosition()
-        }
 
         if lastResetSceneFlag != viewModel.pendingResetScene {
             lastResetSceneFlag = viewModel.pendingResetScene
@@ -79,6 +74,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
         syncObjects(on: anchor)
         syncLights(on: anchor)
+        receiverManager.updateSurfaceTexture(viewModel.selectedTexture)
         updateEducationalOverlays()
         updateShadowInfo()
         lastSceneSignature = currentSceneSignature()
@@ -130,15 +126,30 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             return
         }
 
+        // Konfigurasi utama AR:
+        // - horizontal plane untuk meja/lantai
+        // - environment texturing + light estimation agar object lebih menyatu dengan kamera
+        // - LiDAR mesh reconstruction hanya jika device mendukung
         let configuration = ARWorldTrackingConfiguration()
         configuration.planeDetection = [.horizontal]
         configuration.environmentTexturing = .automatic
+        configuration.isLightEstimationEnabled = true
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+            configuration.frameSemantics.insert(.smoothedSceneDepth)
+            viewModel.debugLog("LiDAR smoothed scene depth enabled")
+        }
         if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
             configuration.sceneReconstruction = .meshWithClassification
             usesSceneReconstruction = true
-            viewModel.debugLog("LiDAR scene reconstruction enabled; collision and real-world occlusion active")
+            viewModel.isLiDARAvailable = true
+            viewModel.resetLiDARScan()
+            // Mesh cyan hanya feedback scan untuk user. Occlusion visual tetap memakai
+            // sceneUnderstanding bawaan RealityKit, bukan mesh occluder custom.
+            lidarMeshOcclusionManager.setVisualizationEnabled(true)
+            viewModel.debugLog("LiDAR scene reconstruction enabled; real-world mesh occlusion active")
         } else {
             usesSceneReconstruction = false
+            viewModel.isLiDARAvailable = false
             viewModel.debugLog("LiDAR scene reconstruction unavailable; using flat fallback receiver")
         }
 
@@ -150,10 +161,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         guard let arView else { return }
         let location = gesture.location(in: arView)
 
-        if viewModel.interactionMode == .exploreShadow,
-           let entity = arView.entity(at: location),
+        // Label edukasi adalah entity 3D. Saat diketuk, SwiftUI menampilkan alert penjelasan.
+        if let entity = arView.entity(at: location),
            entity.name.hasPrefix("Label: ") {
             let conceptName = entity.name.replacingOccurrences(of: "Label: ", with: "")
+            selectedConceptEntity = entity
+            viewModel.selectedConceptTapLocation = location
             viewModel.selectedConcept = ShadowConcept.allCases.first { $0.rawValue == conceptName }
             return
         }
@@ -175,6 +188,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         guard let result = raycastPlane(from: location) else { return }
 
         if sceneAnchor == nil {
+            // Di device LiDAR, placement ditahan sampai coverage scan cukup agar posisi awal
+            // object dan receiver tidak terlalu meleset dari meja/lantai yang sebenarnya.
+            guard viewModel.isReadyForPlacement else {
+                viewModel.debugLog("Object placement blocked until LiDAR scan reaches target coverage")
+                return
+            }
             placeScene(at: result)
         } else if viewModel.interactionMode == .moveObject {
             moveObject(to: result)
@@ -191,8 +210,6 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             moveObject(to: result, logWhenMoved: gesture.state == .ended)
         case .moveLight:
             moveSelectedLight(to: result, logWhenMoved: gesture.state == .ended)
-        case .exploreShadow:
-            break
         }
     }
 
@@ -219,9 +236,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private func raycastPlane(from point: CGPoint) -> ARRaycastResult? {
         guard let arView else { return nil }
 
-        // Once ARKit has found a horizontal plane, anchor to that measured
-        // geometry. Estimated planes are useful only as a fallback while the
-        // device is still scanning and can otherwise make placement jumpy.
+        // Utamakan bidang horizontal yang sudah benar-benar terdeteksi.
+        // Estimated plane hanya fallback supaya app tetap bisa dipakai saat scanning awal.
         if let measuredPlane = arView.raycast(
             from: point,
             allowing: .existingPlaneGeometry,
@@ -238,8 +254,16 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         let anchor = AnchorEntity(world: result.worldTransform)
         arView.scene.addAnchor(anchor)
         sceneAnchor = anchor
+        defaultObjectPosition = .zero
+        lidarMeshOcclusionManager.setVisualizationEnabled(false)
 
-        receiverManager.setupReceiver(on: anchor, usesFlatFallback: !usesSceneReconstruction)
+        // Receiver invisible inilah yang menangkap dynamic shadow.
+        // Kamera asli tidak bisa langsung menerima shadow karena hanya video background.
+        receiverManager.setupReceiver(
+            on: anchor,
+            usesFlatFallback: !usesSceneReconstruction,
+            surfaceTexture: viewModel.selectedTexture
+        )
         projectionRenderer.attach(to: anchor)
         annotationManager.attach(to: anchor)
         syncObjects(on: anchor)
@@ -311,6 +335,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         localPosition.x = clamped(localPosition.x, -0.9, 0.9)
         localPosition.z = clamped(localPosition.z, -0.9, 0.9)
 
+        // Drag satu jari hanya mengubah X/Z. Height dikontrol slider atau two-finger pan
+        // supaya light tidak tiba-tiba naik/turun saat user menggeser marker.
         let selectedID = viewModel.selectedLightID
         let currentPosition = viewModel.selectedLight.position
         localPosition.y = currentPosition.y
@@ -320,18 +346,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             excludingID: selectedID
         )
         localPosition = resolution.position
-        let lidarResolution = resolvedLiDARPosition(
-            from: currentPosition,
-            to: localPosition,
-            shape: .generateSphere(radius: Self.lidarLightRadius),
-            orientation: .init(angle: 0, axis: SIMD3<Float>(0, 1, 0)),
-            relativeTo: anchor
-        )
-        localPosition = lidarResolution.position
         let collisionWarning: String?
-        if lidarResolution.didCollide {
-            collisionWarning = "Light stopped by a scanned real-world surface."
-        } else if resolution.didCollide {
+        if resolution.didCollide {
             collisionWarning = "Light stopped by another virtual object."
         } else {
             collisionWarning = nil
@@ -535,23 +551,14 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                     movingRadius: Self.lightObstacleRadius,
                     excludingID: light.id
                 )
-                let lidarResolution = resolvedLiDARPosition(
-                    from: entities.marker.position,
-                    to: virtualResolution.position,
-                    shape: .generateSphere(radius: Self.lidarLightRadius),
-                    orientation: .init(angle: 0, axis: SIMD3<Float>(0, 1, 0)),
-                    relativeTo: anchor
-                )
-                light.position = lidarResolution.position
+                light.position = virtualResolution.position
 
                 if light.position != requestedLight.position {
                     viewModel.updateLightPosition(id: light.id, position: light.position)
                 }
 
                 if selected {
-                    if lidarResolution.didCollide {
-                        selectedCollisionWarning = "Light stopped by a scanned real-world surface."
-                    } else if virtualResolution.didCollide {
+                    if virtualResolution.didCollide {
                         selectedCollisionWarning = "Light stopped by another virtual object."
                     }
                 }
@@ -559,6 +566,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                 let effectiveLight = effectiveLightConfiguration(for: light)
                 LightFactory.update(
                     light: entities.light,
+                    fillLight: entities.fillLight,
                     marker: entities.marker,
                     ring: entities.selectionRing,
                     configuration: effectiveLight,
@@ -619,6 +627,10 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             ignoringSupportBelow: clearance * 4
         )
         return (resolution.position - centerOffset, resolution.didCollide)
+        // Collision terhadap LiDAR mesh sengaja dinonaktifkan untuk movement.
+        // Mesh scan sering noisy; kalau dipakai sebagai blocker, object/light bisa
+        // terlihat "nyangkut" padahal tidak ada penghalang nyata di kamera.
+        return (candidateGroundPosition, false)
     }
 
     private func resolvedLiDARPosition(
@@ -703,10 +715,14 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         guard objectEntities[viewModel.selectedObjectID] != nil else { return }
         let objectHeight = scaledObjectHeight
         let selectedLight = effectiveLightConfiguration(for: viewModel.selectedLight)
+        // Overlay memakai perhitungan geometri yang sama dengan arah spotlight,
+        // tetapi tidak ikut membuat shadow. Ini murni lapisan edukasi.
         projectionRenderer.update(
             objectType: viewModel.selectedObjectType,
             objectPosition: objectGroundPosition,
             objectHeight: objectHeight,
+            objectYawDegrees: viewModel.objectYawDegrees,
+            lightTarget: lightingTarget(objectHeight: objectHeight),
             selectedLight: selectedLight,
             toggles: OverlayToggles(
                 showLightDirection: viewModel.showLightDirection,
@@ -792,6 +808,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func rescanSurface() {
+        lidarMeshOcclusionManager.reset()
+        hasLoggedLiDARMeshOcclusion = false
+        viewModel.resetLiDARScan()
         resetScene()
         viewModel.surfaceState = .scanning
         runSession(resetTracking: true)
@@ -876,18 +895,26 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
               let objectEntity = objectEntities[viewModel.selectedObjectID] else { return light }
 
         var adjusted = light
-        let target = objectEntity.position + SIMD3<Float>(0, scaledObjectHeight * 0.15, 0)
+        let target = lightingTarget(objectHeight: scaledObjectHeight)
         let delta = target - light.position
         let horizontalDistance = sqrt(delta.x * delta.x + delta.z * delta.z)
         guard horizontalDistance > 0.001 || abs(delta.y) > 0.001 else { return adjusted }
 
+        // RealityKit spotlight mengarah ke local -Z. Yaw menghadap target secara horizontal,
+        // pitch mengangkat/menurunkan beam sesuai beda tinggi light dan object.
         adjusted.yawDegrees = atan2(delta.x, -delta.z).radiansToDegrees
         adjusted.pitchDegrees = atan2(delta.y, horizontalDistance).radiansToDegrees
         return adjusted
     }
 
+    private func lightingTarget(objectHeight: Float) -> SIMD3<Float> {
+        // Target sedikit di atas tengah object agar beam menyinari form, bukan hanya kaki object.
+        objectGroundPosition + SIMD3<Float>(0, objectHeight * 0.58, 0)
+    }
+
     nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
         Task { @MainActor in
+            self.updateLiDARMeshOcclusion(from: anchors)
             if anchors.contains(where: { $0 is ARPlaneAnchor }),
                self.viewModel.surfaceState == .scanning {
                 self.viewModel.surfaceState = .found
@@ -895,6 +922,18 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                 self.viewModel.debugLog("Horizontal plane detected")
             }
 
+        }
+    }
+
+    nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        Task { @MainActor in
+            guard self.viewModel.selectedConcept != nil,
+                  let arView = self.arView,
+                  let entity = self.selectedConceptEntity else { return }
+            let worldPosition = entity.position(relativeTo: nil)
+            if let screenPoint = arView.project(worldPosition) {
+                self.viewModel.selectedConceptTapLocation = screenPoint
+            }
         }
     }
 

@@ -72,9 +72,17 @@ enum LearningLightType: String, CaseIterable, Identifiable {
 enum InteractionMode: String, CaseIterable, Identifiable {
     case moveObject = "Move Object"
     case moveLight = "Move Light"
-    case exploreShadow = "Explore Shadow"
 
     var id: String { rawValue }
+
+    var shortTitle: String {
+        switch self {
+        case .moveObject:
+            return "Object"
+        case .moveLight:
+            return "Light"
+        }
+    }
 }
 
 enum BeamSpreadPreset: String, CaseIterable, Identifiable {
@@ -86,17 +94,17 @@ enum BeamSpreadPreset: String, CaseIterable, Identifiable {
 
     var innerAngle: Float {
         switch self {
-        case .focused: 12
-        case .medium: 24
-        case .spread: 38
+        case .focused: 10
+        case .medium: 28
+        case .spread: 52
         }
     }
 
     var outerAngle: Float {
         switch self {
-        case .focused: 22
-        case .medium: 42
-        case .spread: 64
+        case .focused: 24
+        case .medium: 54
+        case .spread: 88
         }
     }
 }
@@ -158,10 +166,10 @@ struct LightConfiguration: Identifiable, Equatable {
             name: "Light \(index)",
             type: .spot,
             color: Color(red: 1.0, green: 0.86, blue: 0.62),
-            intensity: 3200,
-            position: SIMD3<Float>(-0.28, 0.48, 0.22),
-            yawDegrees: -35,
-            pitchDegrees: -42,
+            intensity: 3600,
+            position: SIMD3<Float>(-0.16, 0.32, 0.14),
+            yawDegrees: 0,
+            pitchDegrees: -35,
             beamSpread: .spread
         )
     }
