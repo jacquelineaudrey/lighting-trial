@@ -51,20 +51,20 @@ final class ShadowAnnotationManager {
         let concepts: [(ShadowConcept, SIMD3<Float>)]
         if objectType == .cube {
             concepts = [
-                (.lightSide, objectPosition + lightSide * 0.11 + topLift),
-                (.shadowSide, objectPosition + shadowSide * 0.11 + sideLift),
+                (.lightSide, objectPosition + SIMD3<Float>(-0.08, objectHeight * 0.72, 0)),
+                (.shadowSide, objectPosition + SIMD3<Float>(0.08, objectHeight * 0.5, 0)),
                 (.castShadow, objectPosition + shadowOffset(light: selectedLight, object: objectPosition, scale: 0.24)),
-                (.contactShadow, objectPosition + shadowSide * 0.08 + SIMD3<Float>(0, 0.025, 0))
+                (.contactShadow, objectPosition + SIMD3<Float>(0, 0.025, 0.08))
             ]
         } else {
             concepts = [
-                (.highlight, objectPosition + lightSide * 0.07 + topLift),
-                (.lightSide, objectPosition + lightSide * 0.1 + sideLift),
-                (.terminator, objectPosition + perpendicular * 0.09 + SIMD3<Float>(0, objectHeight * 0.68, 0)),
-                (.coreShadow, objectPosition + shadowSide * 0.1 + SIMD3<Float>(0, objectHeight * 0.5, 0)),
-                (.reflectedLight, objectPosition + shadowSide * 0.06 + SIMD3<Float>(0, objectHeight * 0.32, 0)),
+                (.highlight, objectPosition + SIMD3<Float>(-0.05, objectHeight * 0.86, 0)),
+                (.lightSide, objectPosition + SIMD3<Float>(-0.08, objectHeight * 0.62, 0)),
+                (.terminator, objectPosition + SIMD3<Float>(0, objectHeight * 0.72, 0.07)),
+                (.coreShadow, objectPosition + SIMD3<Float>(0, objectHeight * 0.5, 0)),
+                (.reflectedLight, objectPosition + SIMD3<Float>(0.04, objectHeight * 0.34, 0.06)),
                 (.castShadow, objectPosition + shadowOffset(light: selectedLight, object: objectPosition, scale: 0.24)),
-                (.contactShadow, objectPosition + shadowSide * 0.08 + SIMD3<Float>(0, 0.025, 0))
+                (.contactShadow, objectPosition + SIMD3<Float>(0, 0.025, 0.08))
             ]
         }
 

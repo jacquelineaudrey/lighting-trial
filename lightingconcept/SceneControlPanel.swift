@@ -356,6 +356,9 @@ struct SceneControlPanel: View {
             light.yawDegrees = atan2(delta.x, -delta.z).radiansToDegrees
             let horizontal = sqrt(delta.x * delta.x + delta.z * delta.z)
             light.pitchDegrees = atan2(delta.y, horizontal).radiansToDegrees
+        }
+    }
+    
     private var selectedTextureBinding: Binding<MaterialTexture> {
         Binding {
             viewModel.selectedTexture
