@@ -36,6 +36,11 @@ final class ARSceneViewModel: ObservableObject {
     @Published var pendingRescanSurface = false
     @Published var sceneRevision = 0
 
+    @Published var isViewFrozen = false
+    @Published var pendingCaptureSnapshot = false
+    @Published var isSavingSnapshot = false
+    @Published var snapshotFeedback: SnapshotFeedback?
+
     init() {
         let initialObject = ObjectConfiguration.defaultObject()
         let initialLight = LightConfiguration.defaultLight()
@@ -257,6 +262,17 @@ final class ARSceneViewModel: ObservableObject {
 
     func rescanSurface() {
         pendingRescanSurface.toggle()
+    }
+
+    func toggleFreeze() {
+        isViewFrozen.toggle()
+        debugLog(isViewFrozen ? "AR view frozen" : "AR view resumed")
+    }
+
+    func captureSnapshot() {
+        guard isViewFrozen, !isSavingSnapshot else { return }
+        isSavingSnapshot = true
+        pendingCaptureSnapshot.toggle()
     }
 
     func debugLog(_ message: String) {
