@@ -24,6 +24,8 @@ final class ARSceneViewModel: ObservableObject {
     @Published var selectedConcept: ShadowConcept?
     @Published var shadowInfo = ShadowInfo()
     @Published var collisionWarning: String?
+    @Published var isImportingModel = false
+    @Published var modelImportFailure: ModelImportFailure?
 
     @Published var pendingResetObject = false
     @Published var pendingResetScene = false
@@ -67,7 +69,18 @@ final class ARSceneViewModel: ObservableObject {
 
     var selectedObjectType: LearningObjectType {
         get { selectedObject.type }
-        set { updateSelectedObject { $0.type = newValue } }
+        set {
+            guard let index = objects.firstIndex(where: { $0.id == selectedObjectID }) else { return }
+            var object = objects[index]
+            object.type = newValue
+            if object.importedModel != nil {
+                object.importedModel = nil
+                object.name = "Object \(index + 1)"
+            }
+            guard object != objects[index] else { return }
+            objects[index] = object
+            sceneRevision += 1
+        }
     }
 
     var objectScale: Float {
@@ -98,21 +111,60 @@ final class ARSceneViewModel: ObservableObject {
 
     func addObject() {
         let index = objects.count
-        let slot = index - 1
-        let ring = Float(slot / 6)
-        let angle = Float(slot % 6) * (.pi / 3)
-        let radius: Float = 0.28 + ring * 0.25
-        let position = SIMD3<Float>(cos(angle) * radius, 0, sin(angle) * radius)
         let object = ObjectConfiguration.defaultObject(
             index: index + 1,
             type: selectedObjectType,
-            position: position
+            position: nextObjectPosition()
         )
         objects.append(object)
         selectedObjectID = object.id
         interactionMode = .moveObject
         sceneRevision += 1
         debugLog("Additional object created: \(object.name)")
+    }
+
+    func importModels(from sourceURLs: [URL]) {
+        guard !sourceURLs.isEmpty, !isImportingModel else { return }
+        isImportingModel = true
+
+        Task {
+            defer { isImportingModel = false }
+            var failedModelNames: [String] = []
+
+            for sourceURL in sourceURLs {
+                let displayName = sourceURL.deletingPathExtension().lastPathComponent
+                do {
+                    let storedURL = try await Task.detached(priority: .userInitiated) {
+                        try ImportedModelStore.copyIntoTemporaryStorage(from: sourceURL)
+                    }.value
+                    addImportedModel(fileURL: storedURL, displayName: displayName)
+                } catch {
+                    failedModelNames.append(displayName)
+                    debugLog("Model import failed: \(error.localizedDescription)")
+                }
+            }
+
+            if !failedModelNames.isEmpty {
+                modelImportFailure = ModelImportFailure(
+                    message: "Could not import: \(failedModelNames.joined(separator: ", "))."
+                )
+            }
+        }
+    }
+
+    func updateImportedModelDimensions(id: UUID, dimensions: SIMD3<Float>) {
+        guard let index = objects.firstIndex(where: { $0.id == id }),
+              objects[index].importedModel != nil,
+              objects[index].importedModel?.dimensions != dimensions else { return }
+        objects[index].importedModel?.dimensions = dimensions
+        sceneRevision += 1
+    }
+
+    func reportModelLoadFailure(named name: String, error: any Error) {
+        modelImportFailure = ModelImportFailure(
+            message: "\(name) could not be loaded. \(error.localizedDescription)"
+        )
+        debugLog("Imported model load failed: \(error.localizedDescription)")
     }
 
     func removeSelectedObject() {
@@ -181,5 +233,32 @@ final class ARSceneViewModel: ObservableObject {
 
     func debugLog(_ message: String) {
         print("[ARShadowLearning] \(message)")
+    }
+
+    private func addImportedModel(fileURL: URL, displayName: String) {
+        let index = objects.count
+        var object = ObjectConfiguration.defaultObject(
+            index: index + 1,
+            type: .cuboid,
+            position: nextObjectPosition()
+        )
+        object.name = displayName.isEmpty ? "Imported Model" : displayName
+        object.importedModel = ImportedModelConfiguration(
+            fileURL: fileURL,
+            displayName: object.name
+        )
+        objects.append(object)
+        selectedObjectID = object.id
+        interactionMode = .moveObject
+        sceneRevision += 1
+        debugLog("Imported model added: \(object.name)")
+    }
+
+    private func nextObjectPosition() -> SIMD3<Float> {
+        let slot = max(objects.count - 1, 0)
+        let ring = Float(slot / 6)
+        let angle = Float(slot % 6) * (.pi / 3)
+        let radius: Float = 0.28 + ring * 0.25
+        return SIMD3<Float>(cos(angle) * radius, 0, sin(angle) * radius)
     }
 }

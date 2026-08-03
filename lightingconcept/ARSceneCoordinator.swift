@@ -10,8 +10,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var coachingOverlay: ARCoachingOverlayView?
 
     private var sceneAnchor: AnchorEntity?
-    private var objectEntities: [UUID: ModelEntity] = [:]
-    private var objectTypes: [UUID: LearningObjectType] = [:]
+    private var objectEntities: [UUID: Entity] = [:]
+    private var objectSourceKeys: [UUID: String] = [:]
+    private var objectLoadTasks: [UUID: Task<Void, Never>] = [:]
     private var lightEntities: [UUID: LightSceneEntities] = [:]
 
     private let projectionRenderer = ProjectionLineRenderer()
@@ -261,7 +262,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         var localPosition = anchor.convert(position: worldPosition, from: nil)
         localPosition.y = 0
 
-        let height = ObjectFactory.objectHeight(for: selectedObject.type) * selectedObject.scale
+        let height = ObjectFactory.objectHeight(for: selectedObject) * selectedObject.scale
         let centerOffset = SIMD3<Float>(0, height / 2, 0)
         let virtualResolution = collisionManager.resolvedPosition(
             candidatePosition: localPosition + centerOffset,
@@ -351,36 +352,53 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private func syncObjects(on anchor: AnchorEntity) {
         let currentIDs = Set(viewModel.objects.map { $0.id })
         for (id, entity) in objectEntities where !currentIDs.contains(id) {
+            objectLoadTasks[id]?.cancel()
+            objectLoadTasks[id] = nil
             entity.removeFromParent()
             objectEntities[id] = nil
-            objectTypes[id] = nil
+            objectSourceKeys[id] = nil
             collisionManager.removeObstacle(id: id)
             viewModel.debugLog("Object deletion cleaned up from scene")
         }
 
         let textureChanged = lastTexture != viewModel.selectedTexture
         for configuration in viewModel.objects {
+            let sourceKey = objectSourceKey(for: configuration)
             let needsReplacement = objectEntities[configuration.id] == nil
-                || objectTypes[configuration.id] != configuration.type
-                || textureChanged
+                || objectSourceKeys[configuration.id] != sourceKey
+                || (configuration.importedModel == nil && textureChanged)
 
-            let entity: ModelEntity
             if needsReplacement {
+                objectLoadTasks[configuration.id]?.cancel()
+                objectLoadTasks[configuration.id] = nil
                 objectEntities[configuration.id]?.removeFromParent()
-                entity = ObjectFactory.makeObject(
-                    type: configuration.type,
-                    texture: viewModel.selectedTexture
-                )
-                anchor.addChild(entity)
-                objectEntities[configuration.id] = entity
-                objectTypes[configuration.id] = configuration.type
-                viewModel.debugLog("Object synchronized: \(configuration.name) — \(configuration.type.rawValue)")
-            } else if let existingEntity = objectEntities[configuration.id] {
-                entity = existingEntity
-            } else {
-                continue
+
+                if let importedModel = configuration.importedModel {
+                    let placeholder = ObjectFactory.makeObject(type: .cuboid)
+                    anchor.addChild(placeholder)
+                    objectEntities[configuration.id] = placeholder
+                    objectSourceKeys[configuration.id] = sourceKey
+                    loadImportedObject(
+                        importedModel,
+                        objectID: configuration.id,
+                        sourceKey: sourceKey,
+                        on: anchor
+                    )
+                } else {
+                    let entity = ObjectFactory.makeObject(
+                        type: configuration.type,
+                        texture: viewModel.selectedTexture
+                    )
+                    anchor.addChild(entity)
+                    objectEntities[configuration.id] = entity
+                    objectSourceKeys[configuration.id] = sourceKey
+                    viewModel.debugLog(
+                        "Object synchronized: \(configuration.name) — \(configuration.type.rawValue)"
+                    )
+                }
             }
 
+            guard let entity = objectEntities[configuration.id] else { continue }
             applyObjectTransform(to: entity, configuration: configuration)
             collisionManager.registerObstacle(
                 id: configuration.id,
@@ -390,6 +408,110 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
 
         lastTexture = viewModel.selectedTexture
+    }
+
+    private func loadImportedObject(
+        _ importedModel: ImportedModelConfiguration,
+        objectID: UUID,
+        sourceKey: String,
+        on anchor: AnchorEntity
+    ) {
+        objectLoadTasks[objectID] = Task { [weak self, weak anchor] in
+            guard let self else { return }
+
+            do {
+                let loadedEntity = try await Entity(contentsOf: importedModel.fileURL)
+                try Task.checkCancellation()
+                guard let anchor,
+                      self.objectSourceKeys[objectID] == sourceKey,
+                      let configuration = self.viewModel.objects.first(where: { $0.id == objectID }),
+                      configuration.importedModel?.fileURL == importedModel.fileURL else { return }
+
+                let normalizedObject = try self.makeNormalizedImportedObject(
+                    from: loadedEntity,
+                    name: importedModel.displayName
+                )
+                self.objectEntities[objectID]?.removeFromParent()
+                anchor.addChild(normalizedObject.entity)
+                self.objectEntities[objectID] = normalizedObject.entity
+                self.objectLoadTasks[objectID] = nil
+                self.viewModel.updateImportedModelDimensions(
+                    id: objectID,
+                    dimensions: normalizedObject.dimensions
+                )
+
+                let updatedConfiguration = self.viewModel.objects.first(where: { $0.id == objectID })
+                    ?? configuration
+                self.applyObjectTransform(
+                    to: normalizedObject.entity,
+                    configuration: updatedConfiguration
+                )
+                self.collisionManager.registerObstacle(
+                    id: objectID,
+                    position: self.obstaclePosition(for: updatedConfiguration),
+                    radius: ObjectFactory.collisionRadius(for: updatedConfiguration)
+                )
+                self.lastSceneSignature = nil
+                self.viewModel.debugLog("Imported 3D model loaded: \(importedModel.displayName)")
+            } catch is CancellationError {
+                self.objectLoadTasks[objectID] = nil
+            } catch {
+                self.objectLoadTasks[objectID] = nil
+                self.viewModel.reportModelLoadFailure(
+                    named: importedModel.displayName,
+                    error: error
+                )
+            }
+        }
+    }
+
+    private func makeNormalizedImportedObject(
+        from loadedEntity: Entity,
+        name: String
+    ) throws -> (entity: Entity, dimensions: SIMD3<Float>) {
+        let normalizer = Entity()
+        normalizer.addChild(loadedEntity)
+        let bounds = normalizer.visualBounds(recursive: true, relativeTo: normalizer)
+        let rawDimensions = bounds.extents
+        let largestDimension = max(rawDimensions.x, rawDimensions.y, rawDimensions.z)
+
+        guard largestDimension.isFinite, largestDimension > 0.0001 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
+        let normalizationScale = ImportedModelConfiguration.targetMaximumDimension / largestDimension
+        let dimensions = SIMD3<Float>(
+            max(rawDimensions.x * normalizationScale, 0.002),
+            max(rawDimensions.y * normalizationScale, 0.002),
+            max(rawDimensions.z * normalizationScale, 0.002)
+        )
+        normalizer.scale = SIMD3<Float>(repeating: normalizationScale)
+        normalizer.position = -bounds.center * normalizationScale
+
+        let container = Entity()
+        container.name = name
+        container.addChild(normalizer)
+        container.components.set(
+            CollisionComponent(shapes: [.generateBox(size: dimensions)])
+        )
+        enableDynamicShadows(on: loadedEntity)
+        return (container, dimensions)
+    }
+
+    private func enableDynamicShadows(on entity: Entity) {
+        if entity is ModelEntity {
+            entity.components.set(DynamicLightShadowComponent(castsShadow: true))
+        }
+        for child in entity.children {
+            enableDynamicShadows(on: child)
+        }
+    }
+
+    private func objectSourceKey(for object: ObjectConfiguration) -> String {
+        if let importedModel = object.importedModel {
+            return "imported:\(importedModel.fileURL.path)"
+        }
+        return "primitive:\(object.type.rawValue)"
     }
 
     private func syncLights(on anchor: AnchorEntity) {
@@ -462,16 +584,21 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         to candidateGroundPosition: SIMD3<Float>,
         relativeTo anchor: Entity
     ) -> (position: SIMD3<Float>, didCollide: Bool) {
-        let dimensions = ObjectFactory.baseDimensions(for: object.type) * object.scale
+        let dimensions = ObjectFactory.baseDimensions(for: object) * object.scale
         let height = dimensions.y
         let clearance = Self.lidarClearance
         let centerOffset = SIMD3<Float>(0, height / 2 + clearance, 0)
         let shape: ShapeResource
 
-        switch object.type {
-        case .sphere:
+        if object.importedModel != nil {
+            shape = .generateBox(size: SIMD3<Float>(
+                max(dimensions.x - clearance * 2, 0.001),
+                max(height - clearance * 2, 0.001),
+                max(dimensions.z - clearance * 2, 0.001)
+            ))
+        } else if object.type == .sphere {
             shape = .generateSphere(radius: max(height / 2 - clearance, 0.001))
-        case .cube, .cuboid, .cylinder, .cone, .hemisphere, .squarePyramid, .triangularPyramid:
+        } else {
             shape = .generateBox(size: SIMD3<Float>(
                 max(dimensions.x - clearance * 2, 0.001),
                 max(height - clearance * 2, 0.001),
@@ -644,10 +771,14 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
 
     private func resetScene() {
+        for task in objectLoadTasks.values {
+            task.cancel()
+        }
         sceneAnchor?.removeFromParent()
         sceneAnchor = nil
         objectEntities.removeAll()
-        objectTypes.removeAll()
+        objectSourceKeys.removeAll()
+        objectLoadTasks.removeAll()
         lightEntities.removeAll()
         collisionManager.removeAll()
         receiverManager.reset()
@@ -696,19 +827,25 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func selectObject(containing entity: Entity) -> Bool {
-        for (id, object) in objectEntities where entity == object {
-            viewModel.selectedObjectID = id
-            viewModel.debugLog("Selected object changed")
-            return true
+        for (id, object) in objectEntities {
+            var candidate: Entity? = entity
+            while let current = candidate {
+                if current == object {
+                    viewModel.selectedObjectID = id
+                    viewModel.debugLog("Selected object changed")
+                    return true
+                }
+                candidate = current.parent
+            }
         }
         return false
     }
 
     private func applyObjectTransform(
-        to object: ModelEntity,
+        to object: Entity,
         configuration: ObjectConfiguration
     ) {
-        let scaledHeight = ObjectFactory.objectHeight(for: configuration.type) * configuration.scale
+        let scaledHeight = ObjectFactory.objectHeight(for: configuration) * configuration.scale
         object.position = SIMD3<Float>(
             configuration.position.x,
             scaledHeight / 2,
@@ -723,13 +860,13 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private var scaledObjectHeight: Float {
         let selectedObject = viewModel.selectedObject
-        return ObjectFactory.objectHeight(for: selectedObject.type) * selectedObject.scale
+        return ObjectFactory.objectHeight(for: selectedObject) * selectedObject.scale
     }
 
     private func obstaclePosition(for object: ObjectConfiguration) -> SIMD3<Float> {
         object.position + SIMD3<Float>(
             0,
-            ObjectFactory.objectHeight(for: object.type) * object.scale / 2,
+            ObjectFactory.objectHeight(for: object) * object.scale / 2,
             0
         )
     }

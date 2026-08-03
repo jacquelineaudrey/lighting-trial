@@ -97,8 +97,16 @@ enum ObjectFactory {
         }
     }
 
+    static func baseDimensions(for object: ObjectConfiguration) -> SIMD3<Float> {
+        object.importedModel?.dimensions ?? baseDimensions(for: object.type)
+    }
+
+    static func objectHeight(for object: ObjectConfiguration) -> Float {
+        baseDimensions(for: object).y
+    }
+
     static func collisionRadius(for object: ObjectConfiguration) -> Float {
-        simd_length(baseDimensions(for: object.type) * object.scale) / 2
+        simd_length(baseDimensions(for: object) * object.scale) / 2
     }
 
     static func cubeTopVertices(center: SIMD3<Float>) -> [SIMD3<Float>] {

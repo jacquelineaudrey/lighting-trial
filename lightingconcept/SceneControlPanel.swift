@@ -34,6 +34,13 @@ struct SceneControlPanel: View {
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+        .alert(item: $viewModel.modelImportFailure) { failure in
+            Alert(
+                title: Text("Couldn’t Import 3D Model"),
+                message: Text(failure.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
 
     private var objectControls: some View {
@@ -46,7 +53,7 @@ struct SceneControlPanel: View {
                 Menu {
                     Picker("Active Object", selection: $viewModel.selectedObjectID) {
                         ForEach(viewModel.objects) { object in
-                            Text("\(object.name) — \(object.type.rawValue)")
+                            Text("\(object.name) — \(object.displayTypeName)")
                                 .tag(object.id)
                         }
                     }
@@ -61,7 +68,7 @@ struct SceneControlPanel: View {
                             Text(viewModel.selectedObject.name)
                                 .font(.headline)
                                 .foregroundStyle(.primary)
-                            Text(viewModel.selectedObject.type.rawValue)
+                            Text(viewModel.selectedObject.displayTypeName)
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -86,7 +93,7 @@ struct SceneControlPanel: View {
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .accessibilityLabel("Active Object")
                 .accessibilityValue(
-                    "\(viewModel.selectedObject.name), \(viewModel.selectedObject.type.rawValue), \(viewModel.objects.count) objects"
+                    "\(viewModel.selectedObject.name), \(viewModel.selectedObject.displayTypeName), \(viewModel.objects.count) objects"
                 )
 
                 Divider()
@@ -105,7 +112,12 @@ struct SceneControlPanel: View {
             .padding(10)
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
 
-            ObjectShapePreviewPicker(selection: $viewModel.selectedObjectType)
+            ImportedModelControls(viewModel: viewModel)
+
+            ObjectShapePreviewPicker(
+                selection: $viewModel.selectedObjectType,
+                showsSelection: !viewModel.selectedObject.isImportedModel
+            )
 
             Picker("Mode", selection: $viewModel.interactionMode) {
                 ForEach(InteractionMode.allCases) { mode in
@@ -116,7 +128,7 @@ struct SceneControlPanel: View {
 
             sliderRow("Object Size", value: $viewModel.objectScale, range: 0.35...1.6, step: 0.05, suffix: "x")
 
-            if viewModel.selectedObjectType.supportsYawRotation {
+            if viewModel.selectedObject.supportsYawRotation {
                 sliderRow("Object Rotation", value: $viewModel.objectYawDegrees, range: -180...180, step: 1, suffix: "deg")
             }
 
@@ -309,7 +321,7 @@ struct SceneControlPanel: View {
             let selectedObject = viewModel.selectedObject
             let target = selectedObject.position + SIMD3<Float>(
                 0,
-                ObjectFactory.objectHeight(for: selectedObject.type) * selectedObject.scale / 2,
+                ObjectFactory.objectHeight(for: selectedObject) * selectedObject.scale / 2,
                 0
             )
             let delta = target - light.position

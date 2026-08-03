@@ -31,6 +31,19 @@ struct ObjectConfiguration: Identifiable, Equatable {
     var scale: Float
     var yawDegrees: Float
     var position: SIMD3<Float>
+    var importedModel: ImportedModelConfiguration?
+
+    var displayTypeName: String {
+        importedModel?.displayTypeName ?? type.rawValue
+    }
+
+    var isImportedModel: Bool {
+        importedModel != nil
+    }
+
+    var supportsYawRotation: Bool {
+        isImportedModel || type.supportsYawRotation
+    }
 
     static func defaultObject(
         index: Int = 1,
@@ -43,7 +56,8 @@ struct ObjectConfiguration: Identifiable, Equatable {
             type: type,
             scale: 1,
             yawDegrees: 0,
-            position: position
+            position: position,
+            importedModel: nil
         )
     }
 }

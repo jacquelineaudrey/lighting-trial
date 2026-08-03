@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ObjectShapePreviewPicker: View {
     @Binding var selection: LearningObjectType
+    var showsSelection = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -35,15 +36,15 @@ struct ObjectShapePreviewPicker: View {
                             .frame(width: 100)
                             .padding(.vertical, 7)
                             .background(
-                                selection == type ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08),
+                                isSelected(type) ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.08),
                                 in: RoundedRectangle(cornerRadius: 8)
                             )
                             .overlay {
                                 RoundedRectangle(cornerRadius: 8)
-                                    .stroke(selection == type ? Color.accentColor : .clear, lineWidth: 2)
+                                    .stroke(isSelected(type) ? Color.accentColor : .clear, lineWidth: 2)
                             }
                             .overlay(alignment: .topTrailing) {
-                                if selection == type {
+                                if isSelected(type) {
                                     Image(systemName: "checkmark.circle.fill")
                                         .foregroundStyle(.tint)
                                         .background(.background, in: Circle())
@@ -53,12 +54,16 @@ struct ObjectShapePreviewPicker: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Choose \(type.rawValue)")
-                        .accessibilityValue(selection == type ? "Selected" : "Not selected")
+                        .accessibilityValue(isSelected(type) ? "Selected" : "Not selected")
                     }
                 }
             }
             .scrollIndicators(.hidden)
         }
+    }
+
+    private func isSelected(_ type: LearningObjectType) -> Bool {
+        showsSelection && selection == type
     }
 
     private static func draw(
