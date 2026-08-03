@@ -1,19 +1,39 @@
 import RealityKit
+import Combine
 import UIKit
 
 final class ShadowAnnotationManager {
     private let root = Entity()
-    private var labels: [ModelEntity] = []
+    private var dots: [ModelEntity] = []
+    private var pulseRings: [PulseRing] = []
+    private var updateSubscription: Cancellable?
+    private static var cachedRingTexture: TextureResource?
+
+    private let dotRadius: Float = 0.004
+    private let tapTargetRadius: Float = 0.01
+    private let ringDiameter: Float = 0.01
+    private let pulseStartScale: Float = 1.0
+    private let pulseEndScale: Float = 2.6
+    private let pulseDuration: TimeInterval = 1.3
+    private let markerColor: UIColor = .white
+
+    private struct PulseRing {
+        let entity: ModelEntity
+        let startTime: Date
+    }
 
     func attach(to anchor: AnchorEntity) {
         if root.parent == nil {
             anchor.addChild(root)
         }
+        subscribeToUpdatesIfNeeded()
     }
 
     func clear() {
-        labels.forEach { $0.removeFromParent() }
-        labels.removeAll()
+        dots.forEach { $0.removeFromParent() }
+        dots.removeAll()
+        pulseRings.forEach { $0.entity.removeFromParent() }
+        pulseRings.removeAll()
     }
 
     func update(
@@ -26,11 +46,9 @@ final class ShadowAnnotationManager {
         clear()
         guard visible else { return }
 
+        subscribeToUpdatesIfNeeded()
+
         let concepts: [(ShadowConcept, SIMD3<Float>)]
-        let lightSide = horizontalDirection(from: objectPosition, to: selectedLight.position)
-        let shadowSide = -lightSide
-        let sideLift = SIMD3<Float>(0, objectHeight * 0.55, 0)
-        let topLift = SIMD3<Float>(0, objectHeight * 0.82, 0)
         if objectType == .cube {
             concepts = [
                 (.lightSide, objectPosition + lightSide * 0.11 + topLift),
@@ -39,7 +57,6 @@ final class ShadowAnnotationManager {
                 (.contactShadow, objectPosition + shadowSide * 0.08 + SIMD3<Float>(0, 0.025, 0))
             ]
         } else {
-            let perpendicular = SIMD3<Float>(-lightSide.z, 0, lightSide.x)
             concepts = [
                 (.highlight, objectPosition + lightSide * 0.07 + topLift),
                 (.lightSide, objectPosition + lightSide * 0.1 + sideLift),
@@ -52,37 +69,79 @@ final class ShadowAnnotationManager {
         }
 
         for (concept, position) in concepts {
-            addLabel(concept: concept, position: position)
+            addMarker(concept: concept, position: position)
         }
     }
 
-    private func addLabel(concept: ShadowConcept, position: SIMD3<Float>) {
-        let mesh = MeshResource.generateText(
-            concept.rawValue,
-            extrusionDepth: 0.001,
-            font: .systemFont(ofSize: 0.026, weight: .semibold),
-            containerFrame: CGRect(x: 0, y: 0, width: 0.24, height: 0.08),
-            alignment: .center,
-            lineBreakMode: .byWordWrapping
+    private func subscribeToUpdatesIfNeeded() {
+        guard updateSubscription == nil, let scene = root.scene else { return }
+        updateSubscription = scene.subscribe(to: SceneEvents.Update.self) { [weak self] _ in
+            self?.advancePulses()
+        }
+    }
+
+    private func addMarker(concept: ShadowConcept, position: SIMD3<Float>) {
+        let dot = ModelEntity(
+            mesh: .generateSphere(radius: dotRadius),
+            materials: [UnlitMaterial(color: markerColor)]
         )
-        let material = UnlitMaterial(color: .white)
-        let label = ModelEntity(mesh: mesh, materials: [material])
-        label.name = "Label: \(concept.rawValue)"
-        label.position = position
-        label.scale = SIMD3<Float>(repeating: 0.6)
-        label.components.set(DynamicLightShadowComponent(castsShadow: false))
-        label.components.set(GroundingShadowComponent(castsShadow: false, receivesShadow: false))
-        root.addChild(label)
-        labels.append(label)
+        dot.name = "Label: \(concept.rawValue)"
+        dot.position = position
+        dot.components.set(CollisionComponent(shapes: [.generateSphere(radius: tapTargetRadius)]))
+        root.addChild(dot)
+        dots.append(dot)
+
+        let ringMesh = MeshResource.generatePlane(width: ringDiameter, height: ringDiameter)
+        let ring = ModelEntity(mesh: ringMesh, materials: [ShadowAnnotationManager.ringMaterial(alpha: 1.0)])
+        ring.name = "Pulse ring: \(concept.rawValue)"
+        ring.position = position
+        ring.components.set(BillboardComponent())
+        root.addChild(ring)
+        pulseRings.append(PulseRing(entity: ring, startTime: Date()))
     }
 
-    private func horizontalDirection(from start: SIMD3<Float>, to end: SIMD3<Float>) -> SIMD3<Float> {
-        let direction = SIMD3<Float>(end.x - start.x, 0, end.z - start.z)
-        let length = simd_length(direction)
-        guard length > 0.0001 else {
-            return SIMD3<Float>(-1, 0, 0)
+    private func advancePulses() {
+        let now = Date()
+        for pulse in pulseRings {
+            let elapsed = now.timeIntervalSince(pulse.startTime).truncatingRemainder(dividingBy: pulseDuration)
+            let t = Float(elapsed / pulseDuration)
+
+            let scale = pulseStartScale + (pulseEndScale - pulseStartScale) * t
+            pulse.entity.scale = SIMD3<Float>(repeating: scale)
+
+            let alpha = 1.0 - t
+            if var model = pulse.entity.components[ModelComponent.self] {
+                model.materials = [ShadowAnnotationManager.ringMaterial(alpha: alpha)]
+                pulse.entity.components[ModelComponent.self] = model
+            }
         }
-        return direction / length
+    }
+
+    private static func ringMaterial(alpha: Float) -> UnlitMaterial {
+        var material = UnlitMaterial()
+        if let texture = cachedRingTexture ?? generateRingTexture() {
+            cachedRingTexture = texture
+            material.color = .init(tint: .white.withAlphaComponent(CGFloat(alpha)), texture: .init(texture))
+        } else {
+            material.color = .init(tint: .white.withAlphaComponent(CGFloat(alpha)))
+        }
+        material.blending = .transparent(opacity: .init(floatLiteral: alpha))
+        return material
+    }
+
+    private static func generateRingTexture(size: CGFloat = 256, strokeWidthFraction: CGFloat = 0.1) -> TextureResource? {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        let image = renderer.image { context in
+            let rect = CGRect(x: 0, y: 0, width: size, height: size)
+            context.cgContext.clear(rect)
+            let lineWidth = size * strokeWidthFraction
+            let ringRect = rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
+            context.cgContext.setStrokeColor(UIColor.white.cgColor)
+            context.cgContext.setLineWidth(lineWidth)
+            context.cgContext.strokeEllipse(in: ringRect)
+        }
+        guard let cgImage = image.cgImage else { return nil }
+        return try? TextureResource(image: cgImage, withName: nil, options: .init(semantic: .color))
     }
 
     private func shadowOffset(light: LightConfiguration, object: SIMD3<Float>, scale: Float) -> SIMD3<Float> {

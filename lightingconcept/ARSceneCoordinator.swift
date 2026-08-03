@@ -32,7 +32,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var defaultObjectPosition = SIMD3<Float>(0, 0, 0)
     private var verticalLightPanStartHeight: Float?
     private var lastAppliedObjectYawDegrees: Float?
-    private var hasLoggedLiDARMeshOcclusion = false
+    private weak var selectedConceptEntity: Entity?
 
     init(viewModel: ARSceneViewModel) {
         self.viewModel = viewModel
@@ -172,6 +172,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         if let entity = arView.entity(at: location),
            entity.name.hasPrefix("Label: ") {
             let conceptName = entity.name.replacingOccurrences(of: "Label: ", with: "")
+            selectedConceptEntity = entity
+            viewModel.selectedConceptTapLocation = location
             viewModel.selectedConcept = ShadowConcept.allCases.first { $0.rawValue == conceptName }
             return
         }
@@ -667,27 +669,15 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
-    nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+    nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
         Task { @MainActor in
-            self.updateLiDARMeshOcclusion(from: anchors)
-        }
-    }
-
-    nonisolated func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
-        Task { @MainActor in
-            self.lidarMeshOcclusionManager.remove(anchors: anchors)
-        }
-    }
-
-    private func updateLiDARMeshOcclusion(from anchors: [ARAnchor]) {
-        guard usesSceneReconstruction, let arView else { return }
-        let result = lidarMeshOcclusionManager.update(from: anchors, in: arView)
-        if result.updatedCount > 0 {
-            viewModel.updateLiDARScan(meshCount: result.meshCount, faceCount: result.faceCount)
-        }
-        if result.updatedCount > 0, !hasLoggedLiDARMeshOcclusion {
-            hasLoggedLiDARMeshOcclusion = true
-            viewModel.debugLog("LiDAR scan mesh visualization updated; ARKit scene understanding handles occlusion")
+            guard self.viewModel.selectedConcept != nil,
+                  let arView = self.arView,
+                  let entity = self.selectedConceptEntity else { return }
+            let worldPosition = entity.position(relativeTo: nil)
+            if let screenPoint = arView.project(worldPosition) {
+                self.viewModel.selectedConceptTapLocation = screenPoint
+            }
         }
     }
 

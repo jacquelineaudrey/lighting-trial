@@ -28,30 +28,26 @@ struct ContentView: View {
                     }
             } else {
                 sceneCanvas
-                    .onAppear {
-                        isControlSheetPresented = true
+                    .overlay(alignment: .bottom) {
+                        if viewModel.selectedConcept == nil {
+                            SceneControlPanel(viewModel: viewModel)
+                                .padding(.horizontal, 12)
+                                .padding(.bottom, 10)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                     }
-                    .sheet(isPresented: $isControlSheetPresented) {
-                        SceneControlPanel(viewModel: viewModel)
-                            .presentationDetents([.height(170), .medium, .large], selection: $controlSheetDetent)
-                            .presentationDragIndicator(.visible)
-                            .presentationBackground(.regularMaterial)
-                            .presentationBackgroundInteraction(.enabled(upThrough: .height(170)))
-                            .presentationContentInteraction(.scrolls)
-                            .interactiveDismissDisabled()
-                    }
+                    .animation(.easeInOut(duration: 0.25), value: viewModel.selectedConcept)
             }
         }
-        .alert(
-            viewModel.selectedConcept?.rawValue ?? "Shadow Concept",
-            isPresented: selectedConceptAlertBinding
-        ) {
-            Button("OK", role: .cancel) {
-                viewModel.selectedConcept = nil
+        .overlay {
+            if let concept = viewModel.selectedConcept {
+                ShadowConceptOverlayView(concept: concept, tapLocation: viewModel.selectedConceptTapLocation) {
+                    viewModel.selectedConcept = nil
+                }
+                .transition(.opacity)
             }
-        } message: {
-            Text(viewModel.selectedConcept?.explanation ?? "")
         }
+        .animation(.easeInOut(duration: 0.2), value: viewModel.selectedConcept)
     }
 
     private var sceneCanvas: some View {
@@ -124,19 +120,73 @@ private struct StatusBanner: View {
     }
 }
 
-private struct LiDARScanProgressCard: View {
-    @ObservedObject var viewModel: ARSceneViewModel
+private struct ShadowConceptOverlayView: View {
+    let concept: ShadowConcept
+    let tapLocation: CGPoint
+    let onDismiss: () -> Void
+
+    private let holeRadius: CGFloat = 50
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label("LiDAR Surface Scan", systemImage: "cube.transparent")
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                Text(viewModel.isReadyForPlacement ? "Ready" : "\(Int(viewModel.lidarPlacementProgress * 100))%")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+        ZStack {
+            SpotlightCutoutShape(holeCenter: tapLocation, holeRadius: holeRadius)
+                .fill(Color.black.opacity(0.55), style: FillStyle(eoFill: true))
+
+            Circle()
+                .stroke(Color.white.opacity(0.6), lineWidth: 2)
+                .frame(width: holeRadius * 2, height: holeRadius * 2)
+                .position(tapLocation)
+
+            VStack(alignment: .leading, spacing: 16) {
+                Text(concept.rawValue)
+                    .font(.title2.bold())
+                    .foregroundStyle(.white)
+                Text(concept.explanation)
+                    .font(.body)
+                    .foregroundStyle(.white)
+                Text("Tap to dismiss")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .padding(.top, 6)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .multilineTextAlignment(.leading)
+            .padding(.horizontal, 24)
+        }
+        .ignoresSafeArea()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onDismiss()
+        }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Tap to dismiss")
+    }
+}
+
+private struct SpotlightCutoutShape: Shape {
+    var holeCenter: CGPoint
+    var holeRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(holeCenter.x, holeCenter.y) }
+        set {
+            holeCenter.x = newValue.first
+            holeCenter.y = newValue.second
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.addRect(rect)
+        path.addEllipse(in: CGRect(
+            x: holeCenter.x - holeRadius,
+            y: holeCenter.y - holeRadius,
+            width: holeRadius * 2,
+            height: holeRadius * 2
+        ))
+        return path
+    }
+}
 
             ProgressView(value: viewModel.lidarPlacementProgress)
                 .tint(viewModel.isReadyForPlacement ? .green : .cyan)
