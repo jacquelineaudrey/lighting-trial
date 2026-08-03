@@ -269,8 +269,38 @@ struct SceneControlPanel: View {
             Text("On LiDAR devices, RealityKit uses scene-understanding geometry for real-world lighting interaction. Other devices use a faint flat receiver fallback.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Divider()
+
+            Button {
+                viewModel.toggleFreeze()
+            } label: {
+                Text(viewModel.isViewFrozen ? "Resume AR View" : "Freeze AR View")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+
+            Button {
+                viewModel.captureSnapshot()
+            } label: {
+                Text(viewModel.isSavingSnapshot ? "Saving…" : "Save to Photos")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!viewModel.isViewFrozen || viewModel.isSavingSnapshot)
+
+            Text("Freeze pauses the camera feed so you can capture the current lighting and shadow, then save it straight to your Photos gallery.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding(.vertical, 6)
+        .alert(item: $viewModel.snapshotFeedback) { feedback in
+            Alert(
+                title: Text(feedback.isSuccess ? "Saved" : "Couldn't Save"),
+                message: Text(feedback.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
 
     private func sliderRow(_ title: String, value: Binding<Float>, range: ClosedRange<Float>, step: Float, suffix: String) -> some View {

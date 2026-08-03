@@ -56,7 +56,9 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 8) {
-                if viewModel.isLiDARAvailable, !viewModel.isObjectPlaced {
+                if viewModel.isViewFrozen {
+                    StatusBanner(text: "View frozen — save it or resume.", isWarning: false)
+                } else if viewModel.isLiDARAvailable, !viewModel.isObjectPlaced {
                     LiDARScanProgressCard(viewModel: viewModel)
                 } else {
                     StatusBanner(
@@ -65,12 +67,18 @@ struct ContentView: View {
                     )
                 }
 
-                if viewModel.isObjectPlaced || viewModel.surfaceState == .placed {
+                if !viewModel.isViewFrozen, viewModel.isObjectPlaced || viewModel.surfaceState == .placed {
                     InteractionModeControl(viewModel: viewModel)
                 }
             }
             .padding(.top, 12)
             .padding(.horizontal)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if viewModel.isObjectPlaced {
+                FreezeCaptureControl(viewModel: viewModel)
+                    .padding()
+            }
         }
     }
 }
@@ -101,6 +109,55 @@ private struct InteractionModeControl: View {
         .padding(8)
         .background(.thinMaterial, in: Capsule())
         .accessibilityLabel("Interaction Mode")
+    }
+}
+
+private struct FreezeCaptureControl: View {
+    @ObservedObject var viewModel: ARSceneViewModel
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if viewModel.isViewFrozen {
+                Button {
+                    viewModel.captureSnapshot()
+                } label: {
+                    ZStack {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.title3)
+                            .opacity(viewModel.isSavingSnapshot ? 0 : 1)
+                        if viewModel.isSavingSnapshot {
+                            ProgressView()
+                        }
+                    }
+                    .frame(width: 52, height: 52)
+                }
+                .buttonStyle(.borderedProminent)
+                .clipShape(Circle())
+                .disabled(viewModel.isSavingSnapshot)
+                .accessibilityLabel("Save to Photos")
+                .transition(.scale.combined(with: .opacity))
+            }
+
+            Button {
+                viewModel.toggleFreeze()
+            } label: {
+                Image(systemName: viewModel.isViewFrozen ? "play.fill" : "camera.viewfinder")
+                    .font(.title3)
+                    .frame(width: 52, height: 52)
+            }
+            .buttonStyle(.bordered)
+            .background(.thinMaterial, in: Circle())
+            .clipShape(Circle())
+            .accessibilityLabel(viewModel.isViewFrozen ? "Resume AR view" : "Freeze AR view")
+        }
+        .animation(.easeInOut(duration: 0.2), value: viewModel.isViewFrozen)
+        .alert(item: $viewModel.snapshotFeedback) { feedback in
+            Alert(
+                title: Text(feedback.isSuccess ? "Saved" : "Couldn't Save"),
+                message: Text(feedback.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
 }
 

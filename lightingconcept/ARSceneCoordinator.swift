@@ -2,6 +2,7 @@ import Foundation
 import ARKit
 import RealityKit
 import UIKit
+import Photos
 
 @MainActor
 final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayViewDelegate {
@@ -30,6 +31,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var lastSceneSignature: SceneUpdateSignature?
     private var lastResetSceneFlag = false
     private var lastRescanFlag = false
+    private var lastFrozenFlag = false
+    private var lastCaptureFlag = false
     private var defaultObjectPosition = SIMD3<Float>(0, 0, 0)
     private var verticalLightPanStartHeight: Float?
     private var lastAppliedObjectYawDegrees: Float?
@@ -70,6 +73,16 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             rescanSurface()
         }
 
+        if lastFrozenFlag != viewModel.isViewFrozen {
+            lastFrozenFlag = viewModel.isViewFrozen
+            setSessionPaused(viewModel.isViewFrozen)
+        }
+
+        if lastCaptureFlag != viewModel.pendingCaptureSnapshot {
+            lastCaptureFlag = viewModel.pendingCaptureSnapshot
+            captureAndSaveSnapshot()
+        }
+
         guard let anchor = sceneAnchor else { return }
         let signature = currentSceneSignature()
         guard signature != lastSceneSignature else { return }
@@ -102,6 +115,10 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     func coachingOverlayViewDidRequestSessionReset(_ coachingOverlayView: ARCoachingOverlayView) {
         resetScene()
+        if viewModel.isViewFrozen {
+            viewModel.isViewFrozen = false
+            lastFrozenFlag = false
+        }
         viewModel.surfaceState = .scanning
         runSession(resetTracking: true)
         viewModel.debugLog("Coaching overlay requested a full session reset")
@@ -814,10 +831,91 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         hasLoggedLiDARMeshOcclusion = false
         viewModel.resetLiDARScan()
         resetScene()
+        if viewModel.isViewFrozen {
+            viewModel.isViewFrozen = false
+            lastFrozenFlag = false
+        }
         viewModel.surfaceState = .scanning
         runSession(resetTracking: true)
         coachingOverlay?.setActive(true, animated: true)
         viewModel.debugLog("Surface rescan requested")
+    }
+
+    /// Freezing pauses the ARSession so the camera feed stops updating, leaving the
+    /// last rendered frame on screen (including the placed virtual object and shadows).
+    /// Resuming simply restarts the session without resetting tracking/anchors.
+    private func setSessionPaused(_ paused: Bool) {
+        guard let arView else { return }
+        if paused {
+            arView.session.pause()
+            viewModel.debugLog("AR session paused (view frozen)")
+        } else {
+            runSession(resetTracking: false)
+            viewModel.debugLog("AR session resumed (view unfrozen)")
+        }
+    }
+
+    private func captureAndSaveSnapshot() {
+        guard let arView else {
+            viewModel.isSavingSnapshot = false
+            return
+        }
+
+        // arView.snapshot renders exactly what's currently on screen, which is the
+        // frozen frame (virtual content composited over the last camera image).
+        arView.snapshot(saveToHDR: false) { [weak self] image in
+            Task { @MainActor in
+                guard let self else { return }
+                guard let image else {
+                    self.viewModel.isSavingSnapshot = false
+                    self.viewModel.snapshotFeedback = SnapshotFeedback(
+                        isSuccess: false,
+                        message: "Couldn't capture the AR view."
+                    )
+                    self.viewModel.debugLog("AR snapshot capture returned no image")
+                    return
+                }
+                self.saveImageToPhotoLibrary(image)
+            }
+        }
+    }
+
+    private func saveImageToPhotoLibrary(_ image: UIImage) {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+            Task { @MainActor in
+                guard let self else { return }
+                switch status {
+                case .authorized, .limited:
+                    PHPhotoLibrary.shared().performChanges {
+                        PHAssetChangeRequest.creationRequestForAsset(from: image)
+                    } completionHandler: { success, error in
+                        Task { @MainActor in
+                            self.viewModel.isSavingSnapshot = false
+                            if success {
+                                self.viewModel.snapshotFeedback = SnapshotFeedback(
+                                    isSuccess: true,
+                                    message: "Saved the frozen AR view to your Photos."
+                                )
+                                self.viewModel.debugLog("AR snapshot saved to Photos")
+                            } else {
+                                self.viewModel.snapshotFeedback = SnapshotFeedback(
+                                    isSuccess: false,
+                                    message: "Couldn't save the snapshot. \(error?.localizedDescription ?? "")"
+                                )
+                                self.viewModel.debugLog("AR snapshot save failed: \(error?.localizedDescription ?? "unknown error")")
+                            }
+                        }
+                    }
+                default:
+                    self.viewModel.isSavingSnapshot = false
+                    self.viewModel.snapshotFeedback = SnapshotFeedback(
+                        isSuccess: false,
+                        message: "Photo Library access is needed to save snapshots. Enable it in Settings."
+                    )
+                    self.viewModel.debugLog("Photo library access denied or restricted")
+                }
+            }
+        }
     }
 
     private func currentSceneSignature() -> SceneUpdateSignature {
