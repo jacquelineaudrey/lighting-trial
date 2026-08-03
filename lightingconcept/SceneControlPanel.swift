@@ -35,16 +35,90 @@ struct SceneControlPanel: View {
             .scrollContentBackground(.hidden)
         }
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+        .alert(item: $viewModel.modelImportFailure) { failure in
+            Alert(
+                title: Text("Couldn’t Import 3D Model"),
+                message: Text(failure.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
 
     private var objectControls: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Picker("Shape", selection: $viewModel.selectedObjectType) {
-                ForEach(LearningObjectType.allCases) { type in
-                    Text(type.rawValue).tag(type)
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Active Object")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Menu {
+                    Picker("Active Object", selection: $viewModel.selectedObjectID) {
+                        ForEach(viewModel.objects) { object in
+                            Text("\(object.name) — \(object.displayTypeName)")
+                                .tag(object.id)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "cube.transparent")
+                            .font(.title3)
+                            .frame(width: 32, height: 32)
+                            .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(viewModel.selectedObject.name)
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                            Text(viewModel.selectedObject.displayTypeName)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer(minLength: 8)
+
+                        Text("\(viewModel.objects.count)")
+                            .font(.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.quaternary, in: Capsule())
+
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .accessibilityLabel("Active Object")
+                .accessibilityValue(
+                    "\(viewModel.selectedObject.name), \(viewModel.selectedObject.displayTypeName), \(viewModel.objects.count) objects"
+                )
+
+                Divider()
+
+                HStack(spacing: 8) {
+                    Button("Add Object", systemImage: "plus", action: viewModel.addObject)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .buttonStyle(.bordered)
+
+                    Button("Remove", systemImage: "trash", action: viewModel.removeSelectedObject)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .buttonStyle(.bordered)
+                        .disabled(viewModel.objects.count <= 1)
                 }
             }
-            .pickerStyle(.menu)
+            .padding(10)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+
+            ImportedModelControls(viewModel: viewModel)
+
+            ObjectShapePreviewPicker(
+                selection: $viewModel.selectedObjectType,
+                showsSelection: !viewModel.selectedObject.isImportedModel
+            )
 
             Picker("Surface Material", selection: selectedTextureBinding) {
                 ForEach(MaterialTexture.library) { texture in
@@ -60,8 +134,8 @@ struct SceneControlPanel: View {
 
             sliderRow("Object Size", value: $viewModel.objectScale, range: 0.35...1.6, step: 0.05, suffix: "x")
 
-            if viewModel.selectedObjectType == .cube {
-                sliderRow("Cube Rotation", value: $viewModel.objectYawDegrees, range: -180...180, step: 1, suffix: "deg")
+            if viewModel.selectedObject.supportsYawRotation {
+                sliderRow("Object Rotation", value: $viewModel.objectYawDegrees, range: -180...180, step: 1, suffix: "deg")
             }
 
         }
@@ -270,6 +344,18 @@ struct SceneControlPanel: View {
         }
     }
 
+    private func pointSelectedLightAtObject() {
+        viewModel.updateSelectedLight { light in
+            let selectedObject = viewModel.selectedObject
+            let target = selectedObject.position + SIMD3<Float>(
+                0,
+                ObjectFactory.objectHeight(for: selectedObject) * selectedObject.scale / 2,
+                0
+            )
+            let delta = target - light.position
+            light.yawDegrees = atan2(delta.x, -delta.z).radiansToDegrees
+            let horizontal = sqrt(delta.x * delta.x + delta.z * delta.z)
+            light.pitchDegrees = atan2(delta.y, horizontal).radiansToDegrees
     private var selectedTextureBinding: Binding<MaterialTexture> {
         Binding {
             viewModel.selectedTexture

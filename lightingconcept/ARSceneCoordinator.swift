@@ -10,7 +10,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var coachingOverlay: ARCoachingOverlayView?
 
     private var sceneAnchor: AnchorEntity?
-    private var objectEntity: ModelEntity?
+    private var objectEntities: [UUID: Entity] = [:]
+    private var objectSourceKeys: [UUID: String] = [:]
+    private var objectLoadTasks: [UUID: Task<Void, Never>] = [:]
     private var lightEntities: [UUID: LightSceneEntities] = [:]
 
     private let projectionRenderer = ProjectionLineRenderer()
@@ -23,13 +25,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private static let lidarClearance: Float = 0.006
     private var usesSceneReconstruction = false
 
-    private var lastObjectType: LearningObjectType?
     private var lastTexture: MaterialTexture?
     private var lastSceneRevision = -1
     private var lastSceneSignature: SceneUpdateSignature?
     private var lastResetSceneFlag = false
     private var lastRescanFlag = false
-    private var defaultObjectPosition = SIMD3<Float>(0, 0, 0)
     private var verticalLightPanStartHeight: Float?
     private var lastAppliedObjectYawDegrees: Float?
     private weak var selectedConceptEntity: Entity?
@@ -70,16 +70,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
         guard let anchor = sceneAnchor else { return }
         let signature = currentSceneSignature()
-        guard signature != lastSceneSignature || lastObjectType != viewModel.selectedObjectType else { return }
+        guard signature != lastSceneSignature else { return }
 
-        if lastObjectType != viewModel.selectedObjectType || lastTexture != viewModel.selectedTexture {
-            replaceObject(on: anchor)
-            lastObjectType = viewModel.selectedObjectType
-            lastTexture = viewModel.selectedTexture
-        } else if let objectEntity {
-            applyObjectTransform(to: objectEntity)
-        }
-
+        syncObjects(on: anchor)
         syncLights(on: anchor)
         receiverManager.updateSurfaceTexture(viewModel.selectedTexture)
         updateEducationalOverlays()
@@ -185,6 +178,13 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             return
         }
 
+        if let entity = arView.entity(at: location),
+           selectObject(containing: entity) {
+            viewModel.interactionMode = .moveObject
+            synchronizeScene()
+            return
+        }
+
         guard let result = raycastPlane(from: location) else { return }
 
         if sceneAnchor == nil {
@@ -266,7 +266,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         )
         projectionRenderer.attach(to: anchor)
         annotationManager.attach(to: anchor)
-        replaceObject(on: anchor)
+        syncObjects(on: anchor)
         syncLights(on: anchor)
 
         viewModel.surfaceState = .placed
@@ -274,17 +274,10 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         viewModel.debugLog("Object placement completed on selected surface")
     }
 
-    private func replaceObject(on anchor: AnchorEntity) {
-        objectEntity?.removeFromParent()
-        let object = ObjectFactory.makeObject(type: viewModel.selectedObjectType, texture: viewModel.selectedTexture)
-        applyObjectTransform(to: object)
-        anchor.addChild(object)
-        objectEntity = object
-        viewModel.debugLog("Shadow caster changed to \(viewModel.selectedObjectType.rawValue)")
-    }
-
     private func moveObject(to result: ARRaycastResult, logWhenMoved: Bool = false) {
-        guard let anchor = sceneAnchor, let objectEntity else { return }
+        let selectedObject = viewModel.selectedObject
+        guard let anchor = sceneAnchor,
+              let objectEntity = objectEntities[selectedObject.id] else { return }
         let worldPosition = SIMD3<Float>(
             result.worldTransform.columns.3.x,
             result.worldTransform.columns.3.y,
@@ -292,16 +285,37 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         )
         var localPosition = anchor.convert(position: worldPosition, from: nil)
         localPosition.y = 0
-        // Object selalu digrounding ke anchor plane. Tinggi visual dihitung ulang
-        // di `applyObjectTransform` supaya setiap shape tetap duduk di permukaan.
-        let resolution = resolvedObjectPosition(
-            from: defaultObjectPosition,
+
+        let height = ObjectFactory.objectHeight(for: selectedObject) * selectedObject.scale
+        let centerOffset = SIMD3<Float>(0, height / 2, 0)
+        let virtualResolution = collisionManager.resolvedPosition(
+            candidatePosition: localPosition + centerOffset,
+            movingRadius: ObjectFactory.collisionRadius(for: selectedObject),
+            excludingID: selectedObject.id
+        )
+        localPosition = virtualResolution.position - centerOffset
+        localPosition.y = 0
+
+        let lidarResolution = resolvedObjectPosition(
+            object: selectedObject,
+            from: selectedObject.position,
             to: localPosition,
             relativeTo: anchor
         )
-        defaultObjectPosition = resolution.position
-        viewModel.collisionWarning = nil
-        applyObjectTransform(to: objectEntity)
+        viewModel.updateObjectPosition(id: selectedObject.id, position: lidarResolution.position)
+        let updatedObject = viewModel.selectedObject
+        collisionManager.updatePosition(
+            id: updatedObject.id,
+            position: obstaclePosition(for: updatedObject)
+        )
+        if lidarResolution.didCollide {
+            viewModel.collisionWarning = "Object stopped by a scanned real-world surface."
+        } else if virtualResolution.didCollide {
+            viewModel.collisionWarning = "Object stopped by another virtual object."
+        } else {
+            viewModel.collisionWarning = nil
+        }
+        applyObjectTransform(to: objectEntity, configuration: updatedObject)
         updateEducationalOverlays()
         updateShadowInfo()
         lastSceneSignature = currentSceneSignature()
@@ -351,10 +365,173 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
+    private func syncObjects(on anchor: AnchorEntity) {
+        let currentIDs = Set(viewModel.objects.map { $0.id })
+        for (id, entity) in objectEntities where !currentIDs.contains(id) {
+            objectLoadTasks[id]?.cancel()
+            objectLoadTasks[id] = nil
+            entity.removeFromParent()
+            objectEntities[id] = nil
+            objectSourceKeys[id] = nil
+            collisionManager.removeObstacle(id: id)
+            viewModel.debugLog("Object deletion cleaned up from scene")
+        }
+
+        let textureChanged = lastTexture != viewModel.selectedTexture
+        for configuration in viewModel.objects {
+            let sourceKey = objectSourceKey(for: configuration)
+            let needsReplacement = objectEntities[configuration.id] == nil
+                || objectSourceKeys[configuration.id] != sourceKey
+                || (configuration.importedModel == nil && textureChanged)
+
+            if needsReplacement {
+                objectLoadTasks[configuration.id]?.cancel()
+                objectLoadTasks[configuration.id] = nil
+                objectEntities[configuration.id]?.removeFromParent()
+
+                if let importedModel = configuration.importedModel {
+                    let placeholder = ObjectFactory.makeObject(type: .cuboid)
+                    anchor.addChild(placeholder)
+                    objectEntities[configuration.id] = placeholder
+                    objectSourceKeys[configuration.id] = sourceKey
+                    loadImportedObject(
+                        importedModel,
+                        objectID: configuration.id,
+                        sourceKey: sourceKey,
+                        on: anchor
+                    )
+                } else {
+                    let entity = ObjectFactory.makeObject(
+                        type: configuration.type,
+                        texture: viewModel.selectedTexture
+                    )
+                    anchor.addChild(entity)
+                    objectEntities[configuration.id] = entity
+                    objectSourceKeys[configuration.id] = sourceKey
+                    viewModel.debugLog(
+                        "Object synchronized: \(configuration.name) — \(configuration.type.rawValue)"
+                    )
+                }
+            }
+
+            guard let entity = objectEntities[configuration.id] else { continue }
+            applyObjectTransform(to: entity, configuration: configuration)
+            collisionManager.registerObstacle(
+                id: configuration.id,
+                position: obstaclePosition(for: configuration),
+                radius: ObjectFactory.collisionRadius(for: configuration)
+            )
+        }
+
+        lastTexture = viewModel.selectedTexture
+    }
+
+    private func loadImportedObject(
+        _ importedModel: ImportedModelConfiguration,
+        objectID: UUID,
+        sourceKey: String,
+        on anchor: AnchorEntity
+    ) {
+        objectLoadTasks[objectID] = Task { [weak self, weak anchor] in
+            guard let self else { return }
+
+            do {
+                let loadedEntity = try await Entity(contentsOf: importedModel.fileURL)
+                try Task.checkCancellation()
+                guard let anchor,
+                      self.objectSourceKeys[objectID] == sourceKey,
+                      let configuration = self.viewModel.objects.first(where: { $0.id == objectID }),
+                      configuration.importedModel?.fileURL == importedModel.fileURL else { return }
+
+                let normalizedObject = try self.makeNormalizedImportedObject(
+                    from: loadedEntity,
+                    name: importedModel.displayName
+                )
+                self.objectEntities[objectID]?.removeFromParent()
+                anchor.addChild(normalizedObject.entity)
+                self.objectEntities[objectID] = normalizedObject.entity
+                self.objectLoadTasks[objectID] = nil
+                self.viewModel.updateImportedModelDimensions(
+                    id: objectID,
+                    dimensions: normalizedObject.dimensions
+                )
+
+                let updatedConfiguration = self.viewModel.objects.first(where: { $0.id == objectID })
+                    ?? configuration
+                self.applyObjectTransform(
+                    to: normalizedObject.entity,
+                    configuration: updatedConfiguration
+                )
+                self.collisionManager.registerObstacle(
+                    id: objectID,
+                    position: self.obstaclePosition(for: updatedConfiguration),
+                    radius: ObjectFactory.collisionRadius(for: updatedConfiguration)
+                )
+                self.lastSceneSignature = nil
+                self.viewModel.debugLog("Imported 3D model loaded: \(importedModel.displayName)")
+            } catch is CancellationError {
+                self.objectLoadTasks[objectID] = nil
+            } catch {
+                self.objectLoadTasks[objectID] = nil
+                self.viewModel.reportModelLoadFailure(
+                    named: importedModel.displayName,
+                    error: error
+                )
+            }
+        }
+    }
+
+    private func makeNormalizedImportedObject(
+        from loadedEntity: Entity,
+        name: String
+    ) throws -> (entity: Entity, dimensions: SIMD3<Float>) {
+        let normalizer = Entity()
+        normalizer.addChild(loadedEntity)
+        let bounds = normalizer.visualBounds(recursive: true, relativeTo: normalizer)
+        let rawDimensions = bounds.extents
+        let largestDimension = max(rawDimensions.x, rawDimensions.y, rawDimensions.z)
+
+        guard largestDimension.isFinite, largestDimension > 0.0001 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+
+        let normalizationScale = ImportedModelConfiguration.targetMaximumDimension / largestDimension
+        let dimensions = SIMD3<Float>(
+            max(rawDimensions.x * normalizationScale, 0.002),
+            max(rawDimensions.y * normalizationScale, 0.002),
+            max(rawDimensions.z * normalizationScale, 0.002)
+        )
+        normalizer.scale = SIMD3<Float>(repeating: normalizationScale)
+        normalizer.position = -bounds.center * normalizationScale
+
+        let container = Entity()
+        container.name = name
+        container.addChild(normalizer)
+        container.components.set(
+            CollisionComponent(shapes: [.generateBox(size: dimensions)])
+        )
+        enableDynamicShadows(on: loadedEntity)
+        return (container, dimensions)
+    }
+
+    private func enableDynamicShadows(on entity: Entity) {
+        if entity is ModelEntity {
+            entity.components.set(DynamicLightShadowComponent(castsShadow: true))
+        }
+        for child in entity.children {
+            enableDynamicShadows(on: child)
+        }
+    }
+
+    private func objectSourceKey(for object: ObjectConfiguration) -> String {
+        if let importedModel = object.importedModel {
+            return "imported:\(importedModel.fileURL.path)"
+        }
+        return "primitive:\(object.type.rawValue)"
+    }
+
     private func syncLights(on anchor: AnchorEntity) {
-        // Sinkronisasi state SwiftUI ke entity RealityKit. Entity lama dipakai ulang
-        // agar performa lebih stabil daripada recreate semua light setiap update.
-        let currentIDs = Set(viewModel.lights.map(\.id))
+        let currentIDs = Set(viewModel.lights.map { $0.id })
         for (id, entities) in lightEntities where !currentIDs.contains(id) {
             entities.root.removeFromParent()
             lightEntities[id] = nil
@@ -410,10 +587,46 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func resolvedObjectPosition(
+        object: ObjectConfiguration,
         from currentGroundPosition: SIMD3<Float>,
         to candidateGroundPosition: SIMD3<Float>,
         relativeTo anchor: Entity
     ) -> (position: SIMD3<Float>, didCollide: Bool) {
+        let dimensions = ObjectFactory.baseDimensions(for: object) * object.scale
+        let height = dimensions.y
+        let clearance = Self.lidarClearance
+        let centerOffset = SIMD3<Float>(0, height / 2 + clearance, 0)
+        let shape: ShapeResource
+
+        if object.importedModel != nil {
+            shape = .generateBox(size: SIMD3<Float>(
+                max(dimensions.x - clearance * 2, 0.001),
+                max(height - clearance * 2, 0.001),
+                max(dimensions.z - clearance * 2, 0.001)
+            ))
+        } else if object.type == .sphere {
+            shape = .generateSphere(radius: max(height / 2 - clearance, 0.001))
+        } else {
+            shape = .generateBox(size: SIMD3<Float>(
+                max(dimensions.x - clearance * 2, 0.001),
+                max(height - clearance * 2, 0.001),
+                max(dimensions.z - clearance * 2, 0.001)
+            ))
+        }
+
+        let orientation = simd_quatf(
+            angle: object.yawDegrees.degreesToRadians,
+            axis: SIMD3<Float>(0, 1, 0)
+        )
+        let resolution = resolvedLiDARPosition(
+            from: currentGroundPosition + centerOffset,
+            to: candidateGroundPosition + centerOffset,
+            shape: shape,
+            orientation: orientation,
+            relativeTo: anchor,
+            ignoringSupportBelow: clearance * 4
+        )
+        return (resolution.position - centerOffset, resolution.didCollide)
         // Collision terhadap LiDAR mesh sengaja dinonaktifkan untuk movement.
         // Mesh scan sering noisy; kalau dipakai sebagai blocker, object/light bisa
         // terlihat "nyangkut" padahal tidak ada penghalang nyata di kamera.
@@ -499,7 +712,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func updateEducationalOverlays() {
-        guard objectEntity != nil else { return }
+        guard objectEntities[viewModel.selectedObjectID] != nil else { return }
         let objectHeight = scaledObjectHeight
         let selectedLight = effectiveLightConfiguration(for: viewModel.selectedLight)
         // Overlay memakai perhitungan geometri yang sama dengan arah spotlight,
@@ -528,7 +741,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func updateShadowInfo() {
-        guard objectEntity != nil else { return }
+        guard objectEntities[viewModel.selectedObjectID] != nil else { return }
         let light = effectiveLightConfiguration(for: viewModel.selectedLight)
         let objectHeight = scaledObjectHeight
         let nextInfo = ShadowInfo(
@@ -554,20 +767,40 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private var objectGroundPosition: SIMD3<Float> {
-        defaultObjectPosition
+        viewModel.selectedObject.position
     }
 
+    private func resetObjectPosition() {
+        viewModel.updateSelectedObject { $0.position = .zero }
+        let selectedObject = viewModel.selectedObject
+        if let objectEntity = objectEntities[selectedObject.id] {
+            applyObjectTransform(to: objectEntity, configuration: selectedObject)
+            collisionManager.updatePosition(
+                id: selectedObject.id,
+                position: obstaclePosition(for: selectedObject)
+            )
+        }
+        updateEducationalOverlays()
+        updateShadowInfo()
+        viewModel.debugLog("Object position reset")
+    }
+
+
     private func resetScene() {
+        for task in objectLoadTasks.values {
+            task.cancel()
+        }
         sceneAnchor?.removeFromParent()
         sceneAnchor = nil
-        objectEntity = nil
+        objectEntities.removeAll()
+        objectSourceKeys.removeAll()
+        objectLoadTasks.removeAll()
         lightEntities.removeAll()
         collisionManager.removeAll()
         receiverManager.reset()
         projectionRenderer.clear()
         annotationManager.clear()
         lastSceneSignature = nil
-        lastObjectType = nil
         lastTexture = nil
         viewModel.isObjectPlaced = false
         viewModel.surfaceState = .found
@@ -587,10 +820,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private func currentSceneSignature() -> SceneUpdateSignature {
         SceneUpdateSignature(
-            objectType: viewModel.selectedObjectType,
+            objects: viewModel.objects,
+            selectedObjectID: viewModel.selectedObjectID,
             selectedTexture: viewModel.selectedTexture,
-            objectScale: viewModel.objectScale,
-            objectYawDegrees: viewModel.objectYawDegrees,
             lights: viewModel.lights,
             selectedLightID: viewModel.selectedLightID,
             showLightDirection: viewModel.showLightDirection,
@@ -613,30 +845,54 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         return false
     }
 
-    private func applyObjectTransform(to object: ModelEntity) {
-        let scaledHeight = scaledObjectHeight
+    private func selectObject(containing entity: Entity) -> Bool {
+        for (id, object) in objectEntities {
+            var candidate: Entity? = entity
+            while let current = candidate {
+                if current == object {
+                    viewModel.selectedObjectID = id
+                    viewModel.debugLog("Selected object changed")
+                    return true
+                }
+                candidate = current.parent
+            }
+        }
+        return false
+    }
+
+    private func applyObjectTransform(
+        to object: Entity,
+        configuration: ObjectConfiguration
+    ) {
+        let scaledHeight = ObjectFactory.objectHeight(for: configuration) * configuration.scale
         object.position = SIMD3<Float>(
-            defaultObjectPosition.x,
+            configuration.position.x,
             scaledHeight / 2,
-            defaultObjectPosition.z
+            configuration.position.z
         )
-        object.scale = SIMD3<Float>(repeating: viewModel.objectScale)
+        object.scale = SIMD3<Float>(repeating: configuration.scale)
         object.orientation = simd_quatf(
-            angle: viewModel.objectYawDegrees.degreesToRadians,
+            angle: configuration.yawDegrees.degreesToRadians,
             axis: SIMD3<Float>(0, 1, 0)
         )
-        if lastAppliedObjectYawDegrees != viewModel.objectYawDegrees {
-            lastAppliedObjectYawDegrees = viewModel.objectYawDegrees
-            viewModel.debugLog("Object rotation updated")
-        }
     }
 
     private var scaledObjectHeight: Float {
-        ObjectFactory.objectHeight(for: viewModel.selectedObjectType) * viewModel.objectScale
+        let selectedObject = viewModel.selectedObject
+        return ObjectFactory.objectHeight(for: selectedObject) * selectedObject.scale
+    }
+
+    private func obstaclePosition(for object: ObjectConfiguration) -> SIMD3<Float> {
+        object.position + SIMD3<Float>(
+            0,
+            ObjectFactory.objectHeight(for: object) * object.scale / 2,
+            0
+        )
     }
 
     private func effectiveLightConfiguration(for light: LightConfiguration) -> LightConfiguration {
-        guard light.type == .spot, objectEntity != nil else { return light }
+        guard light.type == .spot,
+              let objectEntity = objectEntities[viewModel.selectedObjectID] else { return light }
 
         var adjusted = light
         let target = lightingTarget(objectHeight: scaledObjectHeight)
