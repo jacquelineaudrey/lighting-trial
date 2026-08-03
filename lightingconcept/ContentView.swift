@@ -4,6 +4,8 @@ struct ContentView: View {
     @StateObject private var viewModel = ARSceneViewModel()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isControlInspectorPresented = true
+    @State private var isControlSheetPresented = true
+    @State private var controlSheetDetent = PresentationDetent.medium
 
     var body: some View {
         Group {
@@ -53,13 +55,52 @@ struct ContentView: View {
             ARContainerView(viewModel: viewModel)
                 .ignoresSafeArea()
 
-            StatusBanner(
-                text: viewModel.collisionWarning ?? viewModel.surfaceGuidanceText,
-                isWarning: viewModel.collisionWarning != nil
-            )
+            VStack(spacing: 8) {
+                if viewModel.isLiDARAvailable, !viewModel.isObjectPlaced {
+                    LiDARScanProgressCard(viewModel: viewModel)
+                } else {
+                    StatusBanner(
+                        text: viewModel.collisionWarning ?? viewModel.surfaceGuidanceText,
+                        isWarning: viewModel.collisionWarning != nil
+                    )
+                }
+
+                if viewModel.isObjectPlaced || viewModel.surfaceState == .placed {
+                    InteractionModeControl(viewModel: viewModel)
+                }
+            }
             .padding(.top, 12)
             .padding(.horizontal)
         }
+    }
+}
+
+private extension ContentView {
+    var selectedConceptAlertBinding: Binding<Bool> {
+        Binding {
+            viewModel.selectedConcept != nil
+        } set: { isPresented in
+            if !isPresented {
+                viewModel.selectedConcept = nil
+            }
+        }
+    }
+}
+
+private struct InteractionModeControl: View {
+    @ObservedObject var viewModel: ARSceneViewModel
+
+    var body: some View {
+        Picker("Interaction Mode", selection: $viewModel.interactionMode) {
+            ForEach(InteractionMode.allCases) { mode in
+                Text(mode.rawValue).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 360)
+        .padding(8)
+        .background(.thinMaterial, in: Capsule())
+        .accessibilityLabel("Interaction Mode")
     }
 }
 
@@ -147,10 +188,18 @@ private struct SpotlightCutoutShape: Shape {
     }
 }
 
-#Preview("iPhone") {
-    ContentView()
-}
+            ProgressView(value: viewModel.lidarPlacementProgress)
+                .tint(viewModel.isReadyForPlacement ? .green : .cyan)
 
-#Preview("iPad", traits: .fixedLayout(width: 1024, height: 768)) {
-    ContentView()
+            Text(viewModel.isReadyForPlacement
+                 ? "Area siap. Tap meja atau permukaan datar untuk menaruh object."
+                 : "Arahkan kamera perlahan ke meja, sisi benda, dan tepi permukaan. Area cyan adalah bagian yang sudah terbaca.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: 380)
+    }
 }

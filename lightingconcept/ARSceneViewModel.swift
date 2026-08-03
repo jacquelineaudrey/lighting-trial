@@ -11,6 +11,10 @@ final class ARSceneViewModel: ObservableObject {
     @Published var interactionMode: InteractionMode = .moveObject
     @Published var surfaceState: SurfaceDetectionState = .scanning
     @Published var isObjectPlaced = false
+    @Published var isLiDARAvailable = false
+    @Published var lidarScanProgress: Float = 0
+    @Published var lidarScannedMeshCount = 0
+    @Published var lidarScannedFaceCount = 0
 
     @Published var lights: [LightConfiguration]
     @Published var selectedLightID: UUID
@@ -27,7 +31,6 @@ final class ARSceneViewModel: ObservableObject {
     @Published var shadowInfo = ShadowInfo()
     @Published var collisionWarning: String?
 
-    @Published var pendingResetObject = false
     @Published var pendingResetScene = false
     @Published var pendingRescanSurface = false
     @Published var sceneRevision = 0
@@ -41,12 +44,41 @@ final class ARSceneViewModel: ObservableObject {
     var surfaceGuidanceText: String {
         switch surfaceState {
         case .scanning:
-            "Move your device to detect a surface."
+            if isLiDARAvailable {
+                return "LiDAR scan \(Int(lidarScanProgress * 100))%: move around the table/object slowly."
+            }
+            return "Move your device to detect a surface."
         case .found:
-            "Tap the surface to place an object."
+            if isLiDARAvailable, lidarScanProgress < 0.85 {
+                return "Keep scanning real objects before placing. LiDAR scan \(Int(lidarScanProgress * 100))%."
+            }
+            return "Tap the surface to place an object."
         case .placed:
-            "\(interactionMode.rawValue): adjust the scene and study the shadow."
+            return "\(interactionMode.rawValue): adjust the scene and study the shadow."
         }
+    }
+
+    var isReadyForPlacement: Bool {
+        !isLiDARAvailable || lidarScanProgress >= 0.85
+    }
+
+    var lidarPlacementProgress: Float {
+        min(lidarScanProgress / 0.85, 1)
+    }
+
+    func updateLiDARScan(meshCount: Int, faceCount: Int) {
+        isLiDARAvailable = true
+        lidarScannedMeshCount = meshCount
+        lidarScannedFaceCount = faceCount
+        let meshProgress = min(Float(meshCount) / 6, 1)
+        let faceProgress = min(Float(faceCount) / 1500, 1)
+        lidarScanProgress = min(meshProgress * 0.45 + faceProgress * 0.55, 1)
+    }
+
+    func resetLiDARScan() {
+        lidarScanProgress = 0
+        lidarScannedMeshCount = 0
+        lidarScannedFaceCount = 0
     }
 
     var selectedLight: LightConfiguration {
@@ -87,7 +119,6 @@ final class ARSceneViewModel: ObservableObject {
         let offset = Float(lights.count) * 0.18
         next.position.x = clamped(next.position.x + offset, -0.55, 0.55)
         next.position.z = clamped(next.position.z - offset, -0.55, 0.55)
-        next.yawDegrees += Float(lights.count) * 18
         lights.append(next)
         selectedLightID = next.id
         interactionMode = .moveLight
@@ -101,10 +132,6 @@ final class ARSceneViewModel: ObservableObject {
         selectedLightID = lights[0].id
         sceneRevision += 1
         debugLog("Selected additional light removed")
-    }
-
-    func resetObjectPosition() {
-        pendingResetObject.toggle()
     }
 
     func resetScene() {
