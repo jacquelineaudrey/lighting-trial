@@ -5,6 +5,12 @@ import UIKit
 import Photos
 
 @MainActor
+/// Tanggung jawab file:
+/// - menghubungkan SwiftUI state (`ARSceneViewModel`) dengan RealityKit/ARKit scene,
+/// - mengatur placement object, light, gesture, LiDAR, receiver shadow, dan overlay edukasi,
+/// - memanggil renderer/calculator lain saat data scene berubah.
+///
+/// Detail rumus cahaya dan bayangan ada di `ProjectionLineRenderer`dan `ShadowGeometryCalculator`.
 final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayViewDelegate {
     private let viewModel: ARSceneViewModel
     private weak var arView: ARView?
@@ -582,23 +588,21 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                     }
                 }
 
-                let effectiveLight = effectiveLightConfiguration(for: light)
                 LightFactory.update(
                     light: entities.light,
                     fillLight: entities.fillLight,
                     marker: entities.marker,
                     ring: entities.selectionRing,
-                    configuration: effectiveLight,
+                    configuration: light,
                     selected: selected
                 )
                 collisionManager.updatePosition(id: light.id, position: light.position)
             } else {
-                let effectiveLight = effectiveLightConfiguration(for: light)
-                let entities = LightFactory.makeLight(configuration: effectiveLight, selected: selected)
+                let entities = LightFactory.makeLight(configuration: light, selected: selected)
                 anchor.addChild(entities.root)
                 lightEntities[light.id] = entities
                 collisionManager.registerObstacle(id: light.id, position: light.position, radius: Self.lightObstacleRadius)
-                viewModel.debugLog("Light creation: \(effectiveLight.name)")
+                viewModel.debugLog("Light creation: \(light.name)")
             }
         }
 
@@ -731,24 +735,45 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func updateEducationalOverlays() {
-        guard objectEntities[viewModel.selectedObjectID] != nil else { return }
+        guard let anchor = sceneAnchor,
+              let objectEntity = objectEntities[viewModel.selectedObjectID] else { return }
+        let selectedObject = viewModel.selectedObject
         let objectHeight = scaledObjectHeight
-        let selectedLight = effectiveLightConfiguration(for: viewModel.selectedLight)
-        // Overlay memakai perhitungan geometri yang sama dengan arah spotlight,
-        // tetapi tidak ikut membuat shadow. Ini murni lapisan edukasi.
+        let selectedLight = viewModel.selectedLight
+        let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+        let worldToAnchorTransform = simd_inverse(anchorTransform)
+        let localLightDirection = LightFactory.forwardVector(
+            yawDegrees: selectedLight.yawDegrees,
+            pitchDegrees: selectedLight.pitchDegrees
+        )
+        let localLightOrientation = LightFactory.orientation(
+            yawDegrees: selectedLight.yawDegrees,
+            pitchDegrees: selectedLight.pitchDegrees
+        )
+        let lightDirection = transformVector(localLightDirection, by: anchorTransform)
+        let lightRight = transformVector(localLightOrientation.act(SIMD3<Float>(1, 0, 0)), by: anchorTransform)
+        let lightUp = transformVector(localLightOrientation.act(SIMD3<Float>(0, 1, 0)), by: anchorTransform)
+        let lightPosition = anchor.convert(position: selectedLight.position, to: nil)
+        let groundY = anchorTransform.columns.3.y
+        // Overlay memakai transform object dan orientasi light aktual; tidak ikut membuat shadow.
         projectionRenderer.update(
-            objectType: viewModel.selectedObjectType,
-            objectPosition: objectGroundPosition,
-            objectHeight: objectHeight,
-            objectYawDegrees: viewModel.objectYawDegrees,
-            lightTarget: lightingTarget(objectHeight: objectHeight),
+            object: selectedObject,
+            objectDimensions: ObjectFactory.baseDimensions(for: selectedObject),
+            objectTransform: objectEntity.transformMatrix(relativeTo: nil),
+            lightPosition: lightPosition,
             selectedLight: selectedLight,
+            lightDirection: lightDirection,
+            lightRight: lightRight,
+            lightUp: lightUp,
+            groundY: groundY,
+            worldToRenderTransform: worldToAnchorTransform,
             toggles: OverlayToggles(
                 showLightDirection: viewModel.showLightDirection,
                 showLightRays: viewModel.showLightRays,
                 showProjectionLines: viewModel.showProjectionLines,
                 showGroundProjection: viewModel.showGroundProjection
-            )
+            ),
+            surfaceIntersection: surfaceIntersectionProvider()
         )
         annotationManager.update(
             visible: viewModel.showShadowLabels,
@@ -761,8 +786,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private func updateShadowInfo() {
         guard objectEntities[viewModel.selectedObjectID] != nil else { return }
-        let light = effectiveLightConfiguration(for: viewModel.selectedLight)
+        let light = viewModel.selectedLight
         let objectHeight = scaledObjectHeight
+        let lightDirection = LightFactory.forwardVector(
+            yawDegrees: light.yawDegrees,
+            pitchDegrees: light.pitchDegrees
+        )
         let nextInfo = ShadowInfo(
             lightType: light.type.rawValue,
             intensity: light.intensity,
@@ -771,12 +800,10 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             pitchDegrees: light.pitchDegrees,
             beamSpread: light.beamSpread.rawValue,
             shadowDirectionDegrees: ShadowGeometryCalculator.shadowDirectionDegrees(
-                lightPosition: light.position,
-                objectPosition: objectGroundPosition
+                lightDirection: lightDirection
             ),
             shadowLength: ShadowGeometryCalculator.approximateShadowLength(
-                lightPosition: light.position,
-                objectGroundPosition: objectGroundPosition,
+                lightDirection: lightDirection,
                 objectHeight: objectHeight
             )
         )
@@ -990,26 +1017,24 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         )
     }
 
-    private func effectiveLightConfiguration(for light: LightConfiguration) -> LightConfiguration {
-        guard light.type == .spot,
-              let objectEntity = objectEntities[viewModel.selectedObjectID] else { return light }
+    private func surfaceIntersectionProvider() -> ((SIMD3<Float>, SIMD3<Float>, Float) -> SIMD3<Float>?)? {
+        guard usesSceneReconstruction, let arView else { return nil }
 
-        var adjusted = light
-        let target = lightingTarget(objectHeight: scaledObjectHeight)
-        let delta = target - light.position
-        let horizontalDistance = sqrt(delta.x * delta.x + delta.z * delta.z)
-        guard horizontalDistance > 0.001 || abs(delta.y) > 0.001 else { return adjusted }
-
-        // RealityKit spotlight mengarah ke local -Z. Yaw menghadap target secara horizontal,
-        // pitch mengangkat/menurunkan beam sesuai beda tinggi light dan object.
-        adjusted.yawDegrees = atan2(delta.x, -delta.z).radiansToDegrees
-        adjusted.pitchDegrees = atan2(delta.y, horizontalDistance).radiansToDegrees
-        return adjusted
+        return { origin, direction, maximumDistance in
+            arView.scene.raycast(
+                origin: origin,
+                direction: direction,
+                length: maximumDistance,
+                query: .nearest,
+                mask: .sceneUnderstanding,
+                relativeTo: nil
+            ).first?.position
+        }
     }
 
-    private func lightingTarget(objectHeight: Float) -> SIMD3<Float> {
-        // Target sedikit di atas tengah object agar beam menyinari form, bukan hanya kaki object.
-        objectGroundPosition + SIMD3<Float>(0, objectHeight * 0.58, 0)
+    private func transformVector(_ vector: SIMD3<Float>, by transform: simd_float4x4) -> SIMD3<Float> {
+        let transformed = transform * SIMD4<Float>(vector.x, vector.y, vector.z, 0)
+        return simd_normalize(SIMD3<Float>(transformed.x, transformed.y, transformed.z))
     }
 
     nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
