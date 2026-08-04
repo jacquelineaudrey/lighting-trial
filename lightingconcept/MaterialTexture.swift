@@ -6,10 +6,6 @@ enum MaterialShadowBehavior: String, Hashable {
     // Opaque: material menutup cahaya penuh, jadi bayangan terutama mengikuti bentuk mesh.
     case opaque
 
-    // Translucent: object terlihat tembus cahaya, tetapi dynamic shadow RealityKit
-    // di iOS belum selalu menghitung shadow semi-transparan secara fisik.
-    case translucent
-
     // Cutout: material memakai alpha mask visual. Jika renderer mendukung, bagian
     // transparan bisa memengaruhi caster; jika tidak, shadow tetap mengikuti mesh.
     case cutout
@@ -50,10 +46,6 @@ struct MaterialTexture: Identifiable, Hashable {
                          previewSystemImage: "circle.hexagongrid", isMetallic: true, roughness: 0.25,
                          fallbackColor: UIColor(red: 0.58, green: 0.62, blue: 0.66, alpha: 1),
                          shadowBehavior: .opaque),
-        MaterialTexture(id: "frosted", name: "Frosted", assetName: "tex_frosted",
-                         previewSystemImage: "circle.dotted", isMetallic: false, roughness: 0.9,
-                         fallbackColor: UIColor(red: 0.72, green: 0.90, blue: 1.0, alpha: 1),
-                         shadowBehavior: .translucent),
         MaterialTexture(id: "cutout", name: "Cutout", assetName: "tex_cutout",
                          previewSystemImage: "circle.grid.cross", isMetallic: false, roughness: 0.65,
                          fallbackColor: UIColor(red: 0.88, green: 0.82, blue: 0.58, alpha: 1),
@@ -85,8 +77,6 @@ struct MaterialTexture: Identifiable, Hashable {
         switch shadowBehavior {
         case .opaque:
             return "Opaque material blocks light. Shadow shape mainly follows the object geometry."
-        case .translucent:
-            return "Translucent material shows the object as semi-transparent. RealityKit may still cast an opaque dynamic shadow depending on device/SDK."
         case .cutout:
             return "Cutout material uses an alpha mask visually. If supported by the renderer, holes can reduce the caster surface; otherwise the visible shadow still follows the mesh silhouette."
         }
@@ -96,10 +86,6 @@ struct MaterialTexture: Identifiable, Hashable {
         switch shadowBehavior {
         case .opaque:
             material.blending = .opaque
-        case .translucent:
-            // Opacity 0.48 membuat object terlihat seperti kaca/plastik buram.
-            // Catatan: ini terutama efek visual object; shadow dinamis dapat tetap opaque.
-            material.blending = .transparent(opacity: .init(floatLiteral: 0.48))
         case .cutout:
             // Alpha mask: putih = terlihat, hitam = bolong. opacityThreshold membuat
             // transisi menjadi hard cutout, bukan semi-transparan bertahap.
@@ -164,13 +150,6 @@ struct MaterialTexture: Identifiable, Hashable {
                 }
                 UIColor(white: 0.35, alpha: 0.10).setFill()
                 context.fill(CGRect(x: 0, y: 0, width: size, height: size))
-            case "frosted":
-                UIColor.white.withAlphaComponent(0.34).setFill()
-                for index in 0..<36 {
-                    let x = CGFloat((index * 37) % size)
-                    let y = CGFloat((index * 61) % size)
-                    context.fill(CGRect(x: x, y: y, width: 5, height: 5))
-                }
             case "cutout":
                 UIColor(red: 0.52, green: 0.42, blue: 0.18, alpha: 0.6).setFill()
                 for y in stride(from: 18, to: size, by: 48) {
