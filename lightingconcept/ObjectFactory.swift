@@ -221,10 +221,11 @@ enum ObjectFactory {
     ) -> MeshResource {
         var positions: [SIMD3<Float>] = []
         var normals: [SIMD3<Float>] = []
+        var textureCoordinates: [SIMD2<Float>] = []
         var indices: [UInt32] = []
 
         for triangle in triangles {
-            var first = triangle.0
+            let first = triangle.0
             var second = triangle.1
             var third = triangle.2
             var normal = simd_normalize(simd_cross(second - first, third - first))
@@ -238,14 +239,29 @@ enum ObjectFactory {
             let startIndex = UInt32(positions.count)
             positions.append(contentsOf: [first, second, third])
             normals.append(contentsOf: [normal, normal, normal])
+            textureCoordinates.append(contentsOf: [
+                textureCoordinate(for: first),
+                textureCoordinate(for: second),
+                textureCoordinate(for: third)
+            ])
             indices.append(contentsOf: [startIndex, startIndex + 1, startIndex + 2])
         }
 
         var descriptor = MeshDescriptor(name: name)
         descriptor.positions = MeshBuffers.Positions(positions)
         descriptor.normals = MeshBuffers.Normals(normals)
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(textureCoordinates)
         descriptor.primitives = .triangles(indices)
 
         return (try? MeshResource.generate(from: [descriptor])) ?? .generateBox(size: 0.1)
+    }
+
+    private static func textureCoordinate(for position: SIMD3<Float>) -> SIMD2<Float> {
+        let wrappedU = position.x * 8
+        let wrappedV = position.z * 8
+        return SIMD2<Float>(
+            wrappedU - floor(wrappedU),
+            wrappedV - floor(wrappedV)
+        )
     }
 }
