@@ -10,6 +10,9 @@ struct LightSceneEntities {
     let selectionRing: ModelEntity
 }
 
+/// Factory khusus untuk membuat dan memperbarui entity lampu di RealityKit.
+/// File ini tidak menghitung projection line; tugasnya hanya menerjemahkan
+/// `LightConfiguration` menjadi komponen RealityKit seperti PointLight/SpotLight.
 enum LightFactory {
     static func makeLight(configuration: LightConfiguration, selected: Bool) -> LightSceneEntities {
         let root = Entity()
@@ -82,6 +85,8 @@ enum LightFactory {
         }
 
         light.position = configuration.position
+        // Orientation inilah yang menentukan arah spotlight. Direction overlay juga
+        // mengambil arah dari yaw/pitch yang sama supaya visualisasi cocok dengan lampu.
         light.orientation = orientation(yawDegrees: configuration.yawDegrees, pitchDegrees: configuration.pitchDegrees)
         fillLight.position = configuration.position
         marker.position = configuration.position
@@ -100,6 +105,8 @@ enum LightFactory {
 
     static func forwardVector(yawDegrees: Float, pitchDegrees: Float) -> SIMD3<Float> {
         let orientation = orientation(yawDegrees: yawDegrees, pitchDegrees: pitchDegrees)
+        // RealityKit memakai local -Z sebagai arah "depan" light. Setelah diputar oleh
+        // yaw/pitch, vector ini menjadi arah datang cahaya di coordinate space light.
         return simd_normalize(orientation.act(SIMD3<Float>(0, 0, -1)))
     }
 
