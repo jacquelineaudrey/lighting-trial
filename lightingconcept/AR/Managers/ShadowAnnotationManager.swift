@@ -145,7 +145,7 @@ final class ShadowAnnotationManager {
     }
 
     private func shadowOffset(light: LightConfiguration, object: SIMD3<Float>, scale: Float) -> SIMD3<Float> {
-        let lightDirection = LightFactory.forwardVector(
+        let lightDirection = SceneLightEntityFactory.forwardVector(
             yawDegrees: light.yawDegrees,
             pitchDegrees: light.pitchDegrees
         )

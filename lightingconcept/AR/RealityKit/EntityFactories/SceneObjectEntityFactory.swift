@@ -1,7 +1,7 @@
 import RealityKit
 import UIKit
 
-enum ObjectFactory {
+enum SceneObjectEntityFactory {
     static let cubeSize: Float = 0.12
     static let sphereRadius: Float = 0.06
     static let cuboidSize = SIMD3<Float>(0.17, 0.10, 0.11)
