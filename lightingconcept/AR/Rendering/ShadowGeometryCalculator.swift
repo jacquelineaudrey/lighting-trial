@@ -127,7 +127,7 @@ enum ShadowGeometryCalculator {
     /// Mengambil titik proyeksi dari vertex atas cube.
     /// Ini menjelaskan kenapa shadow cube punya sudut/edge, terutama saat cube dirotasi.
     static func cubeProjectionPoints(lightPosition: SIMD3<Float>, cubeCenter: SIMD3<Float>) -> [SIMD3<Float>] {
-        ObjectFactory.cubeTopVertices(center: cubeCenter).compactMap {
+        SceneObjectEntityFactory.cubeTopVertices(center: cubeCenter).compactMap {
             projectPointFromLight(lightPosition: lightPosition, objectPoint: $0)
         }
     }

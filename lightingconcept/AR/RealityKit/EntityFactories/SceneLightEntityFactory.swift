@@ -2,19 +2,11 @@ import RealityKit
 import SwiftUI
 import UIKit
 
-struct LightSceneEntities {
-    let root: Entity
-    let light: Entity
-    let fillLight: Entity
-    let marker: ModelEntity
-    let selectionRing: ModelEntity
-}
-
 /// Factory khusus untuk membuat dan memperbarui entity lampu di RealityKit.
 /// File ini tidak menghitung projection line; tugasnya hanya menerjemahkan
 /// `LightConfiguration` menjadi komponen RealityKit seperti PointLight/SpotLight.
-enum LightFactory {
-    static func makeLight(configuration: LightConfiguration, selected: Bool) -> LightSceneEntities {
+enum SceneLightEntityFactory {
+    static func makeLight(configuration: LightConfiguration, selected: Bool) -> RealityKitLightEntityBundle {
         let root = Entity()
         root.name = configuration.name
 
@@ -33,7 +25,7 @@ enum LightFactory {
         root.addChild(ring)
 
         update(light: light, fillLight: fillLight, marker: marker, ring: ring, configuration: configuration, selected: selected)
-        return LightSceneEntities(root: root, light: light, fillLight: fillLight, marker: marker, selectionRing: ring)
+        return RealityKitLightEntityBundle(root: root, light: light, fillLight: fillLight, marker: marker, selectionRing: ring)
     }
 
     static func update(
