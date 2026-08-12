@@ -16,21 +16,21 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private weak var arView: ARView?
     private var coachingOverlay: ARCoachingOverlayView?
 
-    private let world = ARSceneWorld()
-    private let objectSystem = SceneObjectSystem()
-    private let lightSystem = SceneLightSystem()
+    private var sceneAnchor: AnchorEntity?
+    private var lastTexture: MaterialTexture?
 
     private let projectionRenderer = ProjectionLineRenderer()
     private let annotationManager = ShadowAnnotationManager()
     private let receiverManager = ShadowReceiverManager()
     private let lidarMeshOcclusionManager = LiDARMeshOcclusionManager()
-    private let collisionManager = CollisionSystem()
     private static let lidarLightRadius: Float = 0.045
     private static let lidarClearance: Float = 0.006
     private var usesSceneReconstruction = false
 
-    private var lastSceneRevision = -1
+    private var isSynchronizationScheduled = false
     private var lastSceneSignature: SceneUpdateSignature?
+    private var lastOverlaySignature: SceneOverlayUpdateSignature?
+    private var lastShadowInfoSignature: ShadowInfoUpdateSignature?
     private var lastResetSceneFlag = false
     private var lastRescanFlag = false
     private var lastFrozenFlag = false
@@ -62,6 +62,16 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         viewModel.debugLog("AR session start")
     }
 
+    func requestSceneSynchronization() {
+        guard !isSynchronizationScheduled else { return }
+        isSynchronizationScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isSynchronizationScheduled = false
+            self.synchronizeScene()
+        }
+    }
+
     func synchronizeScene() {
         guard arView != nil else { return }
 
@@ -85,17 +95,27 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             captureAndSaveSnapshot()
         }
 
-        guard world.anchor != nil else { return }
-        let signature = currentSceneSignature()
-        guard signature != lastSceneSignature else { return }
+        guard sceneAnchor != nil else { return }
 
-        syncObjects()
-        syncLights()
-        receiverManager.updateSurfaceTexture(viewModel.selectedTexture)
-        updateEducationalOverlays()
-        updateShadowInfo()
-        lastSceneSignature = currentSceneSignature()
-        lastSceneRevision = viewModel.sceneRevision
+        let sceneSignature = currentSceneSignature()
+        if sceneSignature != lastSceneSignature {
+            syncObjects()
+            syncLights()
+            receiverManager.updateSurfaceTexture(viewModel.selectedTexture)
+            lastSceneSignature = currentSceneSignature()
+        }
+
+        let overlaySignature = currentOverlaySignature()
+        if overlaySignature != lastOverlaySignature {
+            updateEducationalOverlays()
+            lastOverlaySignature = overlaySignature
+        }
+
+        let shadowInfoSignature = currentShadowInfoSignature()
+        if shadowInfoSignature != lastShadowInfoSignature {
+            updateShadowInfo()
+            lastShadowInfoSignature = shadowInfoSignature
+        }
     }
 
     private func addCoachingOverlay(to arView: ARView) {
@@ -208,7 +228,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
         guard let result = raycastPlane(from: location) else { return }
 
-        if world.anchor == nil {
+        if sceneAnchor == nil {
             // Di device LiDAR, placement ditahan sampai coverage scan cukup agar posisi awal
             // object dan receiver tidak terlalu meleset dari meja/lantai yang sebenarnya.
             guard viewModel.isReadyForPlacement else {
@@ -274,7 +294,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         guard let arView else { return }
         let anchor = AnchorEntity(world: result.worldTransform)
         arView.scene.addAnchor(anchor)
-        world.anchor = anchor
+        sceneAnchor = anchor
         defaultObjectPosition = .zero
         lidarMeshOcclusionManager.setVisualizationEnabled(false)
 
@@ -297,8 +317,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private func moveObject(to result: ARRaycastResult, logWhenMoved: Bool = false) {
         let selectedObject = viewModel.selectedObject
-        guard let anchor = world.anchor,
-              let objectEntity = world.objectRealityKitEntity(id: selectedObject.id) else { return }
+        guard let anchor = sceneAnchor,
+              let objectEntity = objectEntity(id: selectedObject.id) else { return }
         let worldPosition = SIMD3<Float>(
             result.worldTransform.columns.3.x,
             result.worldTransform.columns.3.y,
@@ -307,11 +327,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         var localPosition = anchor.convert(position: worldPosition, from: nil)
         localPosition.y = 0
 
-        let height = SceneObjectEntityFactory.objectHeight(for: selectedObject) * selectedObject.scale
+        let height = SceneObjectSystem.objectHeight(for: selectedObject) * selectedObject.scale
         let centerOffset = SIMD3<Float>(0, height / 2, 0)
-        let virtualResolution = collisionManager.resolvedPosition(
+        let virtualResolution = CollisionSystem.resolvedPosition(
+            in: anchor,
             candidatePosition: localPosition + centerOffset,
-            movingRadius: SceneObjectEntityFactory.collisionRadius(for: selectedObject),
+            movingRadius: SceneObjectSystem.collisionRadius(for: selectedObject),
             excludingID: selectedObject.id
         )
         localPosition = virtualResolution.position - centerOffset
@@ -325,10 +346,6 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         )
         viewModel.updateObjectPosition(id: selectedObject.id, position: lidarResolution.position)
         let updatedObject = viewModel.selectedObject
-        collisionManager.updatePosition(
-            id: updatedObject.id,
-            position: SceneObjectSystem.obstaclePosition(for: updatedObject)
-        )
         if lidarResolution.didCollide {
             viewModel.collisionWarning = "Object stopped by a scanned real-world surface."
         } else if virtualResolution.didCollide {
@@ -340,13 +357,15 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         updateEducationalOverlays()
         updateShadowInfo()
         lastSceneSignature = currentSceneSignature()
+        lastOverlaySignature = currentOverlaySignature()
+        lastShadowInfoSignature = currentShadowInfoSignature()
         if logWhenMoved {
             viewModel.debugLog("Object moved")
         }
     }
 
     private func moveSelectedLight(to result: ARRaycastResult, logWhenMoved: Bool = false) {
-        guard let anchor = world.anchor else { return }
+        guard let anchor = sceneAnchor else { return }
         let worldPosition = SIMD3<Float>(
             result.worldTransform.columns.3.x,
             result.worldTransform.columns.3.y,
@@ -361,7 +380,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         let selectedID = viewModel.selectedLightID
         let currentPosition = viewModel.selectedLight.position
         localPosition.y = currentPosition.y
-        let resolution = collisionManager.resolvedPosition(
+        let resolution = CollisionSystem.resolvedPosition(
+            in: anchor,
             candidatePosition: localPosition,
             movingRadius: SceneLightSystem.lightObstacleRadius,
             excludingID: selectedID
@@ -378,7 +398,6 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             light.position.x = clamped(localPosition.x, -0.9, 0.9)
             light.position.z = clamped(localPosition.z, -0.9, 0.9)
         }
-        collisionManager.updatePosition(id: selectedID, position: viewModel.selectedLight.position)
         synchronizeScene()
         viewModel.collisionWarning = collisionWarning
         if logWhenMoved {
@@ -387,14 +406,17 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func syncObjects() {
-        objectSystem.synchronize(
-            world: world,
+        guard let anchor = sceneAnchor else { return }
+        SceneObjectSystem.synchronize(
+            anchor: anchor,
             requestedObjects: viewModel.objects,
             selectedTexture: viewModel.selectedTexture,
-            collisionManager: collisionManager,
+            lastTexture: &lastTexture,
             reportImportedDimensions: { [weak self] id, dimensions in
                 self?.viewModel.updateImportedModelDimensions(id: id, dimensions: dimensions)
                 self?.lastSceneSignature = nil
+                self?.lastOverlaySignature = nil
+                self?.lastShadowInfoSignature = nil
             },
             reportModelLoadFailure: { [weak self] name, error in
                 self?.viewModel.reportModelLoadFailure(named: name, error: error)
@@ -404,11 +426,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func syncLights() {
-        viewModel.collisionWarning = lightSystem.synchronize(
-            world: world,
+        guard let anchor = sceneAnchor else { return }
+        viewModel.collisionWarning = SceneLightSystem.synchronize(
+            anchor: anchor,
             requestedLights: viewModel.lights,
             selectedLightID: viewModel.selectedLightID,
-            collisionManager: collisionManager,
             updateLightPosition: viewModel.updateLightPosition,
             debugLog: viewModel.debugLog
         )
@@ -420,7 +442,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         to candidateGroundPosition: SIMD3<Float>,
         relativeTo anchor: Entity
     ) -> (position: SIMD3<Float>, didCollide: Bool) {
-        let dimensions = SceneObjectEntityFactory.baseDimensions(for: object) * object.scale
+        let dimensions = SceneObjectSystem.baseDimensions(for: object) * object.scale
         let height = dimensions.y
         let clearance = Self.lidarClearance
         let centerOffset = SIMD3<Float>(0, height / 2 + clearance, 0)
@@ -536,18 +558,18 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func updateEducationalOverlays() {
-        guard let anchor = world.anchor,
-              let objectEntity = world.objectRealityKitEntity(id: viewModel.selectedObjectID) else { return }
+        guard let anchor = sceneAnchor,
+              let objectEntity = objectEntity(id: viewModel.selectedObjectID) else { return }
         let selectedObject = viewModel.selectedObject
         let objectHeight = scaledObjectHeight
         let selectedLight = viewModel.selectedLight
         let anchorTransform = anchor.transformMatrix(relativeTo: nil)
         let worldToAnchorTransform = simd_inverse(anchorTransform)
-        let localLightDirection = SceneLightEntityFactory.forwardVector(
+        let localLightDirection = SceneLightSystem.forwardVector(
             yawDegrees: selectedLight.yawDegrees,
             pitchDegrees: selectedLight.pitchDegrees
         )
-        let localLightOrientation = SceneLightEntityFactory.orientation(
+        let localLightOrientation = SceneLightSystem.orientation(
             yawDegrees: selectedLight.yawDegrees,
             pitchDegrees: selectedLight.pitchDegrees
         )
@@ -559,7 +581,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         // Overlay memakai transform object dan orientasi light aktual; tidak ikut membuat shadow.
         projectionRenderer.update(
             object: selectedObject,
-            objectDimensions: SceneObjectEntityFactory.baseDimensions(for: selectedObject),
+            objectDimensions: SceneObjectSystem.baseDimensions(for: selectedObject),
             objectTransform: objectEntity.transformMatrix(relativeTo: nil),
             lightPosition: lightPosition,
             selectedLight: selectedLight,
@@ -586,10 +608,10 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func updateShadowInfo() {
-        guard world.objectRealityKitEntity(id: viewModel.selectedObjectID) != nil else { return }
+        guard objectEntity(id: viewModel.selectedObjectID) != nil else { return }
         let light = viewModel.selectedLight
         let objectHeight = scaledObjectHeight
-        let lightDirection = SceneLightEntityFactory.forwardVector(
+        let lightDirection = SceneLightSystem.forwardVector(
             yawDegrees: light.yawDegrees,
             pitchDegrees: light.pitchDegrees
         )
@@ -620,26 +642,30 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private func resetObjectPosition() {
         viewModel.updateSelectedObject { $0.position = .zero }
         let selectedObject = viewModel.selectedObject
-        if let objectEntity = world.objectRealityKitEntity(id: selectedObject.id) {
+        if let objectEntity = objectEntity(id: selectedObject.id) {
             SceneObjectSystem.applyTransform(to: objectEntity, configuration: selectedObject)
-            collisionManager.updatePosition(
-                id: selectedObject.id,
-                position: SceneObjectSystem.obstaclePosition(for: selectedObject)
-            )
         }
         updateEducationalOverlays()
         updateShadowInfo()
+        lastSceneSignature = currentSceneSignature()
+        lastOverlaySignature = currentOverlaySignature()
+        lastShadowInfoSignature = currentShadowInfoSignature()
         viewModel.debugLog("Object position reset")
     }
 
 
     private func resetScene() {
-        world.reset()
-        collisionManager.removeAll()
+        if let anchor = sceneAnchor {
+            anchor.removeFromParent()
+        }
+        sceneAnchor = nil
+        lastTexture = nil
         receiverManager.reset()
         projectionRenderer.clear()
         annotationManager.clear()
         lastSceneSignature = nil
+        lastOverlaySignature = nil
+        lastShadowInfoSignature = nil
         viewModel.isObjectPlaced = false
         viewModel.surfaceState = .found
         viewModel.debugLog("Scene reset")
@@ -743,18 +769,38 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             selectedObjectID: viewModel.selectedObjectID,
             selectedTexture: viewModel.selectedTexture,
             lights: viewModel.lights,
-            selectedLightID: viewModel.selectedLightID,
+            selectedLightID: viewModel.selectedLightID
+        )
+    }
+
+    private func currentOverlaySignature() -> SceneOverlayUpdateSignature {
+        let selectedLight = viewModel.selectedLight
+        return SceneOverlayUpdateSignature(
+            selectedObject: viewModel.selectedObject,
+            selectedObjectType: viewModel.selectedObjectType,
+            selectedLightID: selectedLight.id,
+            selectedLightType: selectedLight.type,
+            selectedLightPosition: selectedLight.position,
+            selectedLightYawDegrees: selectedLight.yawDegrees,
+            selectedLightPitchDegrees: selectedLight.pitchDegrees,
+            selectedLightBeamSpread: selectedLight.beamSpread,
             showLightDirection: viewModel.showLightDirection,
             showLightRays: viewModel.showLightRays,
             showProjectionLines: viewModel.showProjectionLines,
             showGroundProjection: viewModel.showGroundProjection,
-            showShadowLabels: viewModel.showShadowLabels,
-            showShadowInformation: viewModel.showShadowInformation
+            showShadowLabels: viewModel.showShadowLabels
+        )
+    }
+
+    private func currentShadowInfoSignature() -> ShadowInfoUpdateSignature {
+        return ShadowInfoUpdateSignature(
+            selectedObject: viewModel.selectedObject,
+            selectedLight: viewModel.selectedLight
         )
     }
 
     private func selectLight(containing entity: Entity) -> Bool {
-        if let selectedID = lightSystem.selectLight(containing: entity, in: world) {
+        if let selectedID = SceneLightSystem.selectLight(containing: entity) {
             viewModel.selectedLightID = selectedID
             viewModel.debugLog("Selected light changed")
             return true
@@ -763,7 +809,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     private func selectObject(containing entity: Entity) -> Bool {
-        if let selectedID = objectSystem.selectObject(containing: entity, in: world) {
+        if let selectedID = SceneObjectSystem.selectObject(containing: entity) {
             viewModel.selectedObjectID = selectedID
             viewModel.debugLog("Selected object changed")
             return true
@@ -771,9 +817,14 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         return false
     }
 
+    private func objectEntity(id: UUID) -> Entity? {
+        guard let anchor = sceneAnchor else { return nil }
+        return SceneObjectSystem.entityWithObjectID(id, in: anchor)
+    }
+
     private var scaledObjectHeight: Float {
         let selectedObject = viewModel.selectedObject
-        return SceneObjectEntityFactory.objectHeight(for: selectedObject) * selectedObject.scale
+        return SceneObjectSystem.objectHeight(for: selectedObject) * selectedObject.scale
     }
 
     private func surfaceIntersectionProvider() -> ((SIMD3<Float>, SIMD3<Float>, Float) -> SIMD3<Float>?)? {

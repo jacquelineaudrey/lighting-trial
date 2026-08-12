@@ -1,6 +1,5 @@
 import Combine
 import Foundation
-import RealityKit
 import SwiftUI
 
 final class ARSceneViewModel: ObservableObject {

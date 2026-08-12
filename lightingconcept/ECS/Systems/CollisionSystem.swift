@@ -2,51 +2,35 @@ import Foundation
 import RealityKit
 import simd
 
-/// System untuk collision sederhana antar object/light virtual.
+/// System RealityKit untuk entity yang punya `CollisionObstacleComponent`.
 ///
-/// Ini disebut system karena menyimpan dan memproses aturan gerak, bukan sekadar
-/// data. Obstacle diregistrasi oleh `SceneObjectSystem` dan `SceneLightSystem`
-/// setiap kali object/light dibuat, dipindah, atau dihapus.
-final class CollisionSystem {
-    /// Data internal untuk collision. Tidak dibuat sebagai component terpisah
-    /// karena collision di app ini masih sederhana: cukup posisi pusat + radius.
-    private struct Obstacle {
-        var position: SIMD3<Float>
-        var radius: Float
+/// `update(context:)` sengaja ringan karena dipanggil setiap frame oleh RealityKit.
+/// Collision resolving dipakai saat gesture atau sync scene, jadi disediakan sebagai
+/// static function pada system ini tanpa menyimpan state entity di dalam system.
+final class CollisionSystem: System {
+    private static let query = EntityQuery(where: .has(CollisionObstacleComponent.self))
+
+    required init(scene: Scene) {
     }
 
-    /// Key tetap UUID model supaya coordinator/ViewModel mudah meminta pengecualian
-    /// untuk object/light yang sedang digerakkan.
-    private var obstacles: [UUID: Obstacle] = [:]
-    private(set) var lastCollisionBlocked = false
-
-    /// Mendaftarkan atau mengganti obstacle.
-    func registerObstacle(id: UUID, position: SIMD3<Float>, radius: Float) {
-        obstacles[id] = Obstacle(position: position, radius: radius)
+    func update(context: SceneUpdateContext) {
+        for _ in context.entities(matching: Self.query, updatingSystemWhen: .rendering) {
+            // Query ini membuat RealityKit menjalankan system untuk entity collision.
+            // Tidak ada pekerjaan per-frame yang diperlukan saat ini; collision dihitung
+            // hanya saat user menggeser object/light agar CPU tetap rendah.
+        }
     }
 
-    /// Update posisi obstacle tanpa mengubah radius.
-    func updatePosition(id: UUID, position: SIMD3<Float>) {
-        obstacles[id]?.position = position
+    static func setObstacle(on entity: Entity, id: UUID, radius: Float) {
+        entity.components.set(CollisionObstacleComponent(id: id, radius: radius))
     }
 
-    /// Menghapus obstacle ketika entity model sudah dihapus dari world.
-    func removeObstacle(id: UUID) {
-        obstacles[id] = nil
+    static func removeObstacle(from entity: Entity) {
+        entity.components.remove(CollisionObstacleComponent.self)
     }
 
-    /// Reset total saat scene AR di-reset/rescan.
-    func removeAll() {
-        obstacles.removeAll()
-    }
-
-    /// Mengembalikan posisi yang sudah disesuaikan supaya tidak overlap dengan
-    /// obstacle lain dan tetap berada dalam batas area kerja.
-    ///
-    /// `excludingID` dipakai agar entity yang sedang digerakkan tidak bertabrakan
-    /// dengan obstacle miliknya sendiri.
-    @discardableResult
-    func resolvedPosition(
+    static func resolvedPosition(
+        in root: Entity,
         candidatePosition: SIMD3<Float>,
         movingRadius: Float,
         excludingID: UUID,
@@ -57,18 +41,19 @@ final class CollisionSystem {
         resolved.z = min(max(resolved.z, bounds.lowerBound), bounds.upperBound)
         var collided = false
 
-        // Push-out dan clamp dilakukan berulang supaya keluar dari satu obstacle
-        // tidak diam-diam masuk ke obstacle lain, dan clamp ke batas area tidak
-        // memasukkan entity kembali ke overlap.
         for _ in 0..<4 {
             var movedThisPass = false
 
-            for (id, obstacle) in obstacles where id != excludingID {
+            for obstacleEntity in entitiesWithCollisionObstacle(in: root) {
+                guard let obstacle = obstacleEntity.components[CollisionObstacleComponent.self],
+                      obstacle.id != excludingID else { continue }
+
                 let combinedRadius = movingRadius + obstacle.radius
-                let verticalDistance = abs(resolved.y - obstacle.position.y)
+                let obstaclePosition = obstacleEntity.position(relativeTo: root)
+                let verticalDistance = abs(resolved.y - obstaclePosition.y)
                 guard verticalDistance < combinedRadius else { continue }
 
-                let delta = SIMD3<Float>(resolved.x - obstacle.position.x, 0, resolved.z - obstacle.position.z)
+                let delta = SIMD3<Float>(resolved.x - obstaclePosition.x, 0, resolved.z - obstaclePosition.z)
                 let horizontalDistance = simd_length(delta)
                 let minimumHorizontalDistance = sqrt(
                     max(combinedRadius * combinedRadius - verticalDistance * verticalDistance, 0)
@@ -80,10 +65,10 @@ final class CollisionSystem {
 
                 if horizontalDistance > 0.0001 {
                     let pushDirection = delta / horizontalDistance
-                    resolved.x = obstacle.position.x + pushDirection.x * minimumHorizontalDistance
-                    resolved.z = obstacle.position.z + pushDirection.z * minimumHorizontalDistance
+                    resolved.x = obstaclePosition.x + pushDirection.x * minimumHorizontalDistance
+                    resolved.z = obstaclePosition.z + pushDirection.z * minimumHorizontalDistance
                 } else {
-                    resolved.x = obstacle.position.x + minimumHorizontalDistance
+                    resolved.x = obstaclePosition.x + minimumHorizontalDistance
                 }
             }
 
@@ -93,7 +78,21 @@ final class CollisionSystem {
             if !movedThisPass { break }
         }
 
-        lastCollisionBlocked = collided
         return (resolved, collided)
+    }
+
+    private static func entitiesWithCollisionObstacle(in root: Entity) -> [Entity] {
+        var result: [Entity] = []
+        collectEntitiesWithCollisionObstacle(from: root, into: &result)
+        return result
+    }
+
+    private static func collectEntitiesWithCollisionObstacle(from entity: Entity, into result: inout [Entity]) {
+        if entity.components[CollisionObstacleComponent.self] != nil {
+            result.append(entity)
+        }
+        for child in entity.children {
+            collectEntitiesWithCollisionObstacle(from: child, into: &result)
+        }
     }
 }

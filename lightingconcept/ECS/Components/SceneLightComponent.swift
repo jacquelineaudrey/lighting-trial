@@ -1,15 +1,17 @@
-/// Component ECS untuk lampu di scene.
-///
-/// Component ini adalah data yang dimiliki sebuah `SceneEntity` di `ARSceneWorld`.
-/// Ia tidak menentukan identity lampu; identity ada di `SceneEntity` dan mapping-nya
-/// diatur oleh world.
-struct SceneLightComponent {
-    /// Data domain dari UI/ViewModel: tipe lampu, warna, intensitas, posisi,
-    /// orientasi, dan beam spread.
-    var configuration: LightConfiguration
+import RealityKit
 
-    /// Handle ke kumpulan entity RealityKit yang menampilkan lampu di AR.
-    /// Ini hanya detail rendering runtime. ECS tetap melihatnya sebagai data
-    /// component, bukan sebagai entity ECS baru.
-    var realityKitEntities: RealityKitLightEntityBundle
+/// Component data untuk satu lampu di scene.
+///
+/// Component ini hanya menyimpan state domain lampu. Entity RealityKit yang memegang
+/// component ini adalah root container untuk child visual seperti emitter, marker,
+/// dan selection ring. Logic update warna, intensitas, arah, serta selection ada di
+/// `SceneLightSystem`.
+struct SceneLightComponent: Component {
+    var configuration: LightConfiguration
+    var isSelected: Bool
+
+    init(configuration: LightConfiguration, isSelected: Bool) {
+        self.configuration = configuration
+        self.isSelected = isSelected
+    }
 }

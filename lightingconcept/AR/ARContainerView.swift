@@ -21,14 +21,9 @@ struct ARContainerView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {
-        // SwiftUI invokes this method while it is rendering the view. Scene
-        // synchronization can update published UI state (for example,
-        // `shadowInfo`), so defer it until that render pass has completed.
-        // Publishing here directly causes: "Publishing changes from within
-        // view updates is not allowed."
-        let coordinator = context.coordinator
-        DispatchQueue.main.async {
-            coordinator.synchronizeScene()
-        }
+        // SwiftUI can call this many times for consecutive @Published changes.
+        // The coordinator coalesces those calls so one render pass schedules at
+        // most one AR scene sync.
+        context.coordinator.requestSceneSynchronization()
     }
 }

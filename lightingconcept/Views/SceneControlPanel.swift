@@ -379,7 +379,7 @@ struct SceneControlPanel: View {
             let selectedObject = viewModel.selectedObject
             let target = selectedObject.position + SIMD3<Float>(
                 0,
-                SceneObjectEntityFactory.objectHeight(for: selectedObject) * selectedObject.scale / 2,
+                SceneObjectSystem.objectHeight(for: selectedObject) * selectedObject.scale / 2,
                 0
             )
             let delta = target - light.position

@@ -9,6 +9,10 @@ import SwiftUI
 
 @main
 struct lightingconceptApp: App {
+    init() {
+        ECSRegistration.registerAll()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
