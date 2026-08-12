@@ -54,4 +54,24 @@ struct ShadowGeometryCalculatorTests {
         #expect(!points.isEmpty)
         #expect(points.allSatisfy { abs($0.y) < 0.0001 })
     }
+
+    @Test func spotlightAimPointsAtObjectCenter() {
+        let lightPosition = SIMD3<Float>(-0.38, 0.55, 0.46)
+        let objectCenter = SIMD3<Float>(0, 0.1125, 0)
+        let angles = SceneLightEntityFactory.aimingAngles(
+            from: lightPosition,
+            to: objectCenter
+        )
+
+        #expect(angles != nil)
+        guard let angles else { return }
+
+        let actualDirection = SceneLightEntityFactory.forwardVector(
+            yawDegrees: angles.yawDegrees,
+            pitchDegrees: angles.pitchDegrees
+        )
+        let expectedDirection = simd_normalize(objectCenter - lightPosition)
+
+        #expect(simd_dot(actualDirection, expectedDirection) > 0.9999)
+    }
 }
