@@ -27,6 +27,10 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private let collisionManager = CollisionSystem()
     private static let lidarLightRadius: Float = 0.045
     private static let lidarClearance: Float = 0.006
+    /// Nama stabil untuk anchor tempat scene (object + light) ditempel, supaya
+    /// bisa dicari dari luar coordinator (lihat `ARViewHandle` di Level 4)
+    /// tanpa perlu referensi langsung ke `ARSceneCoordinator`.
+    static let sceneAnchorName = "ARSceneCoordinator.sceneAnchor"
     private var usesSceneReconstruction = false
 
     private var lastSceneRevision = -1
@@ -53,6 +57,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         arView.renderOptions.insert(.disableDepthOfField)
         arView.renderOptions.insert(.disablePersonOcclusion)
         arView.environment.sceneUnderstanding.options.insert(.occlusion)
+        arView.environment.sceneUnderstanding.options.insert(.collision)
+        arView.environment.sceneUnderstanding.options.insert(.physics)
         arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
 
         arView.session.delegate = self
@@ -125,6 +131,40 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         runSession(resetTracking: true)
         viewModel.debugLog("Coaching overlay requested a full session reset")
     }
+
+    /// Dipanggil ARKit begitu overlay scan permukaan non-aktif (permukaan
+    /// datar sudah ketemu). Untuk mode sandbox biasa ini dibiarkan saja
+    /// (anak/user tap layar sendiri buat menaruh object, lewat `handleTap`).
+    /// Untuk Level 4 (`viewModel.autoPlaceOnSurfaceFound == true`) kita taruh
+    /// scene otomatis di sini — sama seperti `Level1ARCoordinator` menaruh
+    /// jalur checkpoint otomatis begitu overlay non-aktif — supaya anak tidak
+    /// perlu tahu harus tap layar dulu.
+    func coachingOverlayViewDidDeactivate(_ coachingOverlayView: ARCoachingOverlayView) {
+        guard viewModel.autoPlaceOnSurfaceFound, world.anchor == nil, let arView else { return }
+        placeSceneAutomatically(in: arView)
+    }
+
+    private func placeSceneAutomatically(in arView: ARView) {
+        // 1. Coba raycast dari tengah layar ke permukaan yang sudah terdeteksi.
+        let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+        if let result = raycastPlane(from: center) {
+            placeScene(at: result.worldTransform)
+            return
+        }
+
+        // 2. Fallback: taruh di depan kamera, estimasi tinggi lantai dari posisi kamera
+        // (pola yang sama dipakai `Level1ARCoordinator` saat ARKit belum sempat
+        // memberi plane anchor yang valid).
+        let cameraTransform = arView.cameraTransform.matrix
+        let cameraPosition = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        let forward = -SIMD3<Float>(cameraTransform.columns.2.x, cameraTransform.columns.2.y, cameraTransform.columns.2.z)
+        let flatForward = SIMD3<Float>(forward.x, 0, forward.z)
+        let normalizedForward = simd_length(flatForward) > 0.0001 ? flatForward / simd_length(flatForward) : SIMD3<Float>(0, 0, -1)
+        let placementPosition = cameraPosition + normalizedForward * 0.6
+        var fallbackTransform = matrix_identity_float4x4
+        fallbackTransform.columns.3 = SIMD4<Float>(placementPosition.x, cameraPosition.y - 1.2, placementPosition.z, 1)
+        placeScene(at: fallbackTransform)
+    }
     
     private func addGestures(to arView: ARView) {
         arView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap(_:))))
@@ -150,11 +190,21 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         // Konfigurasi utama AR:
         // - horizontal plane untuk meja/lantai
         // - environment texturing + light estimation agar object lebih menyatu dengan kamera
+        //   (photoreal PBR look) — TAPI ini yang bikin cube di Level 4 kelihatan seperti
+        //   "benda sungguhan" alih-alih cube AR yang polos & jelas seperti di Level 1.
+        //   Jadi ini cuma dinyalakan kalau `usesRealisticEnvironmentLighting == true`
+        //   (default true, dipakai mode sandbox `ContentView`). Level 4 mematikannya
+        //   lewat `Level4ViewModel.init` supaya cube-nya tetap flat/game-like.
         // - LiDAR mesh reconstruction hanya jika device mendukung
         let configuration = ARWorldTrackingConfiguration()
         configuration.planeDetection = [.horizontal]
-        configuration.environmentTexturing = .automatic
-        configuration.isLightEstimationEnabled = true
+        if viewModel.usesRealisticEnvironmentLighting {
+            configuration.environmentTexturing = .automatic
+            configuration.isLightEstimationEnabled = true
+        } else {
+            configuration.environmentTexturing = .none
+            configuration.isLightEstimationEnabled = false
+        }
         if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
             configuration.frameSemantics.insert(.smoothedSceneDepth)
             viewModel.debugLog("LiDAR smoothed scene depth enabled")
@@ -215,14 +265,25 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                 viewModel.debugLog("Object placement blocked until LiDAR scan reaches target coverage")
                 return
             }
-            placeScene(at: result)
-        } else if viewModel.interactionMode == .moveObject {
+            placeScene(at: result.worldTransform)
+        } else if viewModel.interactionMode == .moveObject,
+                  !viewModel.directManipulationRotatesOnly {
             moveObject(to: result)
         }
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
         guard let arView else { return }
+
+        // Level 4 membedakan dua jenis input dengan tegas: perpindahan posisi
+        // datang dari tombol tahan (lihat Level4ViewModel.updateHold), sementara
+        // drag langsung hanya mengubah arah. Dengan guard ini, drag tidak pernah
+        // lolos ke moveObject/moveSelectedLight saat mode Level 4 aktif.
+        if viewModel.directManipulationRotatesOnly {
+            rotateSelection(from: gesture, in: arView)
+            return
+        }
+
         let location = gesture.location(in: arView)
         guard let result = raycastPlane(from: location) else { return }
 
@@ -236,6 +297,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     @objc private func handleVerticalLightPan(_ gesture: UIPanGestureRecognizer) {
         guard let arView, viewModel.interactionMode == .moveLight else { return }
+
+        if viewModel.directManipulationRotatesOnly {
+            rotateSelection(from: gesture, in: arView)
+            return
+        }
 
         switch gesture.state {
         case .began:
@@ -254,6 +320,33 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
+    /// Kontrol arah untuk Level 4. Satu sapuan jari memutar object di sumbu Y;
+    /// untuk lampu, sapuan horizontal mengubah yaw dan sapuan vertikal mengubah
+    /// pitch. Tidak ada posisi yang disentuh di fungsi ini.
+    private func rotateSelection(from gesture: UIPanGestureRecognizer, in arView: ARView) {
+        guard gesture.state == .changed else { return }
+        let translation = gesture.translation(in: arView)
+        gesture.setTranslation(.zero, in: arView)
+
+        let yawDelta = Float(translation.x) * 0.35
+        switch viewModel.interactionMode {
+        case .moveObject:
+            viewModel.updateSelectedObject { object in
+                object.yawDegrees += yawDelta
+            }
+        case .moveLight:
+            let pitchDelta = Float(-translation.y) * 0.25
+            viewModel.updateSelectedLight { light in
+                light.yawDegrees += yawDelta
+                // Batas ini menjaga lampu tetap mengarah ke permukaan, bukan
+                // berputar melewati atas atau tepat sejajar dengan lantai.
+                light.pitchDegrees = clamped(light.pitchDegrees + pitchDelta, -85, -5)
+            }
+        }
+
+        synchronizeScene()
+    }
+
     private func raycastPlane(from point: CGPoint) -> ARRaycastResult? {
         guard let arView else { return nil }
 
@@ -270,9 +363,13 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         return arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first
     }
 
-    private func placeScene(at result: ARRaycastResult) {
+    private func placeScene(at worldTransform: simd_float4x4) {
         guard let arView else { return }
-        let anchor = AnchorEntity(world: result.worldTransform)
+        let anchor = AnchorEntity(world: worldTransform)
+        // Nama stabil supaya `ARViewHandle` (dipakai Level 4's hold-to-walk)
+        // bisa menemukan anchor scene ini lewat `Scene.findEntity(named:)`
+        // tanpa perlu ARSceneCoordinator membocorkan referensi internalnya.
+        anchor.name = Self.sceneAnchorName
         arView.scene.addAnchor(anchor)
         world.anchor = anchor
         defaultObjectPosition = .zero
@@ -581,18 +678,32 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             objectType: viewModel.selectedObjectType,
             objectPosition: objectGroundPosition,
             objectHeight: objectHeight,
-            selectedLight: selectedLight
+            // `lightDirection` di atas sudah ditransformasi lewat
+            // `anchorTransform` (world space), bukan local space lampu —
+            // ini yang membuat titik "castShadow" akhirnya sinkron dengan
+            // bayangan asli yang dirender, termasuk saat anchor scene
+            // punya rotasi (kasus Level 4).
+            worldLightDirection: lightDirection
         )
     }
 
     private func updateShadowInfo() {
-        guard world.objectRealityKitEntity(id: viewModel.selectedObjectID) != nil else { return }
+        guard let anchor = world.anchor,
+              world.objectRealityKitEntity(id: viewModel.selectedObjectID) != nil else { return }
         let light = viewModel.selectedLight
         let objectHeight = scaledObjectHeight
-        let lightDirection = SceneLightEntityFactory.forwardVector(
+        // Sama seperti `updateEducationalOverlays`: arah cahaya harus
+        // ditransformasi lewat anchor transform ke world space dulu, bukan
+        // dipakai langsung sebagai local direction. Sebelumnya info panel ini
+        // (derajat arah bayangan & estimasi panjang bayangan) bisa berbeda
+        // dari bayangan asli begitu anchor scene punya rotasi non-identity
+        // (mis. Level 4 yang menempatkan scene otomatis dari hasil raycast).
+        let localLightDirection = SceneLightEntityFactory.forwardVector(
             yawDegrees: light.yawDegrees,
             pitchDegrees: light.pitchDegrees
         )
+        let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+        let lightDirection = transformVector(localLightDirection, by: anchorTransform)
         let nextInfo = ShadowInfo(
             lightType: light.type.rawValue,
             intensity: light.intensity,

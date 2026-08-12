@@ -13,7 +13,15 @@ struct Level1ARContainerView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
-        context.coordinator.configure(arView: arView)
+        // `configure` sekarang juga menyalakan flag LiDAR di
+        // `viewModel.arSceneViewModel` (`@Published`), dan `makeUIView`
+        // berjalan di tengah SwiftUI view update pass — publish sinkron di
+        // sini memicu "Publishing changes from within view updates is not
+        // allowed." Ditunda ke run loop berikutnya, pola yang sama dipakai
+        // `ARContainerView`/`Level4ARContainerView`.
+        DispatchQueue.main.async {
+            context.coordinator.configure(arView: arView)
+        }
         return arView
     }
 

@@ -4,14 +4,28 @@ import RealityKit
 
 /// Fase-fase Level 4.
 ///
-/// onboarding -> positioning -> transitionTrivia -> exploring -> closing -> review -> completed
+/// onboarding -> scanningSurface -> positioning -> transitionTrivia ->
+/// exploring -> closing -> review -> completed
+///
+/// Catatan: fase navigasi/waypoint (pilih arah + jalan ke titik hijau) SUDAH
+/// DIHAPUS. Begitu onboarding selesai, anak langsung bisa menahan tombol
+/// "Jadi Lampu"/"Jadi Objek" di fase `.positioning` — tidak perlu jalan ke
+/// titik tertentu dulu.
+///
+/// `.scanningSurface` (SAMA seperti fase di `Level1Phase`) dipasang di
+/// antara `.onboarding` dan `.positioning` karena "Jadi Lampu"/"Jadi Objek"
+/// di `.positioning` cuma berfungsi begitu scene (cube + lampu) sudah
+/// ditempel `ARSceneCoordinator` — dan itu baru terjadi setelah permukaan
+/// selesai di-scan. Sebelumnya anak bisa sampai di `.positioning` sebelum
+/// scan selesai tanpa tahu kenapa tombolnya belum berfungsi.
 enum Level4Phase: Equatable {
-    case onboarding          // dialog karakter sebelum interaksi
-    case positioning         // hold-button pertama: geser posisi lampu/objek
-    case transitionTrivia    // dialog transisi menjelaskan light & ground projection
-    case exploring           // eksplorasi bebas dengan mekanisme hold yang sama
-    case closing              // dialog penutup
-    case review               // ringkasan pembelajaran
+    case onboarding               // dialog karakter sebelum interaksi
+    case scanningSurface          // ARKit lagi scan lantai/permukaan (sebelum cube+lampu muncul)
+    case positioning              // hold-button pertama: geser posisi lampu/objek
+    case transitionTrivia         // dialog transisi menjelaskan light & ground projection
+    case exploring                // eksplorasi bebas dengan mekanisme hold yang sama
+    case closing                   // dialog penutup
+    case review                    // ringkasan pembelajaran
     case completed
 }
 
@@ -30,12 +44,18 @@ enum HoldRole: Equatable {
 ///   `ARSceneCoordinator`/rendering shadow yang sudah ada & sudah teruji.
 ///
 /// Catatan penting soal koordinat: `ARSceneViewModel` menyimpan posisi
-/// lampu/objek dalam ruang lokal relatif ke anchor tempat scene ditempatkan
-/// (skala kecil, meter). Supaya tidak perlu tahu transform anchor itu,
-/// kita pakai **delta** posisi kamera dunia nyata sejak hold dimulai, lalu
-/// tambahkan delta itu ke posisi tersimpan. Ini valid selama anchor scene
-/// tidak berotasi terhadap dunia (anchor ditempatkan lurus, sesuai perilaku
-/// placement yang ada sekarang).
+/// lampu/objek dalam ruang LOKAL relatif ke anchor tempat scene ditempatkan.
+/// `cameraPosition`/`cameraForward` yang masuk ke `updateHold` di bawah ini
+/// SUDAH dalam ruang lokal yang sama itu — dikonversi oleh pemanggilnya lewat
+/// `ARViewHandle.currentCameraPositionInSceneAnchorSpace` &
+/// `currentHorizontalForwardInSceneAnchorSpace` (yang memakai
+/// `anchor.convert(position:from:)`/`anchor.convert(direction:from:)`, pola
+/// yang sama dengan `ARSceneCoordinator.moveObject`/`moveSelectedLight`).
+///
+/// Mekanisme geser memakai delta kamera selama tombol ditahan: posisi awal
+/// lampu/objek tetap jadi anchor, lalu perpindahan kamera dari titik awal hold
+/// diterapkan ke posisi itu. Jadi benda tidak meloncat ke dekat kamera saat
+/// tombol ditekan.
 @MainActor
 final class Level4ViewModel: ObservableObject {
 
@@ -60,13 +80,51 @@ final class Level4ViewModel: ObservableObject {
     /// sebelum lanjut ke penjelasan).
     @Published private(set) var hasPositionedOnce = false
 
+    /// Posisi kamera dan benda saat hold dimulai. Selama tombol ditahan, gerak
+    /// kamera dari titik awal ini diterapkan ke posisi awal benda.
     private var holdStartCameraPosition: SIMD3<Float>?
-    private var holdStartConfiguredPosition: SIMD3<Float>?
+    private var holdStartEntityPosition: SIMD3<Float>?
 
     private let progressStore: GameProgressStore
+    private var cancellables = Set<AnyCancellable>()
 
-    init(progressStore: GameProgressStore = .shared) {
-        self.progressStore = progressStore
+    init(progressStore: GameProgressStore? = nil) {
+        self.progressStore = progressStore ?? GameProgressStore.shared
+        // Level 4 tidak pernah menampilkan instruksi "tap layar untuk menaruh
+        // object" ke anak — jadi scene (cube + lampu) harus muncul otomatis
+        // begitu ARKit menemukan permukaan datar, sama seperti jalur checkpoint
+        // di Level 1 yang ditaruh otomatis saat overlay scan non-aktif.
+        arSceneViewModel.autoPlaceOnSurfaceFound = true
+
+        // Posisi hanya boleh berubah ketika tombol "Jadi Lampu" atau
+        // "Jadi Objek" sedang ditahan. Drag biasa di atas scene diarahkan ke
+        // rotasi/arah, bukan ke pemindahan posisi.
+        arSceneViewModel.directManipulationRotatesOnly = true
+
+        // Level 4 harus pakai cube AR yang polos/jelas, sama seperti Level 1 —
+        // BUKAN object yang menyatu photoreal dengan pencahayaan ruangan asli
+        // (yang bikin kelihatan seperti "benda sungguhan"). Dipaksa eksplisit
+        // di sini (bukan cuma mengandalkan default `ObjectConfiguration`)
+        // supaya tetap benar walau default berubah nanti.
+        arSceneViewModel.usesRealisticEnvironmentLighting = false
+        arSceneViewModel.updateSelectedObject { object in
+            object.type = .cube
+            object.importedModel = nil
+        }
+
+        // Begitu `ARSceneCoordinator` selesai menempel cube+lampu (dipicu
+        // otomatis oleh `autoPlaceOnSurfaceFound` saat permukaan ketemu),
+        // `arSceneViewModel.isObjectPlaced` jadi true. Itu sinyal yang sama
+        // dipakai `ContentView`/sandbox untuk tahu penempatan selesai — di
+        // sini dipakai untuk lulus dari `.scanningSurface`, mirip
+        // `Level1ViewModel.finishScanning()`.
+        arSceneViewModel.$isObjectPlaced
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isPlaced in
+                guard isPlaced else { return }
+                self?.finishScanning()
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - 1. Onboarding
@@ -77,43 +135,56 @@ final class Level4ViewModel: ObservableObject {
     func advanceOnboarding() {
         guard phase == .onboarding else { return }
         if isLastOnboardingLine {
-            phase = .positioning
+            // Sebelum bisa geser lampu/objek, permukaan harus selesai
+            // di-scan dulu — lihat `.scanningSurface` di `Level4Phase`.
+            phase = .scanningSurface
         } else {
             onboardingIndex += 1
         }
     }
 
-    // MARK: - 2 & 4. Hold-to-walk (dipakai di fase positioning DAN exploring)
+    // MARK: - 1b. Scan permukaan (sebelum cube + lampu muncul)
 
-    /// Dipanggil saat tombol "Jadi Lampu"/"Jadi Objek" mulai ditahan.
+    /// Dipanggil otomatis begitu `arSceneViewModel.isObjectPlaced` jadi true
+    /// (lihat `init`), atau lewat tombol debug di `ScanningSurfaceOverlay`.
+    func finishScanning() {
+        guard phase == .scanningSurface else { return }
+        phase = .positioning
+    }
+
+    // MARK: - 2 & 4. Hold berbasis delta kamera (dipakai di fase positioning DAN exploring)
+
+    /// Dipanggil saat tombol "Jadi Lampu"/"Jadi Objek" mulai ditahan. Cuma
+    /// perlu tahu posisi kamera dan posisi benda SAAT INI supaya `updateHold`
+    /// bisa menerapkan delta kamera tanpa membuat benda meloncat ke kamera.
     func beginHold(as role: HoldRole, cameraPosition: SIMD3<Float>) {
         guard phase == .positioning || phase == .exploring, role != .none else { return }
         activeHoldRole = role
         holdStartCameraPosition = cameraPosition
-        holdStartConfiguredPosition = role == .light
+        holdStartEntityPosition = role == .light
             ? arSceneViewModel.selectedLight.position
             : arSceneViewModel.selectedObject.position
         arSceneViewModel.interactionMode = role == .light ? .moveLight : .moveObject
     }
 
     /// Dipanggil berulang kali (mis. tiap tick timer ~15-30Hz) selama tombol
-    /// masih ditahan, dengan posisi kamera device saat ini.
+    /// masih ditahan, dengan posisi kamera device SAAT ITU JUGA (sudah dalam
+    /// ruang lokal anchor scene — lihat catatan koordinat di atas). Objek
+    /// bergerak horizontal mengikuti kamera, sedangkan lampu juga mengikuti
+    /// perubahan tinggi kamera supaya bisa digeser pada sumbu y.
     func updateHold(cameraPosition: SIMD3<Float>) {
         guard activeHoldRole != .none,
-              let startCamera = holdStartCameraPosition,
-              let startConfigured = holdStartConfiguredPosition else { return }
+              let startCameraPosition = holdStartCameraPosition,
+              let startEntityPosition = holdStartEntityPosition else { return }
 
-        let delta = cameraPosition - startCamera
-        // Cuma geser horizontal (mengikuti arah jalan anak) — tinggi lampu/objek
-        // tetap seperti semula supaya hasilnya tidak liar kalau device sedikit naik-turun.
-        var newPosition = startConfigured
-        newPosition.x += delta.x
-        newPosition.z += delta.z
+        let cameraDelta = cameraPosition - startCameraPosition
 
         switch activeHoldRole {
         case .light:
+            let newPosition = startEntityPosition + cameraDelta
             arSceneViewModel.updateLightPosition(id: arSceneViewModel.selectedLightID, position: newPosition)
         case .object:
+            let newPosition = startEntityPosition + SIMD3<Float>(cameraDelta.x, 0, cameraDelta.z)
             arSceneViewModel.updateObjectPosition(id: arSceneViewModel.selectedObjectID, position: newPosition)
         case .none:
             break
@@ -121,11 +192,12 @@ final class Level4ViewModel: ObservableObject {
     }
 
     /// Dipanggil saat tombol dilepas — kembali ke mode "lihat scene" biasa.
+    /// Posisi terakhir lampu/objek dibiarkan apa adanya (tidak "dilepas jatuh").
     func endHold() {
         guard activeHoldRole != .none else { return }
         activeHoldRole = .none
         holdStartCameraPosition = nil
-        holdStartConfiguredPosition = nil
+        holdStartEntityPosition = nil
         hasPositionedOnce = true
     }
 

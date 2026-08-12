@@ -1,5 +1,6 @@
 import SwiftUI
 
+@MainActor
 /// Layar pembuka: pilih "Belajar" atau "Sandbox".
 /// Sandbox terkunci sampai semua level Belajar selesai (lihat `GameProgressStore`).
 struct MainMenuView: View {
@@ -42,6 +43,17 @@ struct MainMenuView: View {
                 }
                 .padding(.horizontal, 32)
 
+                #if DEBUG
+                // Sandbox butuh 6 level Belajar selesai, tapi baru Level 1 & 4
+                // yang ada kontennya — tombol ini biar Sandbox bisa langsung
+                // dites tanpa nunggu level 2/3/5/6 jadi.
+                Button("🔧 Buka Sandbox langsung (debug)") {
+                    progressStore.debugForceSandboxUnlocked = true
+                    showSandbox = true
+                }
+                .font(.footnote)
+                #endif
+
                 Spacer()
                 Spacer()
             }
@@ -49,9 +61,7 @@ struct MainMenuView: View {
                 LevelSelectView()
             }
             .navigationDestination(isPresented: $showSandbox) {
-                // Placeholder — sandbox belum dibangun, cukup pastikan gate-nya benar dulu.
-                Text("Sandbox — segera hadir")
-                    .font(.title2.bold())
+                ContentView()
             }
         }
     }

@@ -41,6 +41,30 @@ final class ARSceneViewModel: ObservableObject {
     @Published var isSavingSnapshot = false
     @Published var snapshotFeedback: SnapshotFeedback?
 
+    /// Kalau `true`, `ARSceneCoordinator` menaruh scene (object + light) secara
+    /// OTOMATIS begitu permukaan datar ketemu — anak tidak perlu tap layar.
+    /// Dipakai oleh Level 4 (lihat `Level4ViewModel.init`) supaya perilakunya
+    /// sama seperti auto-placement di Level 1, karena flow Level 4 tidak
+    /// pernah menampilkan instruksi "tap untuk menaruh". Mode sandbox biasa
+    /// (`ContentView`) membiarkan ini `false` supaya tap-to-place manual yang
+    /// sudah ada tetap berjalan seperti biasa.
+    @Published var autoPlaceOnSurfaceFound = false
+
+    /// Mengunci geser langsung pada scene menjadi kontrol arah saja. Dipakai
+    /// Level 4: posisi benda/lampu hanya boleh berubah lewat tombol tahan,
+    /// sedangkan sapuan jari di area AR cukup memutar objek atau mengarahkan
+    /// sorot lampu. Sandbox tetap memakai nilai default `false` agar kontrol
+    /// drag-posisi yang lama tidak berubah.
+    @Published var directManipulationRotatesOnly = false
+
+    /// Kalau `true` (default), ARKit environment texturing + light estimation
+    /// dinyalakan supaya PBR material object menyerap pantulan & warna cahaya
+    /// ruangan asli — bagus untuk mode sandbox yang memang soal belajar
+    /// cahaya realistis. Level 4 mematikan ini (lihat `Level4ViewModel.init`)
+    /// supaya cube-nya tetap kelihatan seperti benda AR yang jelas/flat
+    /// (mirip Level 1), bukan menyatu jadi kelihatan seperti "benda sungguhan".
+    @Published var usesRealisticEnvironmentLighting = true
+
     init() {
         let initialObject = ObjectConfiguration.defaultObject()
         let initialLight = LightConfiguration.defaultLight()

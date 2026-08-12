@@ -7,6 +7,7 @@ import SwiftUI
 struct Level1FlowView: View {
     @StateObject private var viewModel = Level1ViewModel()
     @Environment(\.dismiss) private var dismiss
+    @State private var showsExitConfirmation = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -50,12 +51,75 @@ struct Level1FlowView: View {
                 .padding(.bottom, 170)
             }
         }
+        // Tombol kembali khas level (lihat `LevelExitControls.swift`). Tidak
+        // ditampilkan lagi begitu level sudah `.completed` — di fase itu
+        // sudah ada tombol "Kembali ke Menu" sendiri di `LevelCompletedOverlay`
+        // dan tidak ada progress tersisa yang perlu dikonfirmasi.
+        .overlay(alignment: .topLeading) {
+            if viewModel.phase != .completed {
+                LevelBackButton { showsExitConfirmation = true }
+                    .padding(.leading, 16)
+                    .padding(.top, 12)
+            }
+        }
+        // Panah kompas arah checkpoint berikutnya — cuma tampil selagi ada
+        // "tujuan berjalan" (eksplorasi mencari checkpoint, atau kembali ke
+        // checkpoint pertama di akhir level), supaya anak selalu tahu ke mana
+        // harus melangkah walau checkpoint-nya ditempatkan menyebar/tersembunyi.
+        .overlay(alignment: .top) {
+            if showsWaypointArrow {
+                WaypointArrowOverlay(viewModel: viewModel)
+                    .padding(.top, 64)
+            }
+        }
+        .levelExitConfirmation(isPresented: $showsExitConfirmation) { dismiss() }
         .animation(.easeInOut, value: viewModel.phase)
         .navigationBarBackButtonHidden(true)
     }
 
     private var showsTextureThumbControls: Bool {
         viewModel.phase == .exploring && viewModel.hasArrivedAtCurrentCheckpoint
+    }
+
+    private var showsWaypointArrow: Bool {
+        (viewModel.phase == .exploring || viewModel.phase == .returningToStart) && viewModel.hasWaypointTarget
+    }
+}
+
+// MARK: - Panah kompas arah checkpoint berikutnya
+
+/// Badge bulat kecil di atas layar berisi ikon panah yang berputar mengikuti
+/// `viewModel.waypointBearingDegrees` (0° = tujuan persis di depan kamera)
+/// plus jarak dalam meter, supaya anak tahu ke arah mana & seberapa jauh
+/// harus jalan untuk sampai ke checkpoint berikutnya — berguna sekarang
+/// karena checkpoint ditempatkan menyebar ke berbagai arah, bukan cuma
+/// berbaris rapi di depan.
+private struct WaypointArrowOverlay: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Image(systemName: "location.north.fill")
+                .font(.system(size: 26, weight: .bold))
+                .foregroundStyle(.white)
+                .rotationEffect(.degrees(viewModel.waypointBearingDegrees))
+                .animation(.easeOut(duration: 0.15), value: viewModel.waypointBearingDegrees)
+            Text(distanceLabel)
+                .font(.caption.bold())
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.blue.opacity(0.85), in: RoundedRectangle(cornerRadius: 20))
+        .shadow(radius: 6, y: 3)
+    }
+
+    private var distanceLabel: String {
+        let meters = viewModel.waypointDistanceMeters
+        if meters < 1 {
+            return "Sudah dekat!"
+        }
+        return String(format: "%.1f m", meters)
     }
 }
 
@@ -122,25 +186,23 @@ private struct ScanningSurfaceOverlay: View {
 
     var body: some View {
         VStack {
-            Text("📱👇 Arahkan iPad pelan-pelan ke lantai ya!")
+            Text("📱👇 Arahkan iPad pelan-pelan ke lantai beberapa detik ya!")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .multilineTextAlignment(.center)
                 .padding(14)
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
                 .padding(.top, 24)
-            
-            // TOMBOL DEBUG: Hapus tombol ini nanti kalau mau dirilis ke anak-anak
-            Button(action: {
-                viewModel.finishScanning() // Paksa lanjut ke fase exploring
-            }) {
-                Text("🛠 [Dev] Paksa Lewati Scan")
-                    .font(.footnote.bold())
-                    .padding(10)
-                    .background(.red.opacity(0.8), in: Capsule())
-                    .foregroundColor(.white)
+
+            // Kartu persentase yang sama persis dengan mode sandbox
+            // (`ContentView`/`ARContainerView`) — semua level butuh scan
+            // permukaan dulu, jadi progresnya ditampilkan dengan cara yang
+            // sama di mana-mana, bukan cuma teks instruksi polos.
+            if viewModel.arSceneViewModel.isLiDARAvailable {
+                LiDARScanProgressCard(viewModel: viewModel.arSceneViewModel)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
             }
-            .padding(.top, 8)
-            
+
             Spacer()
         }
         .frame(maxWidth: .infinity)

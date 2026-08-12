@@ -43,10 +43,49 @@ final class Level1ViewModel: ObservableObject {
     @Published private(set) var quizScore = 0
     @Published var lastAnswerWasCorrect: Bool?
 
+    // MARK: - Panah waypoint (arah ke checkpoint berikutnya)
+
+    /// Sudut panah kompas dalam derajat, RELATIF terhadap arah hadap kamera:
+    /// 0 = checkpoint tujuan persis di depan, positif = anak harus belok
+    /// kanan, negatif = belok kiri. Dihitung tiap frame oleh
+    /// `Level1ARCoordinator` (lihat `updateWaypoint(cameraTransform:...)`).
+    @Published private(set) var waypointBearingDegrees: Double = 0
+    /// Jarak lurus (meter) dari kamera ke checkpoint tujuan sekarang.
+    @Published private(set) var waypointDistanceMeters: Double = 0
+    /// `false` sebelum ada data waypoint pertama, atau saat sedang di fase
+    /// yang tidak punya "tujuan berjalan" (mis. quiz, onboarding).
+    @Published private(set) var hasWaypointTarget = false
+
+    /// Dipanggil `Level1ARCoordinator` tiap frame ARKit selama fase
+    /// eksplorasi/kembali-ke-start, supaya `WaypointArrowOverlay` bisa
+    /// memutar ikon panahnya mengikuti posisi checkpoint tujuan.
+    func updateWaypoint(bearingDegrees: Double, distanceMeters: Double) {
+        waypointBearingDegrees = bearingDegrees
+        waypointDistanceMeters = distanceMeters
+        hasWaypointTarget = true
+    }
+
+    /// Dipanggil saat keluar dari fase yang punya target berjalan (mis. masuk
+    /// quiz), supaya panah waypoint tidak nyangkut menunjuk ke checkpoint
+    /// lama begitu ditampilkan lagi nanti.
+    func clearWaypoint() {
+        hasWaypointTarget = false
+    }
+
     private let progressStore: GameProgressStore
 
-    init(progressStore: GameProgressStore = .shared) {
-        self.progressStore = progressStore
+    /// Reuse `ARSceneViewModel` dari lightingconcept HANYA untuk mesin
+    /// tracking progres LiDAR-nya (`updateLiDARScan`, `resetLiDARScan`,
+    /// `lidarPlacementProgress`, `isReadyForPlacement`, `isLiDARAvailable`) —
+    /// pola yang sama dengan `Level4ViewModel.arSceneViewModel`. Level 1 tidak
+    /// memakai object/light management dari view model ini sama sekali;
+    /// `Level1ARCoordinator` cuma memberi makan data mesh scan LiDAR ke sini
+    /// supaya `ScanningSurfaceOverlay` bisa menampilkan kartu persentase yang
+    /// sama persis dengan `LiDARScanProgressCard` di mode sandbox utama.
+    let arSceneViewModel = ARSceneViewModel()
+
+    init(progressStore: GameProgressStore? = nil) {
+        self.progressStore = progressStore ?? GameProgressStore.shared
         // Catatan: checkpoint 0 SENGAJA tidak ditandai "sudah dikunjungi" di sini.
         // Sekarang semua checkpoint (termasuk yang pertama) punya lingkaran biru
         // di dunia nyata yang harus didatangi jalan kaki — lihat

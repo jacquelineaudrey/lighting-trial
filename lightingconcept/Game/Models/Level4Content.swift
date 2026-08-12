@@ -39,4 +39,8 @@ enum Level4Content {
         "Bayangan selalu jatuh di sisi yang berlawanan dari arah datangnya cahaya.",
         "Bayangan yang jatuh di tanah/lantai disebut ground projection."
     ]
+
+    // Catatan: fase navigasi/waypoint (pilih arah + jalan ke titik hijau) sudah
+    // dihapus dari Level 4 — anak langsung bisa menahan tombol "Jadi Lampu"/
+    // "Jadi Objek" setelah onboarding, jadi teks prompt-nya juga sudah tidak dipakai.
 }

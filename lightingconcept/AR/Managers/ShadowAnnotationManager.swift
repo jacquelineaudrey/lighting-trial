@@ -41,7 +41,11 @@ final class ShadowAnnotationManager {
         objectType: LearningObjectType,
         objectPosition: SIMD3<Float>,
         objectHeight: Float,
-        selectedLight: LightConfiguration
+        // Arah cahaya dalam WORLD SPACE (bukan local space lampu). Caller
+        // (`ARSceneCoordinator.updateEducationalOverlays`) sudah mengubahnya
+        // lewat anchor transform sebelum diteruskan ke sini — lihat catatan
+        // di `shadowOffset(worldLightDirection:...)`.
+        worldLightDirection: SIMD3<Float>
     ) {
         clear()
         guard visible else { return }
@@ -53,7 +57,7 @@ final class ShadowAnnotationManager {
             concepts = [
                 (.lightSide, objectPosition + SIMD3<Float>(-0.08, objectHeight * 0.72, 0)),
                 (.shadowSide, objectPosition + SIMD3<Float>(0.08, objectHeight * 0.5, 0)),
-                (.castShadow, objectPosition + shadowOffset(light: selectedLight, object: objectPosition, scale: 0.24)),
+                (.castShadow, objectPosition + shadowOffset(worldLightDirection: worldLightDirection, scale: 0.24)),
                 (.contactShadow, objectPosition + SIMD3<Float>(0, 0.025, 0.08))
             ]
         } else {
@@ -63,7 +67,7 @@ final class ShadowAnnotationManager {
                 (.terminator, objectPosition + SIMD3<Float>(0, objectHeight * 0.72, 0.07)),
                 (.coreShadow, objectPosition + SIMD3<Float>(0, objectHeight * 0.5, 0)),
                 (.reflectedLight, objectPosition + SIMD3<Float>(0.04, objectHeight * 0.34, 0.06)),
-                (.castShadow, objectPosition + shadowOffset(light: selectedLight, object: objectPosition, scale: 0.24)),
+                (.castShadow, objectPosition + shadowOffset(worldLightDirection: worldLightDirection, scale: 0.24)),
                 (.contactShadow, objectPosition + SIMD3<Float>(0, 0.025, 0.08))
             ]
         }
@@ -144,12 +148,23 @@ final class ShadowAnnotationManager {
         return try? TextureResource(image: cgImage, withName: nil, options: .init(semantic: .color))
     }
 
-    private func shadowOffset(light: LightConfiguration, object: SIMD3<Float>, scale: Float) -> SIMD3<Float> {
-        let lightDirection = SceneLightEntityFactory.forwardVector(
-            yawDegrees: light.yawDegrees,
-            pitchDegrees: light.pitchDegrees
-        )
-        guard let direction = ShadowGeometryCalculator.groundShadowDirection(lightDirection: lightDirection) else {
+    /// PENTING: `worldLightDirection` HARUS sudah dalam world space (sudah
+    /// melewati transform anchor scene), bukan local space lampu.
+    ///
+    /// Sebelumnya fungsi ini menghitung ulang arah cahaya sendiri lewat
+    /// `SceneLightEntityFactory.forwardVector(yaw, pitch)`, yang hanya berupa
+    /// arah LOCAL relatif ke entity lampu — tanpa memperhitungkan rotasi
+    /// anchor scene tempat lampu itu ditempel. Ini tidak masalah selama
+    /// anchor scene tidak berotasi (identity), tapi jadi salah begitu anchor
+    /// punya rotasi non-identity — misalnya di Level 4, yang menaruh scene
+    /// otomatis dari hasil raycast permukaan (`ARSceneCoordinator.placeScene`),
+    /// dan `worldTransform` hasil raycast plane ARKit umumnya TIDAK cuma
+    /// translasi, tapi ikut rotasi mengikuti orientasi bidang yang terdeteksi.
+    /// Akibatnya titik "castShadow" annotation ini bisa menunjuk ke arah yang
+    /// tidak cocok dengan bayangan asli yang dirender RealityKit (yang selalu
+    /// benar karena dihitung dari transform world entity yang sebenarnya).
+    private func shadowOffset(worldLightDirection: SIMD3<Float>, scale: Float) -> SIMD3<Float> {
+        guard let direction = ShadowGeometryCalculator.groundShadowDirection(lightDirection: worldLightDirection) else {
             return SIMD3<Float>(0, 0.02, 0.2)
         }
         return direction * scale + SIMD3<Float>(0, 0.025, 0)

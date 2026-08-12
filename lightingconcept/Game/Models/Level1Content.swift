@@ -91,23 +91,22 @@ enum Level1Content {
         id: "bola", displayName: "Bola", objectType: .sphere,
         quizSymbolName: "circle.fill", textures: textures()
     )
-    static let balok = GameShape(
-        id: "balok", displayName: "Balok", objectType: .cuboid,
-        quizSymbolName: "shippingbox.fill", textures: textures()
-    )
     static let tabung = GameShape(
         id: "tabung", displayName: "Tabung", objectType: .cylinder,
         quizSymbolName: "cylinder.fill", textures: textures()
     )
+    static let kerucut = GameShape(
+        id: "kerucut", displayName: "Kerucut", objectType: .cone,
+        quizSymbolName: "triangle.fill", textures: textures()
+    )
 
-    /// Urutan jalur jalan kaki. Ubah urutan/tambah bentuk di sini saja —
-    /// `Level1ARCoordinator` menempatkan checkpoint di dunia nyata mengikuti
-    /// urutan array ini.
+    /// Urutan jalur jalan kaki. `Level1ARCoordinator` menempatkan checkpoint
+    /// di dunia nyata mengikuti urutan array ini.
     static let checkpoints: [Checkpoint] = [
         Checkpoint(id: "cp-0", order: 0, shape: kubus),
         Checkpoint(id: "cp-1", order: 1, shape: bola),
-        Checkpoint(id: "cp-2", order: 2, shape: balok),
-        Checkpoint(id: "cp-3", order: 3, shape: tabung)
+        Checkpoint(id: "cp-2", order: 2, shape: tabung),
+        Checkpoint(id: "cp-3", order: 3, shape: kerucut)
     ]
 
     static let onboardingDialog: [DialogLine] = [
@@ -121,26 +120,26 @@ enum Level1Content {
         TriviaQuestion(
             id: "q-kubus",
             prompt: "Bentuk mana yang disebut Kubus?",
-            choices: [kubus, bola, balok, tabung],
+            choices: [kubus, bola, tabung, kerucut],
             correctShapeID: kubus.id
         ),
         TriviaQuestion(
             id: "q-bola",
             prompt: "Bentuk mana yang disebut Bola?",
-            choices: [bola, tabung, kubus, balok],
+            choices: [bola, kubus, tabung, kerucut],
             correctShapeID: bola.id
-        ),
-        TriviaQuestion(
-            id: "q-balok",
-            prompt: "Bentuk mana yang disebut Balok?",
-            choices: [tabung, balok, bola, kubus],
-            correctShapeID: balok.id
         ),
         TriviaQuestion(
             id: "q-tabung",
             prompt: "Bentuk mana yang disebut Tabung?",
-            choices: [balok, kubus, tabung, bola],
+            choices: [tabung, kerucut, kubus, bola],
             correctShapeID: tabung.id
+        ),
+        TriviaQuestion(
+            id: "q-kerucut",
+            prompt: "Bentuk mana yang disebut Kerucut?",
+            choices: [kerucut, tabung, bola, kubus],
+            correctShapeID: kerucut.id
         )
     ]
 }

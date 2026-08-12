@@ -8,6 +8,7 @@ struct Level4FlowView: View {
     @StateObject private var viewModel = Level4ViewModel()
     @StateObject private var arViewHandle = ARViewHandle()
     @Environment(\.dismiss) private var dismiss
+    @State private var showsExitConfirmation = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -21,6 +22,8 @@ struct Level4FlowView: View {
                     buttonTitle: viewModel.isLastOnboardingLine ? "Ayo Coba!" : "Lanjut",
                     action: viewModel.advanceOnboarding
                 )
+            case .scanningSurface:
+                ScanningSurfaceOverlay(viewModel: viewModel)
             case .positioning:
                 PositioningOverlay(viewModel: viewModel, arViewHandle: arViewHandle)
             case .transitionTrivia:
@@ -43,6 +46,18 @@ struct Level4FlowView: View {
                 LevelCompletedOverlay { dismiss() }
             }
         }
+        // Tombol kembali khas level (lihat `LevelExitControls.swift`). Tidak
+        // ditampilkan lagi begitu level sudah `.completed` — di fase itu
+        // sudah ada tombol "Kembali ke Menu" sendiri di `LevelCompletedOverlay`
+        // dan tidak ada progress tersisa yang perlu dikonfirmasi.
+        .overlay(alignment: .topLeading) {
+            if viewModel.phase != .completed {
+                LevelBackButton { showsExitConfirmation = true }
+                    .padding(.leading, 16)
+                    .padding(.top, 12)
+            }
+        }
+        .levelExitConfirmation(isPresented: $showsExitConfirmation) { dismiss() }
         .animation(.easeInOut, value: viewModel.phase)
         .navigationBarBackButtonHidden(true)
     }
@@ -81,10 +96,53 @@ private struct DialogOverlay: View {
     }
 }
 
-// MARK: - Tombol hold-to-walk (inti interaksi Level 4)
+// MARK: - Scan permukaan (sebelum cube + lampu muncul)
 
-/// Tekan & tahan -> anak "jadi" lampu atau objek, dan berjalan memindahkan
-/// posisinya lewat `Level4ViewModel.updateHold`. Lepas -> balik ke mode lihat.
+/// Sama persis dengan `ScanningSurfaceOverlay` di `Level1FlowView` — pakai
+/// `LiDARScanProgressCard` yang sama supaya semua level (1 & 4) menampilkan
+/// progres scan permukaan dengan cara yang konsisten. Bedanya cuma teks
+/// instruksinya (Level 4 nunggu kubus + lampu, bukan jalur checkpoint).
+private struct ScanningSurfaceOverlay: View {
+    @ObservedObject var viewModel: Level4ViewModel
+
+    var body: some View {
+        VStack {
+            Text("📱👇 Arahkan iPad pelan-pelan ke lantai atau meja ya!")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .multilineTextAlignment(.center)
+                .padding(14)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                .padding(.top, 24)
+
+            if viewModel.arSceneViewModel.isLiDARAvailable {
+                LiDARScanProgressCard(viewModel: viewModel.arSceneViewModel)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+            }
+
+            // TOMBOL DEBUG: Hapus tombol ini nanti kalau mau dirilis ke anak-anak
+            Button(action: {
+                viewModel.finishScanning() // Paksa lanjut ke fase positioning
+            }) {
+                Text("🛠 [Dev] Paksa Lewati Scan")
+                    .font(.footnote.bold())
+                    .padding(10)
+                    .background(.red.opacity(0.8), in: Capsule())
+                    .foregroundColor(.white)
+            }
+            .padding(.top, 8)
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Tombol hold berbasis delta kamera (inti interaksi Level 4)
+
+/// Tekan & tahan -> anak "jadi" lampu atau objek. Posisi kamera saat tombol
+/// mulai ditekan jadi titik nol, lalu benda bergerak mengikuti delta kamera
+/// selama ditahan. Lepas -> balik ke mode lihat, posisi terakhir dipertahankan.
 private struct HoldToWalkButton: View {
     let title: String
     let systemImage: String
@@ -94,7 +152,7 @@ private struct HoldToWalkButton: View {
     let arViewHandle: ARViewHandle
 
     @State private var isHolding = false
-    @State private var pollTimer: Timer?
+    @State private var pollTask: Task<Void, Never>?
 
     var body: some View {
         Label(title, systemImage: systemImage)
@@ -110,25 +168,40 @@ private struct HoldToWalkButton: View {
                 pressing: { pressing in pressing ? startHold() : stopHold() },
                 perform: {}
             )
+            .onDisappear {
+                stopHold()
+            }
     }
 
     private func startHold() {
-        guard !isHolding, let start = arViewHandle.currentCameraPosition else { return }
-        isHolding = true
-        viewModel.beginHold(as: role, cameraPosition: start)
+        // Kalau scene belum ditempel (anchor belum ada), jangan mulai hold sama sekali.
+        guard !isHolding,
+              let startCameraPosition = arViewHandle.currentCameraPositionInSceneAnchorSpace else { return }
 
-        pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { _ in
-            guard let position = arViewHandle.currentCameraPosition else { return }
-            Task { @MainActor in viewModel.updateHold(cameraPosition: position) }
+        isHolding = true
+        viewModel.beginHold(as: role, cameraPosition: startCameraPosition)
+
+        // ARViewHandle dan Level4ViewModel sama-sama main-actor owned.
+        // Task ini juga berjalan di MainActor, sehingga pembacaan kamera tidak
+        // lagi terjadi di Timer @Sendable closure (Swift 6 concurrency error).
+        pollTask?.cancel()
+        pollTask = Task { @MainActor in
+            while !Task.isCancelled && isHolding {
+                if let position = arViewHandle.currentCameraPositionInSceneAnchorSpace {
+                    viewModel.updateHold(cameraPosition: position)
+                }
+
+                try? await Task.sleep(for: .milliseconds(50))
+            }
         }
     }
 
     private func stopHold() {
         guard isHolding else { return }
+
         isHolding = false
-        pollTimer?.invalidate()
-        pollTimer = nil
+        pollTask?.cancel()
+        pollTask = nil
         viewModel.endHold()
     }
 }
@@ -141,7 +214,7 @@ private struct PositioningOverlay: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Text("Tahan salah satu tombol lalu jalan untuk menggeser posisinya")
+            Text("Tahan tombol lalu gerakkan iPad untuk memindahkan posisi. Geser layar tanpa menahan tombol hanya mengubah arah.")
                 .font(.subheadline.bold())
                 .multilineTextAlignment(.center)
 
@@ -180,7 +253,7 @@ private struct ExploringOverlay: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Text("Jelajahi bebas! Coba geser lampu dan objeknya, lihat bayangannya berubah 👀")
+            Text("Tahan tombol untuk memindahkan. Geser layar untuk mengubah arah lampu atau objek, lalu lihat bayangannya berubah 👀")
                 .font(.subheadline.bold())
                 .multilineTextAlignment(.center)
 

@@ -16,7 +16,16 @@ struct ARContainerView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
-        context.coordinator.configure(arView: arView)
+        // `configure` eventually publishes changes on `viewModel` (LiDAR
+        // availability flags set inside `runSession`). `makeUIView` itself
+        // runs during a SwiftUI view update pass, so publishing here
+        // synchronously triggers "Publishing changes from within view
+        // updates is not allowed." Defer to the next run loop turn, same
+        // pattern already used by `updateUIView` below for
+        // `synchronizeScene()`.
+        DispatchQueue.main.async {
+            context.coordinator.configure(arView: arView)
+        }
         return arView
     }
 

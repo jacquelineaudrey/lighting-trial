@@ -1,5 +1,6 @@
 import SwiftUI
 
+@MainActor
 struct ContentView: View {
     @StateObject private var viewModel = ARSceneViewModel()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -242,34 +243,5 @@ private struct SpotlightCutoutShape: Shape {
             height: holeRadius * 2
         ))
         return path
-    }
-}
-
-private struct LiDARScanProgressCard: View {
-    @ObservedObject var viewModel: ARSceneViewModel
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label("LiDAR Surface Scan", systemImage: "cube.transparent")
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                Text(viewModel.isReadyForPlacement ? "Ready" : "\(Int(viewModel.lidarPlacementProgress * 100))%")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            ProgressView(value: viewModel.lidarPlacementProgress)
-                .tint(viewModel.isReadyForPlacement ? .green : .cyan)
-            
-            Text(viewModel.isReadyForPlacement
-                 ? "Area siap. Tap meja atau permukaan datar untuk menaruh object."
-                 : "Arahkan kamera perlahan ke meja, sisi benda, dan tepi permukaan. Area cyan adalah bagian yang sudah terbaca.")
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .frame(maxWidth: 380)
     }
 }

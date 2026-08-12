@@ -41,7 +41,10 @@ final class GameProgressStore: ObservableObject {
 
     /// Sandbox baru terbuka setelah SEMUA level Belajar selesai.
     var isSandboxUnlocked: Bool {
-        completedLevelIDs.count >= totalBelajarLevels
+        #if DEBUG
+        if debugForceSandboxUnlocked { return true }
+        #endif
+        return completedLevelIDs.count >= totalBelajarLevels
     }
 
     #if DEBUG
@@ -50,5 +53,11 @@ final class GameProgressStore: ObservableObject {
         completedLevelIDs = []
         UserDefaults.standard.removeObject(forKey: defaultsKey)
     }
+
+    /// Bypass khusus DEBUG supaya Sandbox bisa langsung dites tanpa perlu
+    /// menyelesaikan ke-6 level Belajar dulu (baru Level 1 & 4 yang punya
+    /// konten sekarang). TIDAK ada efeknya di build Release — gate normal
+    /// (`completedLevelIDs.count >= totalBelajarLevels`) tetap berlaku di sana.
+    @Published var debugForceSandboxUnlocked = false
     #endif
 }

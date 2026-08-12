@@ -106,6 +106,14 @@ struct SceneObjectSystem {
             guard var component = world.objectComponents[sceneEntity] else { continue }
             component.configuration = configuration
             Self.applyTransform(to: component.realityKitEntity, configuration: configuration)
+
+            // Native RealityKit ECS component. Continuous LiDAR interaction is
+            // handled by LidarPhysicsSystem, not by SwiftUI state updates.
+            if component.realityKitEntity.components[LidarInteractableComponent.self] == nil {
+                component.realityKitEntity.components[LidarInteractableComponent.self] =
+                    LidarInteractableComponent(mass: 1.0, usesGravity: false)
+            }
+
             world.objectComponents[sceneEntity] = component
             collisionManager.registerObstacle(
                 id: configuration.id,
