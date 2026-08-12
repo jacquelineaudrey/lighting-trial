@@ -54,7 +54,14 @@ struct MaterialTexture: Identifiable, Hashable {
 
     /// Membuat material RealityKit dari texture asset atau texture procedural.
     /// PBR dipakai supaya roughness/metallic tetap bereaksi terhadap virtual light.
-    func makeMaterial() -> RealityKit.Material {
+    ///
+    /// - Parameter doubleSided: Saat `true`, `faceCulling` diset ke `.none` supaya
+    ///   permukaan BAGIAN DALAM mesh tetap dirender. Dipakai untuk checkpoint Level 1
+    ///   supaya begitu anak jalan MENEMBUS objek (mis. masuk ke tengah cube/sphere),
+    ///   mereka tetap melihat permukaan dalamnya alih-alih tembus pandang ke ruangan
+    ///   kosong — dengan culling default (`.back`) RealityKit hanya merender sisi
+    ///   luar mesh, jadi dari dalam objek jadi terlihat "hilang".
+    func makeMaterial(doubleSided: Bool = false) -> RealityKit.Material {
         let image = UIImage(named: assetName) ?? proceduralImage()
         if let cgImage = image.cgImage,
            let texture = try? TextureResource(image: cgImage, withName: assetName, options: .init(semantic: .color)) {
@@ -63,6 +70,7 @@ struct MaterialTexture: Identifiable, Hashable {
             material.roughness = .init(floatLiteral: roughness)
             material.metallic = .init(floatLiteral: isMetallic ? 1.0 : 0.0)
             applyTransparency(to: &material)
+            if doubleSided { material.faceCulling = .none }
             return material
         }
         var material = PhysicallyBasedMaterial()
@@ -70,6 +78,7 @@ struct MaterialTexture: Identifiable, Hashable {
         material.roughness = .init(floatLiteral: roughness)
         material.metallic = .init(floatLiteral: isMetallic ? 1.0 : 0.0)
         applyTransparency(to: &material)
+        if doubleSided { material.faceCulling = .none }
         return material
     }
 

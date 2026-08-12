@@ -62,16 +62,14 @@ struct Level1FlowView: View {
                     .padding(.top, 12)
             }
         }
-        // Panah kompas arah checkpoint berikutnya — cuma tampil selagi ada
-        // "tujuan berjalan" (eksplorasi mencari checkpoint, atau kembali ke
-        // checkpoint pertama di akhir level), supaya anak selalu tahu ke mana
-        // harus melangkah walau checkpoint-nya ditempatkan menyebar/tersembunyi.
-        .overlay(alignment: .top) {
-            if showsWaypointArrow {
-                WaypointArrowOverlay(viewModel: viewModel)
-                    .padding(.top, 64)
-            }
-        }
+        // CATATAN: Panah arah checkpoint berikutnya SEKARANG bukan lagi badge
+        // kompas statis SwiftUI di layar (dulu `WaypointArrowOverlay` di sini).
+        // Panah arahnya sudah jadi objek AR sungguhan lewat RealityKit — SF
+        // Symbol yang mengambang & berputar di dunia nyata, langsung
+        // ditempatkan & dianimasikan oleh `Level1ARCoordinator`
+        // (`updateDirectionIndicator`) — supaya kesan AR-nya lebih terasa
+        // dibanding cuma ikon 2D nempel di layar. Tidak ada overlay SwiftUI
+        // terpisah yang perlu ditampilkan di sini lagi.
         .levelExitConfirmation(isPresented: $showsExitConfirmation) { dismiss() }
         .animation(.easeInOut, value: viewModel.phase)
         .navigationBarBackButtonHidden(true)
@@ -79,47 +77,6 @@ struct Level1FlowView: View {
 
     private var showsTextureThumbControls: Bool {
         viewModel.phase == .exploring && viewModel.hasArrivedAtCurrentCheckpoint
-    }
-
-    private var showsWaypointArrow: Bool {
-        (viewModel.phase == .exploring || viewModel.phase == .returningToStart) && viewModel.hasWaypointTarget
-    }
-}
-
-// MARK: - Panah kompas arah checkpoint berikutnya
-
-/// Badge bulat kecil di atas layar berisi ikon panah yang berputar mengikuti
-/// `viewModel.waypointBearingDegrees` (0° = tujuan persis di depan kamera)
-/// plus jarak dalam meter, supaya anak tahu ke arah mana & seberapa jauh
-/// harus jalan untuk sampai ke checkpoint berikutnya — berguna sekarang
-/// karena checkpoint ditempatkan menyebar ke berbagai arah, bukan cuma
-/// berbaris rapi di depan.
-private struct WaypointArrowOverlay: View {
-    @ObservedObject var viewModel: Level1ViewModel
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Image(systemName: "location.north.fill")
-                .font(.system(size: 26, weight: .bold))
-                .foregroundStyle(.white)
-                .rotationEffect(.degrees(viewModel.waypointBearingDegrees))
-                .animation(.easeOut(duration: 0.15), value: viewModel.waypointBearingDegrees)
-            Text(distanceLabel)
-                .font(.caption.bold())
-                .foregroundStyle(.white)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.blue.opacity(0.85), in: RoundedRectangle(cornerRadius: 20))
-        .shadow(radius: 6, y: 3)
-    }
-
-    private var distanceLabel: String {
-        let meters = viewModel.waypointDistanceMeters
-        if meters < 1 {
-            return "Sudah dekat!"
-        }
-        return String(format: "%.1f m", meters)
     }
 }
 

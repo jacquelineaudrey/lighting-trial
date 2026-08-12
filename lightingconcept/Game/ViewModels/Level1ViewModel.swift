@@ -57,8 +57,10 @@ final class Level1ViewModel: ObservableObject {
     @Published private(set) var hasWaypointTarget = false
 
     /// Dipanggil `Level1ARCoordinator` tiap frame ARKit selama fase
-    /// eksplorasi/kembali-ke-start, supaya `WaypointArrowOverlay` bisa
-    /// memutar ikon panahnya mengikuti posisi checkpoint tujuan.
+    /// eksplorasi/kembali-ke-start. Nilainya dipakai coordinator sendiri
+    /// untuk memutar objek panah arah RealityKit (`updateDirectionIndicator`)
+    /// yang sekarang mengambang di dunia AR, menggantikan badge kompas
+    /// statis SwiftUI yang dulu dipakai di sini.
     func updateWaypoint(bearingDegrees: Double, distanceMeters: Double) {
         waypointBearingDegrees = bearingDegrees
         waypointDistanceMeters = distanceMeters

@@ -15,7 +15,7 @@ enum SceneObjectEntityFactory {
     static let triangularPyramidSize: Float = 0.15
     static let triangularPyramidHeight: Float = 0.15
 
-    static func makeObject(type: LearningObjectType, texture: MaterialTexture = .defaultGrid) -> ModelEntity {
+    static func makeObject(type: LearningObjectType, texture: MaterialTexture = .defaultGrid, doubleSided: Bool = false) -> ModelEntity {
         let mesh: MeshResource
         let height: Float
 
@@ -46,7 +46,7 @@ enum SceneObjectEntityFactory {
             height = triangularPyramidHeight
         }
 
-        let material = texture.makeMaterial()
+        let material = texture.makeMaterial(doubleSided: doubleSided)
         let entity = ModelEntity(mesh: mesh, materials: [material])
         entity.name = type.rawValue
         entity.position.y = height / 2

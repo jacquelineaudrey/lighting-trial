@@ -1,5 +1,37 @@
 import SwiftUI
 import RealityKit
+import QuartzCore
+
+/// Menjalankan sebuah closure di TIAP frame render layar (lewat `CADisplayLink`)
+/// alih-alih timer waktu tetap. Dipakai oleh `HoldToWalkButton` supaya posisi
+/// lampu/objek Level 4 mengikuti gerakan device 1:1 — sinkron dengan refresh
+/// rate layar (60Hz/120Hz ProMotion) — bukan disampling tiap 50ms yang bisa
+/// terasa telat/tersendat dibanding gerakan device yang sebenarnya.
+@MainActor
+private final class HoldFrameLoop: NSObject {
+    private var displayLink: CADisplayLink?
+    private let onTick: () -> Void
+
+    init(onTick: @escaping () -> Void) {
+        self.onTick = onTick
+    }
+
+    func start() {
+        guard displayLink == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(handleTick))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    func stop() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    @objc private func handleTick() {
+        onTick()
+    }
+}
 
 /// Root view Level 4. Kamera AR (lengkap dengan lampu, objek, dan bayangan
 /// ground-projection yang sudah ditangani `ARSceneCoordinator`) selalu tampil
@@ -152,7 +184,7 @@ private struct HoldToWalkButton: View {
     let arViewHandle: ARViewHandle
 
     @State private var isHolding = false
-    @State private var pollTask: Task<Void, Never>?
+    @State private var frameLoop: HoldFrameLoop?
 
     var body: some View {
         Label(title, systemImage: systemImage)
@@ -181,27 +213,27 @@ private struct HoldToWalkButton: View {
         isHolding = true
         viewModel.beginHold(as: role, cameraPosition: startCameraPosition)
 
-        // ARViewHandle dan Level4ViewModel sama-sama main-actor owned.
-        // Task ini juga berjalan di MainActor, sehingga pembacaan kamera tidak
-        // lagi terjadi di Timer @Sendable closure (Swift 6 concurrency error).
-        pollTask?.cancel()
-        pollTask = Task { @MainActor in
-            while !Task.isCancelled && isHolding {
-                if let position = arViewHandle.currentCameraPositionInSceneAnchorSpace {
-                    viewModel.updateHold(cameraPosition: position)
-                }
-
-                try? await Task.sleep(for: .milliseconds(50))
+        // Dijalankan lewat CADisplayLink (bukan Task.sleep 50ms) supaya posisi
+        // lampu/objek dibaca ulang setiap frame layar digambar — gerakan device
+        // dan gerakan benda virtual jadi 1:1, tidak ada jeda sampling.
+        // ARViewHandle dan Level4ViewModel sama-sama main-actor owned, dan
+        // `handleTick` juga berjalan di MainActor lewat run loop utama, jadi
+        // tetap aman terhadap Swift 6 concurrency checking.
+        let loop = HoldFrameLoop { [arViewHandle, viewModel] in
+            if let position = arViewHandle.currentCameraPositionInSceneAnchorSpace {
+                viewModel.updateHold(cameraPosition: position)
             }
         }
+        loop.start()
+        frameLoop = loop
     }
 
     private func stopHold() {
         guard isHolding else { return }
 
         isHolding = false
-        pollTask?.cancel()
-        pollTask = nil
+        frameLoop?.stop()
+        frameLoop = nil
         viewModel.endHold()
     }
 }
