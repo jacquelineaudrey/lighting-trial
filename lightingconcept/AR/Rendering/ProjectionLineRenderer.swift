@@ -69,7 +69,8 @@ final class ProjectionLineRenderer {
                 forward: direction,
                 right: right,
                 up: up,
-                beamSpread: selectedLight.beamSpread
+                innerAngleDegrees: selectedLight.effectiveInnerAngleDegrees,
+                outerAngleDegrees: selectedLight.effectiveOuterAngleDegrees
             ) {
                 let end = rayEnd(
                     from: lightPosition,
@@ -122,10 +123,11 @@ final class ProjectionLineRenderer {
         forward: SIMD3<Float>,
         right: SIMD3<Float>,
         up: SIMD3<Float>,
-        beamSpread: BeamSpreadPreset
+        innerAngleDegrees: Float,
+        outerAngleDegrees: Float
     ) -> [SIMD3<Float>] {
-        let horizontalAngle = beamSpread.outerAngle.degreesToRadians / 2
-        let verticalAngle = beamSpread.innerAngle.degreesToRadians / 2
+        let horizontalAngle = outerAngleDegrees.degreesToRadians / 2
+        let verticalAngle = innerAngleDegrees.degreesToRadians / 2
         let horizontalSpread = tan(horizontalAngle)
         let verticalSpread = tan(verticalAngle)
         // Sample 2D ini mewakili titik-titik dalam penampang cone:

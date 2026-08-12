@@ -13,6 +13,9 @@ import Photos
 /// Detail rumus cahaya dan bayangan ada di `ProjectionLineRenderer`dan `ShadowGeometryCalculator`.
 final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayViewDelegate {
     private let viewModel: ARSceneViewModel
+    private let gesturePolicy: ARSceneGesturePolicy
+    private let requiresLiDARCoverageBeforePlacement: Bool
+    private weak var telemetryDelegate: (any ARSceneTelemetryDelegate)?
     private weak var arView: ARView?
     private var coachingOverlay: ARCoachingOverlayView?
 
@@ -33,6 +36,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var lastSceneSignature: SceneUpdateSignature?
     private var lastResetSceneFlag = false
     private var lastRescanFlag = false
+    private var lastPlaceSceneAtCenterFlag = false
     private var lastFrozenFlag = false
     private var lastCaptureFlag = false
     private var defaultObjectPosition = SIMD3<Float>(0, 0, 0)
@@ -41,8 +45,16 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private weak var selectedConceptEntity: Entity?
     private var hasLoggedLiDARMeshOcclusion = false
 
-    init(viewModel: ARSceneViewModel) {
+    init(
+        viewModel: ARSceneViewModel,
+        gesturePolicy: ARSceneGesturePolicy = .full,
+        requiresLiDARCoverageBeforePlacement: Bool = true,
+        telemetryDelegate: (any ARSceneTelemetryDelegate)? = nil
+    ) {
         self.viewModel = viewModel
+        self.gesturePolicy = gesturePolicy
+        self.requiresLiDARCoverageBeforePlacement = requiresLiDARCoverageBeforePlacement
+        self.telemetryDelegate = telemetryDelegate
     }
 
     func configure(arView: ARView) {
@@ -73,6 +85,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         if lastRescanFlag != viewModel.pendingRescanSurface {
             lastRescanFlag = viewModel.pendingRescanSurface
             rescanSurface()
+        }
+
+        if lastPlaceSceneAtCenterFlag != viewModel.pendingPlaceSceneAtCenter {
+            lastPlaceSceneAtCenterFlag = viewModel.pendingPlaceSceneAtCenter
+            placeSceneAtScreenCenter()
         }
 
         if lastFrozenFlag != viewModel.isViewFrozen {
@@ -128,6 +145,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     
     private func addGestures(to arView: ARView) {
         arView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap(_:))))
+
+        guard gesturePolicy == .full else { return }
 
         let horizontalPan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         horizontalPan.minimumNumberOfTouches = 1
@@ -192,6 +211,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             return
         }
 
+        // Level 2 hanya memakai tap untuk placement. Setelah scene sudah ada,
+        // semua sentuhan menjadi gesture belajar SwiftUI (pinch/brightness).
+        if gesturePolicy == .placementOnly, world.anchor != nil {
+            return
+        }
+
         if let entity = arView.entity(at: location),
            selectLight(containing: entity) {
             viewModel.interactionMode = .moveLight
@@ -211,7 +236,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         if world.anchor == nil {
             // Di device LiDAR, placement ditahan sampai coverage scan cukup agar posisi awal
             // object dan receiver tidak terlalu meleset dari meja/lantai yang sebenarnya.
-            guard viewModel.isReadyForPlacement else {
+            guard canPlaceScene else {
+                viewModel.placementFeedback = "Terus gerakkan iPad pelan-pelan, lalu coba lagi."
                 viewModel.debugLog("Object placement blocked until LiDAR scan reaches target coverage")
                 return
             }
@@ -270,11 +296,36 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         return arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first
     }
 
+    private var canPlaceScene: Bool {
+        !requiresLiDARCoverageBeforePlacement || viewModel.isReadyForPlacement
+    }
+
+    private func placeSceneAtScreenCenter() {
+        guard world.anchor == nil, let arView else { return }
+        guard canPlaceScene else {
+            viewModel.placementFeedback = "Terus gerakkan iPad pelan-pelan, lalu coba lagi."
+            return
+        }
+
+        let screenCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+        guard let result = raycastPlane(from: screenCenter) else {
+            viewModel.placementFeedback = "Tempatnya belum terlihat. Gerakkan iPad pelan, lalu tekan lagi."
+            return
+        }
+
+        placeScene(at: result)
+    }
+
     private func placeScene(at result: ARRaycastResult) {
         guard let arView else { return }
         let anchor = AnchorEntity(world: result.worldTransform)
         arView.scene.addAnchor(anchor)
         world.anchor = anchor
+        telemetryDelegate?.sceneDidPlace(at: SIMD3<Float>(
+            result.worldTransform.columns.3.x,
+            result.worldTransform.columns.3.y,
+            result.worldTransform.columns.3.z
+        ))
         defaultObjectPosition = .zero
         lidarMeshOcclusionManager.setVisualizationEnabled(false)
 
@@ -291,6 +342,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         syncLights()
 
         viewModel.surfaceState = .placed
+        viewModel.placementFeedback = nil
         viewModel.isObjectPlaced = true
         viewModel.debugLog("Object placement completed on selected surface")
     }
@@ -599,7 +651,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             lightHeight: light.position.y,
             yawDegrees: light.yawDegrees,
             pitchDegrees: light.pitchDegrees,
-            beamSpread: light.beamSpread.rawValue,
+            beamSpread: light.beamOuterAngleDegrees == nil
+                ? light.beamSpread.rawValue
+                : "Custom",
             shadowDirectionDegrees: ShadowGeometryCalculator.shadowDirectionDegrees(
                 lightDirection: lightDirection
             ),
@@ -635,6 +689,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private func resetScene() {
         world.reset()
+        telemetryDelegate?.sceneDidReset()
         collisionManager.removeAll()
         receiverManager.reset()
         projectionRenderer.clear()
@@ -802,6 +857,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             if anchors.contains(where: { $0 is ARPlaneAnchor }),
                self.viewModel.surfaceState == .scanning {
                 self.viewModel.surfaceState = .found
+                self.viewModel.placementFeedback = nil
                 self.coachingOverlay?.setActive(false, animated: true)
                 self.viewModel.debugLog("Horizontal plane detected")
             }
@@ -811,6 +867,13 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
         Task { @MainActor in
+            let cameraTransform = frame.camera.transform
+            self.telemetryDelegate?.cameraDidUpdate(position: SIMD3<Float>(
+                cameraTransform.columns.3.x,
+                cameraTransform.columns.3.y,
+                cameraTransform.columns.3.z
+            ))
+
             guard self.viewModel.selectedConcept != nil,
                   let arView = self.arView,
                   let entity = self.selectedConceptEntity else { return }

@@ -56,8 +56,8 @@ enum SceneLightEntityFactory {
             component.color = configuration.color.uiColor
             component.intensity = configuration.intensity
             component.attenuationRadius = 8
-            component.innerAngleInDegrees = configuration.beamSpread.innerAngle
-            component.outerAngleInDegrees = configuration.beamSpread.outerAngle
+            component.innerAngleInDegrees = configuration.effectiveInnerAngleDegrees
+            component.outerAngleInDegrees = configuration.effectiveOuterAngleDegrees
             light.components.set(component)
             var shadow = SpotLightComponent.Shadow()
             shadow.zNear = .fixed(0.01)
@@ -100,6 +100,22 @@ enum SceneLightEntityFactory {
         // RealityKit memakai local -Z sebagai arah "depan" light. Setelah diputar oleh
         // yaw/pitch, vector ini menjadi arah datang cahaya di coordinate space light.
         return simd_normalize(orientation.act(SIMD3<Float>(0, 0, -1)))
+    }
+
+    /// Menghasilkan yaw/pitch yang membuat sumbu depan spotlight RealityKit
+    /// (`-Z`) tepat menunjuk dari posisi lampu ke titik target.
+    static func aimingAngles(
+        from lightPosition: SIMD3<Float>,
+        to targetPosition: SIMD3<Float>
+    ) -> (yawDegrees: Float, pitchDegrees: Float)? {
+        let delta = targetPosition - lightPosition
+        guard simd_length_squared(delta) > 0.000001 else { return nil }
+
+        let horizontalDistance = sqrt(delta.x * delta.x + delta.z * delta.z)
+        return (
+            yawDegrees: atan2(-delta.x, -delta.z).radiansToDegrees,
+            pitchDegrees: atan2(delta.y, horizontalDistance).radiansToDegrees
+        )
     }
 
     private static func makeMarker(configuration: LightConfiguration) -> ModelEntity {

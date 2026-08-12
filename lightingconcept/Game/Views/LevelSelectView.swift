@@ -1,20 +1,21 @@
 import SwiftUI
 
-/// Grid 6 level Belajar. Untuk sekarang hanya Level 1 yang punya konten;
-/// level 2-6 tampil terkunci sebagai placeholder ("Segera Hadir").
+/// Grid 6 level Belajar dan rute menuju level yang sudah punya konten.
 struct LevelSelectView: View {
-    @StateObject private var progressStore = GameProgressStore.shared
+    @ObservedObject private var progressStore = GameProgressStore.shared
     @State private var startLevel1 = false
+    @State private var startLevel2 = false
     @State private var startLevel4 = false
 
     private let levelTitles: [Int: String] = [
         1: Level1Content.levelTitle,
+        2: Level2Content.levelTitle,
         4: Level4Content.levelTitle
     ]
 
-    /// Level yang sudah punya konten sekarang. Level 2, 3, 5, 6 sedang
-    /// dikerjakan tim lain — tambahkan ID-nya di sini begitu selesai.
-    private let levelsWithContent: Set<Int> = [1, 4]
+    /// Level yang sudah punya konten sekarang. Tambahkan ID level lain di sini
+    /// setelah flow dan kontennya siap dimainkan.
+    private let levelsWithContent: Set<Int> = [1, 2, 4]
 
     var body: some View {
         ScrollView {
@@ -27,6 +28,7 @@ struct LevelSelectView: View {
                         isCompleted: progressStore.isLevelCompleted(levelID)
                     ) {
                         if levelID == 1 { startLevel1 = true }
+                        if levelID == 2 { startLevel2 = true }
                         if levelID == 4 { startLevel4 = true }
                     }
                 }
@@ -34,16 +36,20 @@ struct LevelSelectView: View {
             .padding()
 
             #if DEBUG
-            // Level 4 baru terbuka lewat urutan normal setelah level 2 & 3 ada.
-            // Sementara itu, tombol ini biar bisa langsung dites tanpa nunggu.
-            Button("🔧 Buka Level 4 langsung (debug)") { startLevel4 = true }
-                .font(.footnote)
-                .padding(.top, 8)
+            VStack(spacing: 8) {
+                Button("🔧 Buka Level 2 langsung (debug)") { startLevel2 = true }
+                Button("🔧 Buka Level 4 langsung (debug)") { startLevel4 = true }
+            }
+            .font(.footnote)
+            .padding(.top, 8)
             #endif
         }
         .navigationTitle("Pilih Level")
         .navigationDestination(isPresented: $startLevel1) {
             Level1FlowView()
+        }
+        .navigationDestination(isPresented: $startLevel2) {
+            Level2FlowView()
         }
         .navigationDestination(isPresented: $startLevel4) {
             Level4FlowView()
