@@ -370,7 +370,10 @@ struct SceneControlPanel: View {
         Binding {
             viewModel.selectedLight.beamSpread
         } set: { value in
-            viewModel.updateSelectedLight { $0.beamSpread = value }
+            viewModel.updateSelectedLight {
+                $0.beamSpread = value
+                $0.beamOuterAngleDegrees = nil
+            }
         }
     }
 

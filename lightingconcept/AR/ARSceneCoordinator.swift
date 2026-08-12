@@ -388,6 +388,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         syncLights()
 
         viewModel.surfaceState = .placed
+        viewModel.placementFeedback = nil
         viewModel.isObjectPlaced = true
         viewModel.debugLog("Object placement completed on selected surface")
     }
@@ -710,7 +711,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             lightHeight: light.position.y,
             yawDegrees: light.yawDegrees,
             pitchDegrees: light.pitchDegrees,
-            beamSpread: light.beamSpread.rawValue,
+            beamSpread: light.beamOuterAngleDegrees == nil
+                ? light.beamSpread.rawValue
+                : "Custom",
             shadowDirectionDegrees: ShadowGeometryCalculator.shadowDirectionDegrees(
                 lightDirection: lightDirection
             ),
@@ -746,6 +749,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private func resetScene() {
         world.reset()
+        telemetryDelegate?.sceneDidReset()
         collisionManager.removeAll()
         receiverManager.reset()
         projectionRenderer.clear()
@@ -913,6 +917,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             if anchors.contains(where: { $0 is ARPlaneAnchor }),
                self.viewModel.surfaceState == .scanning {
                 self.viewModel.surfaceState = .found
+                self.viewModel.placementFeedback = nil
                 self.coachingOverlay?.setActive(false, animated: true)
                 self.viewModel.debugLog("Horizontal plane detected")
             }

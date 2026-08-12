@@ -34,6 +34,8 @@ final class ARSceneViewModel: ObservableObject {
 
     @Published var pendingResetScene = false
     @Published var pendingRescanSurface = false
+    @Published var pendingPlaceSceneAtCenter = false
+    @Published var placementFeedback: String?
     @Published var sceneRevision = 0
 
     @Published var isViewFrozen = false
@@ -286,6 +288,11 @@ final class ARSceneViewModel: ObservableObject {
 
     func rescanSurface() {
         pendingRescanSurface.toggle()
+    }
+
+    func placeSceneAtScreenCenter() {
+        placementFeedback = nil
+        pendingPlaceSceneAtCenter.toggle()
     }
 
     func toggleFreeze() {

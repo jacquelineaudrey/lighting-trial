@@ -4,7 +4,7 @@ import SwiftUI
 /// Layar pembuka: pilih "Belajar" atau "Sandbox".
 /// Sandbox terkunci sampai semua level Belajar selesai (lihat `GameProgressStore`).
 struct MainMenuView: View {
-    @StateObject private var progressStore = GameProgressStore.shared
+    @ObservedObject private var progressStore = GameProgressStore.shared
     @State private var showLevelSelect = false
     @State private var showSandbox = false
 
