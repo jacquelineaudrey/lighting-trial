@@ -39,6 +39,9 @@ final class ARSceneViewModel: ObservableObject {
     @Published var pendingCaptureSnapshot = false
     @Published var isSavingSnapshot = false
     @Published var snapshotFeedback: SnapshotFeedback?
+    @Published var autoPlaceOnSurfaceFound: Bool = true
+    @Published var directManipulationRotatesOnly = false
+    @Published var usesRealisticEnvironmentLighting = true
 
     init() {
         let initialObject = ObjectConfiguration.defaultObject()

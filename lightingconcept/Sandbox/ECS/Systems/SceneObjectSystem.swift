@@ -46,13 +46,11 @@ final class SceneObjectSystem: System {
             let sourceKey = objectSourceKey(for: configuration)
             let existingEntity = entityWithObjectID(configuration.id, in: anchor)
             let existingComponent = existingEntity?.components[SceneObjectComponent.self]
-            let needsReplacement = existingEntity == nil
-                || existingComponent?.sourceKey != sourceKey
-                || (configuration.importedModel == nil && textureChanged)
+            let needsReplacement = existingEntity == nil || existingComponent?.sourceKey != sourceKey || (configuration.importedModel == nil && textureChanged)
 
             let objectEntity: Entity
             if needsReplacement {
-                                existingEntity?.removeFromParent()
+                existingEntity?.removeFromParent()
 
                 if let importedModel = configuration.importedModel {
                     let placeholder = SceneObjectSystem.makeObject(type: .cuboid)
@@ -134,7 +132,7 @@ final class SceneObjectSystem: System {
         reportModelLoadFailure: @escaping (String, any Error) -> Void,
         debugLog: @escaping (String) -> Void
     ) {
-        let task = Task { @MainActor in
+        Task { @MainActor in
             do {
                 let loadedEntity = try await Entity(contentsOf: importedModel.fileURL)
                 try Task.checkCancellation()
@@ -266,11 +264,7 @@ final class SceneObjectSystem: System {
     }
 
     static func obstaclePosition(for object: ObjectConfiguration) -> SIMD3<Float> {
-        object.position + SIMD3<Float>(
-            0,
-            SceneObjectSystem.objectHeight(for: object) * object.scale / 2,
-            0
-        )
+        object.position + SIMD3<Float>(0, SceneObjectSystem.objectHeight(for: object) * object.scale / 2, 0)
     }
 
     private static func entitiesWithObjectComponent(in root: Entity) -> [Entity] {
@@ -290,7 +284,7 @@ final class SceneObjectSystem: System {
 }
 
 
-private extension SceneObjectSystem {
+extension SceneObjectSystem {
     static let cubeSize: Float = 0.12
     static let sphereRadius: Float = 0.06
     static let cuboidSize = SIMD3<Float>(0.17, 0.10, 0.11)

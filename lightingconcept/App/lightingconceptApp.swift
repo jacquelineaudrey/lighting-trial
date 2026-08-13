@@ -15,7 +15,7 @@ struct lightingconceptApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainMenuView()
         }
     }
 }

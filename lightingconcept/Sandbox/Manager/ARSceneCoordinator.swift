@@ -25,6 +25,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private let lidarMeshOcclusionManager = LiDARMeshOcclusionManager()
     private static let lidarLightRadius: Float = 0.045
     private static let lidarClearance: Float = 0.006
+    static let sceneAnchorName = "ARSceneCoordinator.sceneAnchor"
     private var usesSceneReconstruction = false
 
     private var isSynchronizationScheduled = false
@@ -53,7 +54,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         arView.renderOptions.insert(.disableDepthOfField)
         arView.renderOptions.insert(.disablePersonOcclusion)
         arView.environment.sceneUnderstanding.options.insert(.occlusion)
+        arView.environment.sceneUnderstanding.options.insert(.collision)
         arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
+        arView.environment.sceneUnderstanding.options.insert(.physics)
 
         arView.session.delegate = self
         addCoachingOverlay(to: arView)
@@ -146,6 +149,33 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         viewModel.debugLog("Coaching overlay requested a full session reset")
     }
     
+    func coachingOverlayViewDidDeactivate(_ coachingOverlayView: ARCoachingOverlayView) {
+        guard viewModel.autoPlaceOnSurfaceFound, sceneAnchor?.anchor == nil, let arView else { return }
+        placeSceneAutomatically(in: arView)
+    }
+    
+    private func placeSceneAutomatically(in arView: ARView) {
+        // 1. Coba raycast dari tengah layar ke permukaan yang sudah terdeteksi.
+        let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+        if let result = raycastPlane(from: center) {
+            placeScene(at: result.worldTransform)
+            return
+        }
+        
+        // 2. Fallback: taruh di depan kamera, estimasi tinggi lantai dari posisi kamera
+        // (pola yang sama dipakai `Level1ARCoordinator` saat ARKit belum sempat
+        // memberi plane anchor yang valid).
+        let cameraTransform = arView.cameraTransform.matrix
+        let cameraPosition = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        let forward = -SIMD3<Float>(cameraTransform.columns.2.x, cameraTransform.columns.2.y, cameraTransform.columns.2.z)
+        let flatForward = SIMD3<Float>(forward.x, 0, forward.z)
+        let normalizedForward = simd_length(flatForward) > 0.0001 ? flatForward / simd_length(flatForward) : SIMD3<Float>(0, 0, -1)
+        let placementPosition = cameraPosition + normalizedForward * 0.6
+        var fallbackTransform = matrix_identity_float4x4
+        fallbackTransform.columns.3 = SIMD4<Float>(placementPosition.x, cameraPosition.y - 1.2, placementPosition.z, 1)
+        placeScene(at: fallbackTransform)
+    }
+    
     private func addGestures(to arView: ARView) {
         arView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap(_:))))
 
@@ -235,7 +265,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                 viewModel.debugLog("Object placement blocked until LiDAR scan reaches target coverage")
                 return
             }
-            placeScene(at: result)
+            placeScene(at: result.worldTransform)
         } else if viewModel.interactionMode == .moveObject {
             moveObject(to: result)
         }
@@ -243,6 +273,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
         guard let arView else { return }
+        
+        if viewModel.directManipulationRotatesOnly {
+            rotateSelection(from: gesture, in: arView)
+            return
+        }
+        
         let location = gesture.location(in: arView)
         guard let result = raycastPlane(from: location) else { return }
 
@@ -257,6 +293,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     @objc private func handleVerticalLightPan(_ gesture: UIPanGestureRecognizer) {
         guard let arView, viewModel.interactionMode == .moveLight else { return }
 
+        if viewModel.directManipulationRotatesOnly {
+            rotateSelection(from: gesture, in: arView)
+            return
+        }
+        
         switch gesture.state {
         case .began:
             verticalLightPanStartHeight = viewModel.selectedLight.position.y
@@ -274,6 +315,30 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
+    private func rotateSelection(from gesture: UIPanGestureRecognizer, in arView: ARView) {
+        guard gesture.state == .changed else { return }
+        let translation = gesture.translation(in: arView)
+        gesture.setTranslation(.zero, in: arView)
+        
+        let yawDelta = Float(translation.x) * 0.35
+        switch viewModel.interactionMode {
+        case .moveObject:
+            viewModel.updateSelectedObject { object in
+                object.yawDegrees += yawDelta
+            }
+        case .moveLight:
+            let pitchDelta = Float(-translation.y) * 0.25
+            viewModel.updateSelectedLight { light in
+                light.yawDegrees += yawDelta
+                // Batas ini menjaga lampu tetap mengarah ke permukaan, bukan
+                // berputar melewati atas atau tepat sejajar dengan lantai.
+                light.pitchDegrees = clamped(light.pitchDegrees + pitchDelta, -85, -5)
+            }
+        }
+        
+        synchronizeScene()
+    }
+    
     private func raycastPlane(from point: CGPoint) -> ARRaycastResult? {
         guard let arView else { return nil }
 
@@ -290,9 +355,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         return arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first
     }
 
-    private func placeScene(at result: ARRaycastResult) {
+    private func placeScene(at worldTransform: simd_float4x4) {
         guard let arView else { return }
-        let anchor = AnchorEntity(world: result.worldTransform)
+        let anchor = AnchorEntity(world: worldTransform)
+        anchor.name = Self.sceneAnchorName
+        
         arView.scene.addAnchor(anchor)
         sceneAnchor = anchor
         defaultObjectPosition = .zero
@@ -603,18 +670,29 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             objectType: viewModel.selectedObjectType,
             objectPosition: objectGroundPosition,
             objectHeight: objectHeight,
-            selectedLight: selectedLight
+            selectedLight: selectedLight,
+            worldLightDirection: lightDirection
         )
     }
 
     private func updateShadowInfo() {
-        guard objectEntity(id: viewModel.selectedObjectID) != nil else { return }
+        // 1. Get the anchor from v2's sceneAnchor, but keep the entity check
+        guard let anchor = sceneAnchor,
+              objectEntity(id: viewModel.selectedObjectID) != nil else { return }
+        
         let light = viewModel.selectedLight
         let objectHeight = scaledObjectHeight
-        let lightDirection = SceneLightSystem.forwardVector(
+        
+        // 2. Use v2's static system for the local vector
+        let localLightDirection = SceneLightSystem.forwardVector(
             yawDegrees: light.yawDegrees,
             pitchDegrees: light.pitchDegrees
         )
+        
+        // 3. RESTORE v1's transformation logic so the UI syncs with rotated scenes
+        let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+        let lightDirection = transformVector(localLightDirection, by: anchorTransform)
+        
         let nextInfo = ShadowInfo(
             lightType: light.type.rawValue,
             intensity: light.intensity,
@@ -630,6 +708,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                 objectHeight: objectHeight
             )
         )
+        
         if viewModel.shadowInfo != nextInfo {
             viewModel.shadowInfo = nextInfo
         }

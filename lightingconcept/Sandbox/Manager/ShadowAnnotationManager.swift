@@ -41,7 +41,8 @@ final class ShadowAnnotationManager {
         objectType: LearningObjectType,
         objectPosition: SIMD3<Float>,
         objectHeight: Float,
-        selectedLight: LightConfiguration
+        selectedLight: LightConfiguration,
+        worldLightDirection: SIMD3<Float>
     ) {
         clear()
         guard visible else { return }
