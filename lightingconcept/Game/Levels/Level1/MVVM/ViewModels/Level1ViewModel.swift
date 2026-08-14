@@ -49,6 +49,12 @@ final class Level1ViewModel: ObservableObject {
     
     // FIX: Re-added missing variable for ARKit plane tracking
     private var latestHorizontalPlaneAnchor: ARPlaneAnchor?
+
+    // Current device camera pose (XZ-plane only), refreshed every frame so the
+    // checkpoint path can be spawned in front of wherever the child is actually
+    // looking when the surface is found — see `updateCameraPose` / `placePathIfNeeded`.
+    private var latestCameraPositionXZ: SIMD2<Float>?
+    private var latestCameraForwardXZ: SIMD2<Float>?
     
     private var checkpointWorldPositions: [SIMD3<Float>] = []
     private var markerWorldPositions: [SIMD3<Float>] = []
@@ -95,6 +101,16 @@ final class Level1ViewModel: ObservableObject {
     
     private func planeArea(_ planeAnchor: ARPlaneAnchor) -> Float {
         return planeAnchor.planeExtent.width * planeAnchor.planeExtent.height
+    }
+
+    /// Called every frame with the device's current camera transform so we know
+    /// where the child is standing/looking at the moment the surface gets locked in.
+    func updateCameraPose(position: SIMD3<Float>, forward: SIMD3<Float>) {
+        latestCameraPositionXZ = SIMD2<Float>(position.x, position.z)
+        let horizontalForward = SIMD2<Float>(forward.x, forward.z)
+        let length = simd_length(horizontalForward)
+        guard length > 0.0001 else { return }
+        latestCameraForwardXZ = horizontalForward / length
     }
     
     // MARK: - ECS Scene Loop & Proximity Check
@@ -169,8 +185,16 @@ final class Level1ViewModel: ObservableObject {
         hasPlacedPath = true
         
         let count = checkpoints.isEmpty ? 1 : checkpoints.count
-        let originXZ = SIMD2<Float>.zero
-        let forwardXZ = SIMD2<Float>(0, -1)
+        // FIX: This used to hardcode originXZ = .zero and forwardXZ = (0, -1), i.e. the
+        // fixed ARKit world origin/axis established when the AR session first started
+        // (usually while the phone was still pointed at the onboarding dialog, not the
+        // floor). That placed the checkpoint path in a fixed world direction that had
+        // nothing to do with where the child was actually looking once scanning
+        // finished, so the path could easily spawn behind them or out of view — making
+        // it look like nothing was placed. Now we spawn relative to the child's current
+        // position/facing direction at the moment the surface is confirmed.
+        let originXZ = latestCameraPositionXZ ?? .zero
+        let forwardXZ = latestCameraForwardXZ ?? SIMD2<Float>(0, -1)
         let floorY: Float = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
         
         let shapePositionsXZ = (0..<count).map { i -> SIMD2<Float> in

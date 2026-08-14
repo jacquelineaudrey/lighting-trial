@@ -10,7 +10,6 @@ struct Level2ARContainerView: UIViewRepresentable {
         ARSceneCoordinator(
             viewModel: sceneViewModel,
             gesturePolicy: .placementOnly,
-            requiresLiDARCoverageBeforePlacement: false,
             telemetryDelegate: telemetryDelegate
         )
     }

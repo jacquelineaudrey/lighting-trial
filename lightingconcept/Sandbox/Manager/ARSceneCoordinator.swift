@@ -13,6 +13,8 @@ import Photos
 /// Detail rumus cahaya dan bayangan ada di `ProjectionLineRenderer`dan `ShadowGeometryCalculator`.
 final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayViewDelegate {
     private let viewModel: ARSceneViewModel
+    private let gesturePolicy: ARSceneGesturePolicy
+    private weak var telemetryDelegate: (any ARSceneTelemetryDelegate)?
     private weak var arView: ARView?
     private var coachingOverlay: ARCoachingOverlayView?
 
@@ -25,12 +27,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private let lidarMeshOcclusionManager = LiDARMeshOcclusionManager()
     private static let lidarLightRadius: Float = 0.045
     private static let lidarClearance: Float = 0.006
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
     /// Nama stabil untuk anchor tempat scene (object + light) ditempel, supaya
     /// bisa dicari dari luar coordinator (lihat `ARViewHandle` di Level 4)
     /// tanpa perlu referensi langsung ke `ARSceneCoordinator`.
-=======
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
     static let sceneAnchorName = "ARSceneCoordinator.sceneAnchor"
     private var usesSceneReconstruction = false
 
@@ -48,8 +47,14 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private weak var selectedConceptEntity: Entity?
     private var hasLoggedLiDARMeshOcclusion = false
 
-    init(viewModel: ARSceneViewModel) {
+    init(
+        viewModel: ARSceneViewModel,
+        gesturePolicy: ARSceneGesturePolicy = .full,
+        telemetryDelegate: (any ARSceneTelemetryDelegate)? = nil
+    ) {
         self.viewModel = viewModel
+        self.gesturePolicy = gesturePolicy
+        self.telemetryDelegate = telemetryDelegate
     }
 
     func configure(arView: ARView) {
@@ -61,10 +66,6 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         arView.renderOptions.insert(.disablePersonOcclusion)
         arView.environment.sceneUnderstanding.options.insert(.occlusion)
         arView.environment.sceneUnderstanding.options.insert(.collision)
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
-        arView.environment.sceneUnderstanding.options.insert(.physics)
-=======
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
         arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
         arView.environment.sceneUnderstanding.options.insert(.physics)
 
@@ -167,34 +168,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     /// jalur checkpoint otomatis begitu overlay non-aktif — supaya anak tidak
     /// perlu tahu harus tap layar dulu.
     func coachingOverlayViewDidDeactivate(_ coachingOverlayView: ARCoachingOverlayView) {
-        guard viewModel.autoPlaceOnSurfaceFound, world.anchor == nil, let arView else { return }
-        placeSceneAutomatically(in: arView)
-    }
-
-    private func placeSceneAutomatically(in arView: ARView) {
-        // 1. Coba raycast dari tengah layar ke permukaan yang sudah terdeteksi.
-        let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
-        if let result = raycastPlane(from: center) {
-            placeScene(at: result.worldTransform)
-            return
-        }
-
-        // 2. Fallback: taruh di depan kamera, estimasi tinggi lantai dari posisi kamera
-        // (pola yang sama dipakai `Level1ARCoordinator` saat ARKit belum sempat
-        // memberi plane anchor yang valid).
-        let cameraTransform = arView.cameraTransform.matrix
-        let cameraPosition = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-        let forward = -SIMD3<Float>(cameraTransform.columns.2.x, cameraTransform.columns.2.y, cameraTransform.columns.2.z)
-        let flatForward = SIMD3<Float>(forward.x, 0, forward.z)
-        let normalizedForward = simd_length(flatForward) > 0.0001 ? flatForward / simd_length(flatForward) : SIMD3<Float>(0, 0, -1)
-        let placementPosition = cameraPosition + normalizedForward * 0.6
-        var fallbackTransform = matrix_identity_float4x4
-        fallbackTransform.columns.3 = SIMD4<Float>(placementPosition.x, cameraPosition.y - 1.2, placementPosition.z, 1)
-        placeScene(at: fallbackTransform)
-    }
-    
-    func coachingOverlayViewDidDeactivate(_ coachingOverlayView: ARCoachingOverlayView) {
-        guard viewModel.autoPlaceOnSurfaceFound, sceneAnchor?.anchor == nil, let arView else { return }
+        guard viewModel.autoPlaceOnSurfaceFound, sceneAnchor == nil, let arView else { return }
         placeSceneAutomatically(in: arView)
     }
     
@@ -222,6 +196,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     
     private func addGestures(to arView: ARView) {
         arView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap(_:))))
+
+        guard gesturePolicy == .full else { return }
 
         let horizontalPan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         horizontalPan.minimumNumberOfTouches = 1
@@ -263,8 +239,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             configuration.frameSemantics.insert(.smoothedSceneDepth)
             viewModel.debugLog("LiDAR smoothed scene depth enabled")
         }
-        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
-            configuration.sceneReconstruction = .meshWithClassification
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            // Classification data (wall/floor/table/etc) isn't read anywhere in this
+            // codebase, only the raw mesh geometry is needed for occlusion. Plain
+            // `.mesh` skips ARKit's per-frame classification pass — matches Level1's
+            // lighter config and meaningfully reduces thermal load on LiDAR devices.
+            configuration.sceneReconstruction = .mesh
             usesSceneReconstruction = true
             viewModel.isLiDARAvailable = true
             viewModel.resetLiDARScan()
@@ -320,36 +300,24 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                 return
             }
             placeScene(at: result.worldTransform)
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
         } else if viewModel.interactionMode == .moveObject,
                   !viewModel.directManipulationRotatesOnly {
-=======
-        } else if viewModel.interactionMode == .moveObject {
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
             moveObject(to: result)
         }
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
         guard let arView else { return }
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
 
         // Level 4 membedakan dua jenis input dengan tegas: perpindahan posisi
         // datang dari tombol tahan (lihat Level4ViewModel.updateHold), sementara
         // drag langsung hanya mengubah arah. Dengan guard ini, drag tidak pernah
         // lolos ke moveObject/moveSelectedLight saat mode Level 4 aktif.
-=======
-        
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
         if viewModel.directManipulationRotatesOnly {
             rotateSelection(from: gesture, in: arView)
             return
         }
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
 
-=======
-        
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
         let location = gesture.location(in: arView)
         guard let result = raycastPlane(from: location) else { return }
 
@@ -368,11 +336,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             rotateSelection(from: gesture, in: arView)
             return
         }
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
 
-=======
-        
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
         switch gesture.state {
         case .began:
             verticalLightPanStartHeight = viewModel.selectedLight.position.y
@@ -390,21 +354,14 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
     /// Kontrol arah untuk Level 4. Satu sapuan jari memutar object di sumbu Y;
     /// untuk lampu, sapuan horizontal mengubah yaw dan sapuan vertikal mengubah
     /// pitch. Tidak ada posisi yang disentuh di fungsi ini.
-=======
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
     private func rotateSelection(from gesture: UIPanGestureRecognizer, in arView: ARView) {
         guard gesture.state == .changed else { return }
         let translation = gesture.translation(in: arView)
         gesture.setTranslation(.zero, in: arView)
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
 
-=======
-        
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
         let yawDelta = Float(translation.x) * 0.35
         switch viewModel.interactionMode {
         case .moveObject:
@@ -420,17 +377,10 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                 light.pitchDegrees = clamped(light.pitchDegrees + pitchDelta, -85, -5)
             }
         }
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
 
         synchronizeScene()
     }
 
-=======
-        
-        synchronizeScene()
-    }
-    
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
     private func raycastPlane(from point: CGPoint) -> ARRaycastResult? {
         guard let arView else { return nil }
 
@@ -450,15 +400,10 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private func placeScene(at worldTransform: simd_float4x4) {
         guard let arView else { return }
         let anchor = AnchorEntity(world: worldTransform)
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
         // Nama stabil supaya `ARViewHandle` (dipakai Level 4's hold-to-walk)
         // bisa menemukan anchor scene ini lewat `Scene.findEntity(named:)`
         // tanpa perlu ARSceneCoordinator membocorkan referensi internalnya.
         anchor.name = Self.sceneAnchorName
-=======
-        anchor.name = Self.sceneAnchorName
-        
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
         arView.scene.addAnchor(anchor)
         sceneAnchor = anchor
         defaultObjectPosition = .zero
@@ -479,6 +424,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         viewModel.surfaceState = .placed
         viewModel.placementFeedback = nil
         viewModel.isObjectPlaced = true
+        let worldPosition = SIMD3<Float>(
+            worldTransform.columns.3.x,
+            worldTransform.columns.3.y,
+            worldTransform.columns.3.z
+        )
+        telemetryDelegate?.sceneDidPlace(at: worldPosition)
         viewModel.debugLog("Object placement completed on selected surface")
     }
 
@@ -770,56 +721,35 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             objectType: viewModel.selectedObjectType,
             objectPosition: objectGroundPosition,
             objectHeight: objectHeight,
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
             // `lightDirection` di atas sudah ditransformasi lewat
             // `anchorTransform` (world space), bukan local space lampu —
             // ini yang membuat titik "castShadow" akhirnya sinkron dengan
             // bayangan asli yang dirender, termasuk saat anchor scene
             // punya rotasi (kasus Level 4).
-=======
-            selectedLight: selectedLight,
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
             worldLightDirection: lightDirection
         )
     }
 
     private func updateShadowInfo() {
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
-        guard let anchor = world.anchor,
-              world.objectRealityKitEntity(id: viewModel.selectedObjectID) != nil else { return }
-        let light = viewModel.selectedLight
-        let objectHeight = scaledObjectHeight
-        // Sama seperti `updateEducationalOverlays`: arah cahaya harus
-        // ditransformasi lewat anchor transform ke world space dulu, bukan
-        // dipakai langsung sebagai local direction. Sebelumnya info panel ini
-        // (derajat arah bayangan & estimasi panjang bayangan) bisa berbeda
-        // dari bayangan asli begitu anchor scene punya rotasi non-identity
-        // (mis. Level 4 yang menempatkan scene otomatis dari hasil raycast).
-        let localLightDirection = SceneLightEntityFactory.forwardVector(
-            yawDegrees: light.yawDegrees,
-            pitchDegrees: light.pitchDegrees
-        )
-        let anchorTransform = anchor.transformMatrix(relativeTo: nil)
-        let lightDirection = transformVector(localLightDirection, by: anchorTransform)
-=======
-        // 1. Get the anchor from v2's sceneAnchor, but keep the entity check
         guard let anchor = sceneAnchor,
               objectEntity(id: viewModel.selectedObjectID) != nil else { return }
-        
+
         let light = viewModel.selectedLight
         let objectHeight = scaledObjectHeight
-        
-        // 2. Use v2's static system for the local vector
+
+        // Sama seperti `updateEducationalOverlays`: arah cahaya harus
+        // ditransformasi lewat anchor transform ke world space dulu, bukan
+        // dipakai langsung sebagai local direction, supaya info panel ini
+        // tetap sinkron dengan bayangan asli saat anchor scene punya rotasi
+        // non-identity (mis. Level 4 yang menempatkan scene otomatis dari
+        // hasil raycast).
         let localLightDirection = SceneLightSystem.forwardVector(
             yawDegrees: light.yawDegrees,
             pitchDegrees: light.pitchDegrees
         )
-        
-        // 3. RESTORE v1's transformation logic so the UI syncs with rotated scenes
         let anchorTransform = anchor.transformMatrix(relativeTo: nil)
         let lightDirection = transformVector(localLightDirection, by: anchorTransform)
         
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
         let nextInfo = ShadowInfo(
             lightType: light.type.rawValue,
             intensity: light.intensity,
@@ -863,17 +793,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
 
     private func resetScene() {
-<<<<<<< HEAD:lightingconcept/AR/ARSceneCoordinator.swift
-        world.reset()
-        telemetryDelegate?.sceneDidReset()
-        collisionManager.removeAll()
-=======
         if let anchor = sceneAnchor {
             anchor.removeFromParent()
         }
         sceneAnchor = nil
         lastTexture = nil
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ARSceneCoordinator.swift
+        telemetryDelegate?.sceneDidReset()
         receiverManager.reset()
         projectionRenderer.clear()
         annotationManager.clear()
@@ -1076,10 +1001,20 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        let cameraTransform = frame.camera.transform
+        let cameraPosition = SIMD3<Float>(
+            cameraTransform.columns.3.x,
+            cameraTransform.columns.3.y,
+            cameraTransform.columns.3.z
+        )
+
         Task { @MainActor in
+            self.telemetryDelegate?.cameraDidUpdate(position: cameraPosition)
+
             guard self.viewModel.selectedConcept != nil,
                   let arView = self.arView,
                   let entity = self.selectedConceptEntity else { return }
+
             let worldPosition = entity.position(relativeTo: nil)
             if let screenPoint = arView.project(worldPosition) {
                 self.viewModel.selectedConceptTapLocation = screenPoint

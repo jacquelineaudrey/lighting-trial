@@ -5,6 +5,7 @@ struct Level2FlowView: View {
     @State private var narrator = AppleSpeechNarrator()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
+    @State private var showsExitConfirmation = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -88,6 +89,16 @@ struct Level2FlowView: View {
             case .completed:
                 Level2CompletedOverlay(onFinish: dismiss.callAsFunction)
             }
+        }
+        .overlay(alignment: .topLeading) {
+            if viewModel.phase != .completed {
+                LevelBackButton { showsExitConfirmation = true }
+                    .padding(.leading, 16)
+                    .padding(.top, 12)
+            }
+        }
+        .levelExitConfirmation(isPresented: $showsExitConfirmation) {
+            dismiss()
         }
         .animation(reduceMotion ? nil : .easeInOut, value: viewModel.phase)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)

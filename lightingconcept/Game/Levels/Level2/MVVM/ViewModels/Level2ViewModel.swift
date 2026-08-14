@@ -279,6 +279,11 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     private func configureLearningScene() {
         arSceneViewModel.selectedObjectType = .cube
         arSceneViewModel.objectScale = 1.25
+        // Matches Level3/Level4: skip environment texturing + light estimation.
+        // Level2's cube doesn't need photoreal blending, and this is one of the
+        // more thermally expensive ARKit features — Level2 was paying for it
+        // with no visible benefit since this flag was never set here before.
+        arSceneViewModel.usesRealisticEnvironmentLighting = false
         arSceneViewModel.showLightDirection = true
         arSceneViewModel.showLightRays = false
         arSceneViewModel.showProjectionLines = false

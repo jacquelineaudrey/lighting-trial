@@ -41,14 +41,10 @@ final class ShadowAnnotationManager {
         objectType: LearningObjectType,
         objectPosition: SIMD3<Float>,
         objectHeight: Float,
-<<<<<<< HEAD:lightingconcept/AR/Managers/ShadowAnnotationManager.swift
         // Arah cahaya dalam WORLD SPACE (bukan local space lampu). Caller
         // (`ARSceneCoordinator.updateEducationalOverlays`) sudah mengubahnya
         // lewat anchor transform sebelum diteruskan ke sini — lihat catatan
         // di `shadowOffset(worldLightDirection:...)`.
-=======
-        selectedLight: LightConfiguration,
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ShadowAnnotationManager.swift
         worldLightDirection: SIMD3<Float>
     ) {
         clear()
@@ -152,7 +148,6 @@ final class ShadowAnnotationManager {
         return try? TextureResource(image: cgImage, withName: nil, options: .init(semantic: .color))
     }
 
-<<<<<<< HEAD:lightingconcept/AR/Managers/ShadowAnnotationManager.swift
     /// PENTING: `worldLightDirection` HARUS sudah dalam world space (sudah
     /// melewati transform anchor scene), bukan local space lampu.
     ///
@@ -170,14 +165,6 @@ final class ShadowAnnotationManager {
     /// benar karena dihitung dari transform world entity yang sebenarnya).
     private func shadowOffset(worldLightDirection: SIMD3<Float>, scale: Float) -> SIMD3<Float> {
         guard let direction = ShadowGeometryCalculator.groundShadowDirection(lightDirection: worldLightDirection) else {
-=======
-    private func shadowOffset(light: LightConfiguration, object: SIMD3<Float>, scale: Float) -> SIMD3<Float> {
-        let lightDirection = SceneLightSystem.forwardVector(
-            yawDegrees: light.yawDegrees,
-            pitchDegrees: light.pitchDegrees
-        )
-        guard let direction = ShadowGeometryCalculator.groundShadowDirection(lightDirection: lightDirection) else {
->>>>>>> Justin:lightingconcept/Sandbox/Manager/ShadowAnnotationManager.swift
             return SIMD3<Float>(0, 0.02, 0.2)
         }
         return direction * scale + SIMD3<Float>(0, 0.025, 0)

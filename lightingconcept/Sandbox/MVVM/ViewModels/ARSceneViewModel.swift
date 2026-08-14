@@ -13,7 +13,7 @@ final class ARSceneViewModel: ObservableObject {
     @Published var lidarScanProgress: Float = 0
     @Published var lidarScannedMeshCount = 0
     @Published var lidarScannedFaceCount = 0
-
+    @Published var objectDirectManipulationLocked: Bool = false
     @Published var lights: [LightConfiguration]
     @Published var selectedLightID: UUID
 
@@ -41,10 +41,6 @@ final class ARSceneViewModel: ObservableObject {
     @Published var pendingCaptureSnapshot = false
     @Published var isSavingSnapshot = false
     @Published var snapshotFeedback: SnapshotFeedback?
-    @Published var autoPlaceOnSurfaceFound: Bool = true
-    @Published var directManipulationRotatesOnly = false
-    @Published var usesRealisticEnvironmentLighting = true
-
     /// Kalau `true`, `ARSceneCoordinator` menaruh scene (object + light) secara
     /// OTOMATIS begitu permukaan datar ketemu — anak tidak perlu tap layar.
     /// Dipakai oleh Level 4 (lihat `Level4ViewModel.init`) supaya perilakunya

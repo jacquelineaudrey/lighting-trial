@@ -8,7 +8,7 @@ final class LessonLightSystem: System {
 
     func update(context: SceneUpdateContext) {
         for entity in context.scene.performQuery(Self.query) {
-            guard var lesson = entity.components[LessonLightComponent.self],
+            guard let lesson = entity.components[LessonLightComponent.self],
                   var spotlight = entity.components[SpotLightComponent.self] else { continue }
             spotlight.intensity = lesson.enabled ? lesson.intensity : 0
             spotlight.outerAngleInDegrees = lesson.outerAngleDegrees

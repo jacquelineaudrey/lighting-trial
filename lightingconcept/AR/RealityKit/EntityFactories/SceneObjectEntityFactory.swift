@@ -46,7 +46,7 @@ enum SceneObjectEntityFactory {
             height = triangularPyramidHeight
         }
 
-        let material = texture.makeMaterial(doubleSided: doubleSided)
+        let material = SceneObjectSystem.makeMaterial(for: texture)
         let entity = ModelEntity(mesh: mesh, materials: [material])
         entity.name = type.rawValue
         entity.position.y = height / 2

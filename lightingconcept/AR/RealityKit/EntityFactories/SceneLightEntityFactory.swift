@@ -2,6 +2,19 @@ import RealityKit
 import SwiftUI
 import UIKit
 
+/// Runtime references for the RealityKit entities that make up one scene light.
+///
+/// This is an infrastructure value returned by the entity factory. ECS state
+/// remains in the corresponding components; this bundle only keeps the
+/// RealityKit entity references together for callers that need them.
+struct RealityKitLightEntityBundle {
+    let root: Entity
+    let light: Entity
+    let fillLight: Entity
+    let marker: ModelEntity
+    let selectionRing: ModelEntity
+}
+
 /// Factory khusus untuk membuat dan memperbarui entity lampu di RealityKit.
 /// File ini tidak menghitung projection line; tugasnya hanya menerjemahkan
 /// `LightConfiguration` menjadi komponen RealityKit seperti PointLight/SpotLight.
