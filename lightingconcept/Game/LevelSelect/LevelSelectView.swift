@@ -25,9 +25,9 @@ struct LevelSelectView: View {
     //    4: Level4Content.levelTitle
     ]
 
-    /// Level yang sudah punya konten sekarang. Tambahkan ID level lain di sini
-    /// setelah flow dan kontennya siap dimainkan.
-    private let levelsWithContent: Set<Int> = [1, 2, 3, 4]
+    /// Level yang boleh diakses dari flow normal. Level 2 dan 3 masih dikunci
+    /// dari output normal; aksesnya hanya lewat tombol DEBUG di bawah untuk testing.
+    private let levelsWithContent: Set<Int> = [1]
 
     var body: some View {
         ScrollView {

@@ -65,6 +65,12 @@ final class ProjectionLineRenderer {
         if toggles.showLightRays {
             // Garis oranye adalah beberapa sample ray dalam cone/frustum cahaya.
             // Semakin besar beam spread, semakin jauh ray menyebar dari forward vector.
+            // Semakin besar intensity, garis dibuat sedikit lebih tebal/pekat agar
+            // latihan terang-redup terlihat di AR, bukan hanya di angka UI.
+            let intensityRatio = clamped((selectedLight.intensity - 450) / (6_500 - 450), 0, 1)
+            let rayRadius = 0.0012 + intensityRatio * 0.0014
+            let rayAlpha = CGFloat(0.45 + intensityRatio * 0.55)
+            let rayColor = UIColor.systemOrange.withAlphaComponent(rayAlpha)
             for rayDirection in coneRayDirections(
                 forward: direction,
                 right: right,
@@ -78,7 +84,7 @@ final class ProjectionLineRenderer {
                     groundY: groundY,
                     surfaceIntersection: surfaceIntersection
                 )
-                addLine(from: lightPosition, to: end, color: .systemOrange, radius: 0.0018)
+                addLine(from: lightPosition, to: end, color: rayColor, radius: rayRadius)
             }
         }
 

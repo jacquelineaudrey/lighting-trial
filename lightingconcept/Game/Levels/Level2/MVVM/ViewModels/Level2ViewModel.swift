@@ -168,7 +168,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         guard phase == .spreadTrivia else { return }
         if spreadTriviaIndex == Level2Content.spreadTrivia.count - 1 {
             phase = .intensityExploration
-            arSceneViewModel.showLightRays = false
+            arSceneViewModel.showLightRays = true
         } else {
             spreadTriviaIndex += 1
         }
@@ -278,7 +278,8 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
 
     private func configureLearningScene() {
         arSceneViewModel.selectedObjectType = .cube
-        arSceneViewModel.objectScale = 1.25
+        arSceneViewModel.objectScale = 0.85
+        arSceneViewModel.requiresLiDARScanBeforePlacement = false
         // Matches Level3/Level4: skip environment texturing + light estimation.
         // Level2's cube doesn't need photoreal blending, and this is one of the
         // more thermally expensive ARKit features — Level2 was paying for it
@@ -297,7 +298,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
             SceneObjectEntityFactory.objectHeight(for: selectedObject) * selectedObject.scale / 2,
             0
         )
-        let lightPosition = SIMD3<Float>(-0.38, 0.55, 0.46)
+        let lightPosition = SIMD3<Float>(-0.24, 0.34, 0.28)
         let aimingAngles = SceneLightEntityFactory.aimingAngles(
             from: lightPosition,
             to: objectCenter
@@ -309,6 +310,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
             light.intensity = lightIntensity
             light.beamSpread = .medium
             light.beamOuterAngleDegrees = beamSpreadDegrees
+            light.markerScale = 0.7
             if let aimingAngles {
                 light.yawDegrees = aimingAngles.yawDegrees
                 light.pitchDegrees = aimingAngles.pitchDegrees

@@ -22,6 +22,8 @@ struct SceneOverlayUpdateSignature: Equatable {
     var selectedLightYawDegrees: Float
     var selectedLightPitchDegrees: Float
     var selectedLightBeamSpread: BeamSpreadPreset
+    var selectedLightOuterAngleDegrees: Float?
+    var selectedLightIntensity: Float
     var showLightDirection: Bool
     var showLightRays: Bool
     var showProjectionLines: Bool

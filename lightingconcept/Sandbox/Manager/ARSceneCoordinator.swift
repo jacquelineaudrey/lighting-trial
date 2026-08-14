@@ -41,6 +41,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var lastRescanFlag = false
     private var lastFrozenFlag = false
     private var lastCaptureFlag = false
+    private var lastPlaceSceneAtCenterFlag = false
     private var defaultObjectPosition = SIMD3<Float>(0, 0, 0)
     private var verticalLightPanStartHeight: Float?
     private var lastAppliedObjectYawDegrees: Float?
@@ -107,6 +108,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         if lastCaptureFlag != viewModel.pendingCaptureSnapshot {
             lastCaptureFlag = viewModel.pendingCaptureSnapshot
             captureAndSaveSnapshot()
+        }
+
+        if lastPlaceSceneAtCenterFlag != viewModel.pendingPlaceSceneAtCenter {
+            lastPlaceSceneAtCenterFlag = viewModel.pendingPlaceSceneAtCenter
+            placeSceneAtScreenCenter()
         }
 
         guard sceneAnchor != nil else { return }
@@ -192,6 +198,25 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         var fallbackTransform = matrix_identity_float4x4
         fallbackTransform.columns.3 = SIMD4<Float>(placementPosition.x, cameraPosition.y - 1.2, placementPosition.z, 1)
         placeScene(at: fallbackTransform)
+    }
+
+    private func placeSceneAtScreenCenter() {
+        guard sceneAnchor == nil, let arView else { return }
+
+        guard viewModel.isReadyForPlacement else {
+            viewModel.placementFeedback = "Lanjutkan scan permukaan dulu sebelum menaruh benda."
+            viewModel.debugLog("Center placement blocked until LiDAR scan reaches target coverage")
+            return
+        }
+
+        let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+        guard let result = raycastPlane(from: center) else {
+            viewModel.placementFeedback = "Arahkan titik tengah layar ke meja atau lantai dulu."
+            viewModel.debugLog("Center placement failed: no horizontal surface at screen center")
+            return
+        }
+
+        placeScene(at: result.worldTransform)
     }
     
     private func addGestures(to arView: ARView) {
@@ -923,6 +948,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             selectedLightYawDegrees: selectedLight.yawDegrees,
             selectedLightPitchDegrees: selectedLight.pitchDegrees,
             selectedLightBeamSpread: selectedLight.beamSpread,
+            selectedLightOuterAngleDegrees: selectedLight.beamOuterAngleDegrees,
+            selectedLightIntensity: selectedLight.intensity,
             showLightDirection: viewModel.showLightDirection,
             showLightRays: viewModel.showLightRays,
             showProjectionLines: viewModel.showProjectionLines,

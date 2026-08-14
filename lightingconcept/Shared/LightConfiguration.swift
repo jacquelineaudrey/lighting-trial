@@ -14,6 +14,9 @@ struct LightConfiguration: Identifiable, Equatable {
     /// Override kontinu untuk lesson yang memakai pinch. `nil` berarti memakai
     /// preset agar kontrol lama Level 1/4 dan sandbox tetap berperilaku sama.
     var beamOuterAngleDegrees: Float?
+    /// Skala visual marker lampu saja. Intensitas/arah cahaya tetap dikontrol
+    /// oleh component RealityKit, bukan ukuran marker ini.
+    var markerScale: Float
 
     var effectiveOuterAngleDegrees: Float {
         beamOuterAngleDegrees ?? beamSpread.outerAngle
@@ -38,7 +41,8 @@ struct LightConfiguration: Identifiable, Equatable {
             yawDegrees: 0,
             pitchDegrees: -35,
             beamSpread: .spread,
-            beamOuterAngleDegrees: nil
+            beamOuterAngleDegrees: nil,
+            markerScale: 1
         )
     }
 }

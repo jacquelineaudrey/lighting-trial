@@ -65,6 +65,11 @@ final class ARSceneViewModel: ObservableObject {
     /// (mirip Level 1), bukan menyatu jadi kelihatan seperti "benda sungguhan".
     @Published var usesRealisticEnvironmentLighting = true
 
+    /// Sandbox bisa mewajibkan coverage LiDAR sebelum placement. Level lesson
+    /// memakai scan sebagai feedback UX saja supaya anak tidak terkunci menunggu
+    /// mesh reconstruction yang lambat di iPhone.
+    @Published var requiresLiDARScanBeforePlacement = true
+
     init() {
         let initialObject = ObjectConfiguration.defaultObject()
         let initialLight = LightConfiguration.defaultLight()
@@ -82,7 +87,7 @@ final class ARSceneViewModel: ObservableObject {
             }
             return "Move your device to detect a surface."
         case .found:
-            if isLiDARAvailable, lidarScanProgress < 0.85 {
+            if isLiDARAvailable, requiresLiDARScanBeforePlacement, lidarScanProgress < 0.85 {
                 return "Keep scanning real objects before placing. LiDAR scan \(Int(lidarScanProgress * 100))%."
             }
             return "Tap the surface to place an object."
@@ -92,7 +97,7 @@ final class ARSceneViewModel: ObservableObject {
     }
 
     var isReadyForPlacement: Bool {
-        !isLiDARAvailable || lidarScanProgress >= 0.85
+        !isLiDARAvailable || !requiresLiDARScanBeforePlacement || lidarScanProgress >= 0.85
     }
 
     var lidarPlacementProgress: Float {

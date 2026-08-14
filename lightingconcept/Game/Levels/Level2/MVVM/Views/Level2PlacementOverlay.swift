@@ -15,6 +15,13 @@ struct Level2PlacementOverlay: View {
                 .font(.headline)
                 .multilineTextAlignment(.center)
 
+            if sceneViewModel.isLiDARAvailable {
+                LiDARScanProgressCard(viewModel: sceneViewModel)
+            } else if sceneViewModel.surfaceState == .scanning {
+                ProgressView("Scanning surface...")
+                    .font(.subheadline)
+            }
+
             Button(
                 "Taruh Benda di Tengah",
                 systemImage: "cube.fill",

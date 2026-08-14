@@ -134,6 +134,9 @@ private struct Level3Placement: View {
 
             if sceneViewModel.isLiDARAvailable {
                 LiDARScanProgressCard(viewModel: sceneViewModel)
+            } else if sceneViewModel.surfaceState == .scanning {
+                ProgressView("Scanning surface...")
+                    .font(.subheadline)
             }
 
             Level2ReplayNarrationButton(action: replayNarration)

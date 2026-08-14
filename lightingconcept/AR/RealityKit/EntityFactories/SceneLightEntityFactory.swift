@@ -95,8 +95,10 @@ enum SceneLightEntityFactory {
         light.orientation = orientation(yawDegrees: configuration.yawDegrees, pitchDegrees: configuration.pitchDegrees)
         fillLight.position = configuration.position
         marker.position = configuration.position
+        marker.scale = SIMD3<Float>(repeating: configuration.markerScale)
         marker.model?.materials = [markerMaterial(color: configuration.color)]
-        ring.position = configuration.position + SIMD3<Float>(0, -0.026, 0)
+        ring.position = configuration.position + SIMD3<Float>(0, -0.026 * configuration.markerScale, 0)
+        ring.scale = SIMD3<Float>(repeating: configuration.markerScale)
         ring.isEnabled = selected
     }
 

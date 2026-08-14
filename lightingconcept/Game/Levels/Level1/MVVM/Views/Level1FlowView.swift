@@ -106,6 +106,7 @@ private struct TriviaDialogOverlay: View {
         VStack(spacing: 16) {
             Text("🦉")
                 .font(.system(size: 64))
+                .accessibilityHidden(true)
             Text(viewModel.currentDialogLine.characterName)
                 .font(.headline)
                 .foregroundStyle(.blue)

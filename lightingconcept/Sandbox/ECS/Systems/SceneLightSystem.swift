@@ -172,8 +172,8 @@ final class SceneLightSystem: System {
             component.color = configuration.color.uiColor
             component.intensity = configuration.intensity
             component.attenuationRadius = 8
-            component.innerAngleInDegrees = configuration.beamSpread.innerAngle
-            component.outerAngleInDegrees = configuration.beamSpread.outerAngle
+            component.innerAngleInDegrees = configuration.effectiveInnerAngleDegrees
+            component.outerAngleInDegrees = configuration.effectiveOuterAngleDegrees
             light.components.set(component)
 
             var shadow = SpotLightComponent.Shadow()
@@ -195,8 +195,10 @@ final class SceneLightSystem: System {
         light.orientation = orientation(yawDegrees: configuration.yawDegrees, pitchDegrees: configuration.pitchDegrees)
         fillLight.position = .zero
         marker.position = .zero
+        marker.scale = SIMD3<Float>(repeating: configuration.markerScale)
         marker.model?.materials = [UnlitMaterial(color: configuration.color.uiColor)]
-        ring.position = SIMD3<Float>(0, -0.026, 0)
+        ring.position = SIMD3<Float>(0, -0.026 * configuration.markerScale, 0)
+        ring.scale = SIMD3<Float>(repeating: configuration.markerScale)
         ring.isEnabled = selected
     }
 

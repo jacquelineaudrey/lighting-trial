@@ -234,12 +234,8 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
 
     private func configureLearningScene() {
         arSceneViewModel.selectedObjectType = .cube
-        // Was 2.5 — at that scale the cube (0.12m base) becomes ~0.3m tall,
-        // almost touching the default light height (0.32m). The light ends
-        // up grazing/inside the object instead of clearing it, so the beam
-        // can't reach the ground cleanly to cast a shadow. A smaller scale
-        // keeps healthy clearance between the light and the object top.
-        arSceneViewModel.objectScale = 1.3
+        arSceneViewModel.objectScale = 0.85
+        arSceneViewModel.requiresLiDARScanBeforePlacement = false
 
         // Matches Level 4: turn off ARKit's realistic environment texturing +
         // light estimation so the cast shadow reads as a crisp, high-contrast
@@ -262,11 +258,24 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.directManipulationRotatesOnly = true
         arSceneViewModel.interactionMode = .moveLight
 
+        let objectCenter = SIMD3<Float>(0, SceneObjectEntityFactory.cubeSize * 0.85 / 2, 0)
+        let lightPosition = SIMD3<Float>(-0.24, 0.34, 0.28)
+        let aimingAngles = SceneLightEntityFactory.aimingAngles(
+            from: lightPosition,
+            to: objectCenter
+        )
+
         arSceneViewModel.updateSelectedLight { light in
             light.type = .spot
+            light.position = lightPosition
             light.intensity = Self.fixedLightIntensity
             light.beamSpread = .medium
             light.beamOuterAngleDegrees = Self.fixedBeamSpreadDegrees
+            light.markerScale = 0.7
+            if let aimingAngles {
+                light.yawDegrees = aimingAngles.yawDegrees
+                light.pitchDegrees = aimingAngles.pitchDegrees
+            }
         }
 
         // Only one object should be placed by the player. When we reach the
@@ -275,7 +284,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.updateSelectedObject { object in
             object.type = .cube
             object.position = SIMD3<Float>(0, 0, 0)
-            object.scale = 1.3
+            object.scale = 0.85
         }
     }
 }
