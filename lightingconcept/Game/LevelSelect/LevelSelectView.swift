@@ -12,11 +12,11 @@ import SwiftUI
 struct LevelSelectView: View {
     @StateObject private var progressStore = GameProgressStore.shared
     @State private var startLevel1 = false
-    @State private var startLevel4 = false
+//    @State private var startLevel4 = false
 
     private let levelTitles: [Int: String] = [
         1: Level1Content.levelTitle,
-        4: Level4Content.levelTitle
+//        4: Level4Content.levelTitle
     ]
 
     /// Level yang sudah punya konten sekarang. Level 2, 3, 5, 6 sedang
@@ -34,7 +34,7 @@ struct LevelSelectView: View {
                         isCompleted: progressStore.isLevelCompleted(levelID)
                     ) {
                         if levelID == 1 { startLevel1 = true }
-                        if levelID == 4 { startLevel4 = true }
+//                        if levelID == 4 { startLevel4 = true }
                     }
                 }
             }
@@ -43,18 +43,18 @@ struct LevelSelectView: View {
             #if DEBUG
             // Level 4 baru terbuka lewat urutan normal setelah level 2 & 3 ada.
             // Sementara itu, tombol ini biar bisa langsung dites tanpa nunggu.
-            Button("🔧 Buka Level 4 langsung (debug)") { startLevel4 = true }
-                .font(.footnote)
-                .padding(.top, 8)
+//            Button("🔧 Buka Level 4 langsung (debug)") { startLevel4 = true }
+//                .font(.footnote)
+//                .padding(.top, 8)
             #endif
         }
         .navigationTitle("Pilih Level")
         .navigationDestination(isPresented: $startLevel1) {
             Level1FlowView()
         }
-        .navigationDestination(isPresented: $startLevel4) {
-            Level4FlowView()
-        }
+//        .navigationDestination(isPresented: $startLevel4) {
+//            Level4FlowView()
+//        }
     }
 }
 
