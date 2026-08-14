@@ -13,7 +13,9 @@ struct LevelSelectView: View {
     @StateObject private var progressStore = GameProgressStore.shared
     @State private var startLevel1 = false
     @State private var startLevel2 = false
+    @State private var level2SessionID = UUID()
     @State private var startLevel3 = false
+    @State private var level3SessionID = UUID()
 //    @State private var startLevel4 = false
     
     private let levelTitles: [Int: String] = [
@@ -39,8 +41,12 @@ struct LevelSelectView: View {
                                 ) {
                                     switch levelID {
                                     case 1: startLevel1 = true
-                                    case 2: startLevel2 = true
-                                    case 3: startLevel3 = true
+                                    case 2:
+                                        level2SessionID = UUID()
+                                        startLevel2 = true
+                                    case 3:
+                                        level3SessionID = UUID()
+                                        startLevel3 = true
             //                      case 4: startLevel4 = true
                                     default: break
                                     }
@@ -53,8 +59,14 @@ struct LevelSelectView: View {
 
                         #if DEBUG
                         VStack(spacing: 8) {
-                            Button("🔧 Buka Level 2 langsung (debug)") { startLevel2 = true }
-                            Button("🔧 Buka Level 3 langsung (debug)") { startLevel3 = true }
+                            Button("🔧 Buka Level 2 langsung (debug)") {
+                                level2SessionID = UUID()
+                                startLevel2 = true
+                            }
+                            Button("🔧 Buka Level 3 langsung (debug)") {
+                                level3SessionID = UUID()
+                                startLevel3 = true
+                            }
             //              Button("🔧 Buka Level 4 langsung (debug)") { startLevel4 = true }
                         }
                         .font(.footnote)
@@ -72,9 +84,11 @@ struct LevelSelectView: View {
                     }
                     .navigationDestination(isPresented: $startLevel2) {
                         Level2FlowView()
+                            .id(level2SessionID)
                     }
                     .navigationDestination(isPresented: $startLevel3) {
                         Level3FlowView()
+                            .id(level3SessionID)
                     }
             //      .navigationDestination(isPresented: $startLevel4) {
             //          Level4FlowView()
