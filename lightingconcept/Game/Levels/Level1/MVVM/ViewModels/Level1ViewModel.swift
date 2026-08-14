@@ -4,11 +4,12 @@
 //
 //  Created by Justin Hartanto Widjaja on 13/08/26.
 //
+
 import Foundation
 import Combine
 import RealityKit
 import UIKit
-import ARKit // FIX: Required for ARAnchor and ARPlaneAnchor
+import ARKit
 
 enum Level1Phase: Equatable {
     case onboarding
@@ -46,21 +47,27 @@ final class Level1ViewModel: ObservableObject {
     private weak var rootAnchor: AnchorEntity?
     private var pathAnchor: AnchorEntity?
     private var hasPlacedPath = false
-    
-    // FIX: Re-added missing variable for ARKit plane tracking
     private var latestHorizontalPlaneAnchor: ARPlaneAnchor?
+<<<<<<< HEAD
 
     // Current device camera pose (XZ-plane only), refreshed every frame so the
     // checkpoint path can be spawned in front of wherever the child is actually
     // looking when the surface is found — see `updateCameraPose` / `placePathIfNeeded`.
     private var latestCameraPositionXZ: SIMD2<Float>?
     private var latestCameraForwardXZ: SIMD2<Float>?
+=======
+    private var scanStartTime: Date?
+>>>>>>> Justin
     
     private var checkpointWorldPositions: [SIMD3<Float>] = []
     private var markerWorldPositions: [SIMD3<Float>] = []
     private var checkpointEntities: [ModelEntity] = []
     private var markerEntities: [ModelEntity] = []
+    
+    // Direction & Arrow State
     private var directionIndicatorRoot: ModelEntity?
+    private var directionIndicatorLabel: ModelEntity?
+    private var lastIndicatorDistanceText: String?
     private var lastArrivedIndex: Int?
     
     private let hapticGenerator = UINotificationFeedbackGenerator()
@@ -74,8 +81,6 @@ final class Level1ViewModel: ObservableObject {
         hapticGenerator.prepare()
     }
 
-    // MARK: - Scene Setup & Placement
-    
     func setupLevel(in anchor: AnchorEntity) {
         self.rootAnchor = anchor
         setupDirectionIndicator()
@@ -84,7 +89,7 @@ final class Level1ViewModel: ObservableObject {
     // MARK: - ARKit Plane Tracking
     
     func trackLatestHorizontalPlane(_ anchor: ARAnchor) {
-        guard !hasPlacedPath, let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .horizontal else { return }
+        guard !hasPlacedPath, phase == .scanningSurface, let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .horizontal else { return }
         
         if let existing = latestHorizontalPlaneAnchor {
             if planeArea(planeAnchor) > planeArea(existing) {
@@ -94,8 +99,10 @@ final class Level1ViewModel: ObservableObject {
             latestHorizontalPlaneAnchor = planeAnchor
         }
         
-        if let bestPlane = latestHorizontalPlaneAnchor, planeArea(bestPlane) > 1.0 {
-            placePathIfNeeded()
+        if let bestPlane = latestHorizontalPlaneAnchor, planeArea(bestPlane) > 0.6 {
+            if let start = scanStartTime, Date().timeIntervalSince(start) > 4.0 {
+                placePathIfNeeded()
+            }
         }
     }
     
@@ -113,26 +120,69 @@ final class Level1ViewModel: ObservableObject {
         latestCameraForwardXZ = horizontalForward / length
     }
     
-    // MARK: - ECS Scene Loop & Proximity Check
+    // MARK: - Camera Tracking & Arrow
     
-    func processSceneUpdate(_ scene: RealityKit.Scene) {
+    func processSceneUpdate(cameraTransform: simd_float4x4) {
         guard phase == .exploring || phase == .returningToStart else { return }
         
-        let cameraQuery = EntityQuery(where: .has(PerspectiveCameraComponent.self))
-        var activeCamera: Entity?
-        for entity in scene.performQuery(cameraQuery) {
-            activeCamera = entity
-            break
-        }
-        
-        guard let camera = activeCamera else { return }
-        let camTrans = camera.transformMatrix(relativeTo: nil)
-        let camPos = SIMD3<Float>(camTrans.columns.3.x, camTrans.columns.3.y, camTrans.columns.3.z)
+        let camPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
         
         checkProximity(cameraPosition: camPos)
+        updateDirectionIndicator(cameraTransform: cameraTransform, cameraPosition: camPos)
     }
     
-    // FIX: Re-added missing proximity checking logic
+    private func updateDirectionIndicator(cameraTransform: simd_float4x4, cameraPosition: SIMD3<Float>) {
+        guard let root = directionIndicatorRoot, root.isEnabled,
+              let targetIndex = nextTargetCheckpointIndex,
+              markerWorldPositions.indices.contains(targetIndex) else { return }
+        
+        let targetPosition = markerWorldPositions[targetIndex]
+        
+        let forward3D = -SIMD3<Float>(cameraTransform.columns.2.x, cameraTransform.columns.2.y, cameraTransform.columns.2.z)
+        let horizontalForward3D = SIMD3<Float>(forward3D.x, 0, forward3D.z)
+        let forwardLength = simd_length(horizontalForward3D)
+        guard forwardLength > 0.0001 else { return }
+        
+        let normalizedForward = horizontalForward3D / forwardLength
+        let time = Float(CACurrentMediaTime())
+        
+        let forwardBackward = sin(time * 2.4) * 0.10
+        let verticalFloat = sin(time * 2.0) * 0.015
+        
+        let dx = cameraPosition.x - targetPosition.x
+        let dz = cameraPosition.z - targetPosition.z
+        let distanceMeters = sqrt(dx * dx + dz * dz)
+        
+        let safeOffset = min(1.15, distanceMeters - 0.4)
+        let finalOffset = max(0.3, safeOffset)
+        
+        let position = cameraPosition
+            + normalizedForward * (finalOffset + forwardBackward)
+            + SIMD3<Float>(0, -0.35 + verticalFloat, 0)
+        
+        let targetXZ = SIMD3<Float>(targetPosition.x, position.y, targetPosition.z)
+        root.look(at: targetXZ, from: position, relativeTo: nil)
+        
+        updateIndicatorDistanceLabel(meters: Double(distanceMeters), parent: root)
+    }
+    
+    private func updateIndicatorDistanceLabel(meters: Double, parent: ModelEntity) {
+        let text = meters < 1 ? "Sudah dekat!" : String(format: "%.1f m", meters)
+        
+        guard text != lastIndicatorDistanceText else { return }
+        lastIndicatorDistanceText = text
+        
+        directionIndicatorLabel?.removeFromParent()
+        
+        let mesh = MeshResource.generateText(text, extrusionDepth: 0.002, font: .boldSystemFont(ofSize: 0.05), containerFrame: .zero, alignment: .center, lineBreakMode: .byTruncatingTail)
+        let label = ModelEntity(mesh: mesh, materials: [UnlitMaterial(color: .white)])
+        label.components.set(BillboardComponent())
+        
+        label.position = SIMD3<Float>(-mesh.bounds.center.x - mesh.bounds.extents.x / 2, 0.18, 0)
+        parent.addChild(label)
+        directionIndicatorLabel = label
+    }
+    
     private func checkProximity(cameraPosition: SIMD3<Float>) {
         guard let targetIndex = nextTargetCheckpointIndex,
               markerWorldPositions.indices.contains(targetIndex) else { return }
@@ -153,7 +203,6 @@ final class Level1ViewModel: ObservableObject {
         }
     }
     
-    // FIX: Re-added missing haptic feedback logic
     private func triggerCheckpointReachedFeedback(at worldPosition: SIMD3<Float>) {
         hapticGenerator.notificationOccurred(.success)
         hapticGenerator.prepare()
@@ -185,6 +234,7 @@ final class Level1ViewModel: ObservableObject {
         hasPlacedPath = true
         
         let count = checkpoints.isEmpty ? 1 : checkpoints.count
+<<<<<<< HEAD
         // FIX: This used to hardcode originXZ = .zero and forwardXZ = (0, -1), i.e. the
         // fixed ARKit world origin/axis established when the AR session first started
         // (usually while the phone was still pointed at the onboarding dialog, not the
@@ -196,12 +246,23 @@ final class Level1ViewModel: ObservableObject {
         let originXZ = latestCameraPositionXZ ?? .zero
         let forwardXZ = latestCameraForwardXZ ?? SIMD2<Float>(0, -1)
         let floorY: Float = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
+=======
+        
+        // FIX 2: Grab the exact real-world coordinates of the scanned floor!
+        let planeX = latestHorizontalPlaneAnchor?.transform.columns.3.x ?? 0
+        let planeY = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
+        let planeZ = latestHorizontalPlaneAnchor?.transform.columns.3.z ?? -2.0
+        
+        // Center the circle of shapes directly on the scanned plane, not on the camera
+        let originXZ = SIMD2<Float>(planeX, planeZ)
+        let floorY: Float = planeY
+>>>>>>> Justin
         
         let shapePositionsXZ = (0..<count).map { i -> SIMD2<Float> in
-            let centerXZ = originXZ + forwardXZ * pathRadius
             let angleStep = (2 * Float.pi) / Float(count)
             let angle = Float.pi / 2 + angleStep * Float(i)
-            return centerXZ + SIMD2<Float>(cos(angle), sin(angle)) * pathRadius
+            // Radiate outwards from the center of the scanned floor
+            return originXZ + SIMD2<Float>(cos(angle), sin(angle)) * pathRadius
         }
         
         let pathCenterXZ = shapePositionsXZ.reduce(SIMD2<Float>.zero, +) / Float(count)
@@ -237,6 +298,7 @@ final class Level1ViewModel: ObservableObject {
         }
         
         phase = .exploring
+        hasWaypointTarget = true
         syncEntities()
     }
 
@@ -249,6 +311,7 @@ final class Level1ViewModel: ObservableObject {
         guard phase == .onboarding else { return }
         if isLastDialogLine {
             phase = .scanningSurface
+            scanStartTime = Date()
         } else {
             onboardingIndex += 1
         }
@@ -278,9 +341,9 @@ final class Level1ViewModel: ObservableObject {
     }
 
     var hasExploredAllCheckpoints: Bool {
-        checkpoints.indices.allSatisfy { index in
-            (visitedTextures[index]?.count ?? 0) >= checkpoints[index].shape.textures.count
-        }
+        // FIX 1: Make the quiz instantly available as soon as you step into the last shape.
+        // You no longer have to manually cycle through every texture to unlock it.
+        checkpoints.indices.allSatisfy { visitedTextures[$0] != nil }
     }
 
     var hasArrivedAtCurrentCheckpoint: Bool { visitedTextures[currentCheckpointIndex] != nil }
@@ -309,6 +372,8 @@ final class Level1ViewModel: ObservableObject {
         quizIndex = 0
         quizScore = 0
         lastAnswerWasCorrect = nil
+        hasWaypointTarget = false // Hide arrow during the quiz
+        syncEntities()
     }
 
     var currentQuestion: TriviaQuestion { quizQuestions[quizIndex] }
@@ -327,7 +392,7 @@ final class Level1ViewModel: ObservableObject {
         lastAnswerWasCorrect = nil
         if quizIndex == quizQuestions.count - 1 {
             phase = .returningToStart
-            hasWaypointTarget = true
+            hasWaypointTarget = true // Reactivate arrow pointing to Start
             syncEntities()
         } else {
             quizIndex += 1
@@ -346,7 +411,7 @@ final class Level1ViewModel: ObservableObject {
                 var mat = UnlitMaterial(color: .systemBlue.withAlphaComponent(0.65))
                 mat.blending = .transparent(opacity: 0.65)
                 entity.model?.materials = [mat]
-            } else if let target = nextTargetCheckpointIndex, index > target {
+            } else if phase == .returningToStart || (nextTargetCheckpointIndex != nil && index > nextTargetCheckpointIndex!) {
                 entity.isEnabled = true
                 pulseComp.isActiveTarget = false
                 entity.scale = SIMD3<Float>(repeating: pulseComp.baseScale)
@@ -362,15 +427,15 @@ final class Level1ViewModel: ObservableObject {
         
         if let root = directionIndicatorRoot {
             root.isEnabled = hasWaypointTarget
-            if hasWaypointTarget, let targetIndex = nextTargetCheckpointIndex {
-                var indicatorComp = root.components[WaypointIndicatorComponent.self] ?? WaypointIndicatorComponent()
-                indicatorComp.targetPosition = markerWorldPositions[targetIndex]
-                root.components.set(indicatorComp)
-            }
         }
         
         for (index, entity) in checkpointEntities.enumerated() {
-            entity.isEnabled = nextTargetCheckpointIndex != nil ? index <= nextTargetCheckpointIndex! : true
+            if phase == .returningToStart || nextTargetCheckpointIndex == nil {
+                entity.isEnabled = true
+            } else {
+                entity.isEnabled = index <= nextTargetCheckpointIndex!
+            }
+            
             if index == currentCheckpointIndex && hasArrivedAtCurrentCheckpoint {
                 var material = SceneObjectSystem.makeMaterial(for: currentTexture.material)
                 material.faceCulling = PhysicallyBasedMaterial.FaceCulling.none
@@ -396,26 +461,17 @@ final class Level1ViewModel: ObservableObject {
         pivot.orientation = simd_quatf(angle: .pi / 2, axis: [0, 1, 0]) * simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
         
         rootEntity.addChild(pivot)
-        rootEntity.components.set(WaypointIndicatorComponent())
-        
         root.addChild(rootEntity)
         directionIndicatorRoot = rootEntity
     }
 
     private func makeCheckpointEntity(for checkpoint: Checkpoint) -> ModelEntity {
-        // 1. Generate the base entity using your factory
         let entity = SceneObjectSystem.makeObject(type: checkpoint.shape.objectType, texture: checkpoint.shape.textures[0].material)
-        
-        // 2. Get the natural height directly from the shape type (bypassing ObjectConfiguration)
         let naturalHeight = SceneObjectSystem.baseDimensions(for: checkpoint.shape.objectType).y
-        
-        // 3. Explicitly define the target height as a Float to clear the Duration error
         let targetHeight: Float = 1.30
-        
         let scale = targetHeight / naturalHeight
         entity.scale = SIMD3<Float>(repeating: scale)
         entity.position.y = (naturalHeight * scale) / 2
-        
         return entity
     }
 

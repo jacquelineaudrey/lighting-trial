@@ -12,6 +12,7 @@ import SwiftUI
 struct LevelSelectView: View {
     @StateObject private var progressStore = GameProgressStore.shared
     @State private var startLevel1 = false
+<<<<<<< HEAD
     @State private var startLevel2 = false
     @State private var startLevel3 = false
     @State private var startLevel4 = false
@@ -21,6 +22,13 @@ struct LevelSelectView: View {
         2: Level2Content.levelTitle,
         3: Level3Content.levelTitle,
         4: Level4Content.levelTitle
+=======
+//    @State private var startLevel4 = false
+
+    private let levelTitles: [Int: String] = [
+        1: Level1Content.levelTitle,
+//        4: Level4Content.levelTitle
+>>>>>>> Justin
     ]
 
     /// Level yang sudah punya konten sekarang. Tambahkan ID level lain di sini
@@ -37,6 +45,7 @@ struct LevelSelectView: View {
                         isUnlocked: levelsWithContent.contains(levelID) && progressStore.isLevelUnlocked(levelID),
                         isCompleted: progressStore.isLevelCompleted(levelID)
                     ) {
+<<<<<<< HEAD
                         switch levelID {
                         case 1: startLevel1 = true
                         case 2: startLevel2 = true
@@ -44,12 +53,17 @@ struct LevelSelectView: View {
                         case 4: startLevel4 = true
                         default: break
                         }
+=======
+                        if levelID == 1 { startLevel1 = true }
+//                        if levelID == 4 { startLevel4 = true }
+>>>>>>> Justin
                     }
                 }
             }
             .padding()
 
             #if DEBUG
+<<<<<<< HEAD
             VStack(spacing: 8) {
                 Button("🔧 Buka Level 2 langsung (debug)") { startLevel2 = true }
                 Button("🔧 Buka Level 3 langsung (debug)") { startLevel3 = true }
@@ -57,12 +71,20 @@ struct LevelSelectView: View {
             }
             .font(.footnote)
             .padding(.top, 8)
+=======
+            // Level 4 baru terbuka lewat urutan normal setelah level 2 & 3 ada.
+            // Sementara itu, tombol ini biar bisa langsung dites tanpa nunggu.
+//            Button("🔧 Buka Level 4 langsung (debug)") { startLevel4 = true }
+//                .font(.footnote)
+//                .padding(.top, 8)
+>>>>>>> Justin
             #endif
         }
         .navigationTitle("Pilih Level")
         .navigationDestination(isPresented: $startLevel1) {
             Level1FlowView()
         }
+<<<<<<< HEAD
         .navigationDestination(isPresented: $startLevel2) {
             Level2FlowView()
         }
@@ -72,6 +94,11 @@ struct LevelSelectView: View {
         .navigationDestination(isPresented: $startLevel4) {
             Level4FlowView()
         }
+=======
+//        .navigationDestination(isPresented: $startLevel4) {
+//            Level4FlowView()
+//        }
+>>>>>>> Justin
     }
 }
 

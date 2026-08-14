@@ -14,7 +14,6 @@ struct Level1FlowView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // Replaced the old UIKit container with the new native RealityView
             Level1ARView(viewModel: viewModel)
                 .ignoresSafeArea()
 
