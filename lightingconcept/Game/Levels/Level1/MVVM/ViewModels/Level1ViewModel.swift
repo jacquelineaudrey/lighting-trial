@@ -48,16 +48,13 @@ final class Level1ViewModel: ObservableObject {
     private var pathAnchor: AnchorEntity?
     private var hasPlacedPath = false
     private var latestHorizontalPlaneAnchor: ARPlaneAnchor?
-<<<<<<< HEAD
 
     // Current device camera pose (XZ-plane only), refreshed every frame so the
     // checkpoint path can be spawned in front of wherever the child is actually
     // looking when the surface is found — see `updateCameraPose` / `placePathIfNeeded`.
     private var latestCameraPositionXZ: SIMD2<Float>?
     private var latestCameraForwardXZ: SIMD2<Float>?
-=======
     private var scanStartTime: Date?
->>>>>>> Justin
     
     private var checkpointWorldPositions: [SIMD3<Float>] = []
     private var markerWorldPositions: [SIMD3<Float>] = []
@@ -234,7 +231,6 @@ final class Level1ViewModel: ObservableObject {
         hasPlacedPath = true
         
         let count = checkpoints.isEmpty ? 1 : checkpoints.count
-<<<<<<< HEAD
         // FIX: This used to hardcode originXZ = .zero and forwardXZ = (0, -1), i.e. the
         // fixed ARKit world origin/axis established when the AR session first started
         // (usually while the phone was still pointed at the onboarding dialog, not the
@@ -243,10 +239,9 @@ final class Level1ViewModel: ObservableObject {
         // finished, so the path could easily spawn behind them or out of view — making
         // it look like nothing was placed. Now we spawn relative to the child's current
         // position/facing direction at the moment the surface is confirmed.
-        let originXZ = latestCameraPositionXZ ?? .zero
+        var originXZ = latestCameraPositionXZ ?? .zero
         let forwardXZ = latestCameraForwardXZ ?? SIMD2<Float>(0, -1)
-        let floorY: Float = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
-=======
+        var floorY: Float = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
         
         // FIX 2: Grab the exact real-world coordinates of the scanned floor!
         let planeX = latestHorizontalPlaneAnchor?.transform.columns.3.x ?? 0
@@ -254,9 +249,9 @@ final class Level1ViewModel: ObservableObject {
         let planeZ = latestHorizontalPlaneAnchor?.transform.columns.3.z ?? -2.0
         
         // Center the circle of shapes directly on the scanned plane, not on the camera
-        let originXZ = SIMD2<Float>(planeX, planeZ)
-        let floorY: Float = planeY
->>>>>>> Justin
+        // (Updated to modify previously declared vars to fix redeclaration error)
+        originXZ = SIMD2<Float>(planeX, planeZ)
+        floorY = planeY
         
         let shapePositionsXZ = (0..<count).map { i -> SIMD2<Float> in
             let angleStep = (2 * Float.pi) / Float(count)
