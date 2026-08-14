@@ -28,10 +28,17 @@ import RealityKit
 @main
 struct lightingconceptApp: App {
     init() {
+<<<<<<< HEAD
         LidarPhysicsSystem.registerSystem()
     }
 
     var body: some SwiftUI.Scene {
+=======
+        ECSRegistration.registerAll()
+    }
+
+    var body: some Scene {
+>>>>>>> Justin
         WindowGroup {
             MainMenuView()
         }
