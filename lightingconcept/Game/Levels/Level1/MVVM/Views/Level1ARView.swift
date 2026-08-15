@@ -120,10 +120,15 @@ struct Level1ARView: UIViewRepresentable {
                 }
             }
 
+            // Capture immutable values before crossing to the main actor. Swift 6
+            // rejects capturing the mutable loop counters in this concurrent task.
+            let scannedMeshCount = meshCount
+            let scannedFaceCount = faceCount
+
             Task { @MainActor in
                 self.viewModel.updateCameraPose(position: position, forward: forward)
-                if meshCount > 0 {
-                    self.viewModel.arSceneViewModel.updateLiDARScan(meshCount: meshCount, faceCount: faceCount)
+                if scannedMeshCount > 0 {
+                    self.viewModel.arSceneViewModel.updateLiDARScan(meshCount: scannedMeshCount, faceCount: scannedFaceCount)
                 }
             }
         }

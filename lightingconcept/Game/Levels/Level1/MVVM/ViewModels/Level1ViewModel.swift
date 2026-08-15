@@ -240,7 +240,6 @@ final class Level1ViewModel: ObservableObject {
         // it look like nothing was placed. Now we spawn relative to the child's current
         // position/facing direction at the moment the surface is confirmed.
         var originXZ = latestCameraPositionXZ ?? .zero
-        let forwardXZ = latestCameraForwardXZ ?? SIMD2<Float>(0, -1)
         var floorY: Float = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
         
         // FIX 2: Grab the exact real-world coordinates of the scanned floor!

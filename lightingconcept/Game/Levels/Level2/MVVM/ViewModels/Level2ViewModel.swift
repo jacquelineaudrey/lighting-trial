@@ -295,11 +295,11 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         let selectedObject = arSceneViewModel.selectedObject
         let objectCenter = selectedObject.position + SIMD3<Float>(
             0,
-            SceneObjectEntityFactory.objectHeight(for: selectedObject) * selectedObject.scale / 2,
+            SceneObjectSystem.objectHeight(for: selectedObject) * selectedObject.scale / 2,
             0
         )
         let lightPosition = SIMD3<Float>(-0.24, 0.34, 0.28)
-        let aimingAngles = SceneLightEntityFactory.aimingAngles(
+        let aimingAngles = SceneLightSystem.aimingAngles(
             from: lightPosition,
             to: objectCenter
         )
@@ -319,7 +319,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
 
         #if DEBUG
         if let aimingAngles {
-            let actualDirection = SceneLightEntityFactory.forwardVector(
+            let actualDirection = SceneLightSystem.forwardVector(
                 yawDegrees: aimingAngles.yawDegrees,
                 pitchDegrees: aimingAngles.pitchDegrees
             )

@@ -11,7 +11,7 @@ import Foundation
 //
 // Bentuknya dipetakan ke `LearningObjectType` dan teksturnya ke `MaterialTexture`
 // (dua-duanya sudah ada di project ini) supaya checkpoint AR bisa langsung
-// dirender lewat `SceneObjectEntityFactory.makeObject(type:texture:)` tanpa
+// dirender oleh `SceneObjectSystem` tanpa
 // perlu mesh/material baru.
 
 /// Satu varian tekstur untuk sebuah bentuk, dengan label & deskripsi Bahasa

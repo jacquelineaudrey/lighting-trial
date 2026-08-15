@@ -152,7 +152,7 @@ final class ShadowAnnotationManager {
     /// melewati transform anchor scene), bukan local space lampu.
     ///
     /// Sebelumnya fungsi ini menghitung ulang arah cahaya sendiri lewat
-    /// `SceneLightEntityFactory.forwardVector(yaw, pitch)`, yang hanya berupa
+    /// `SceneLightSystem.forwardVector(yaw, pitch)`, yang hanya berupa
     /// arah LOCAL relatif ke entity lampu — tanpa memperhitungkan rotasi
     /// anchor scene tempat lampu itu ditempel. Ini tidak masalah selama
     /// anchor scene tidak berotasi (identity), tapi jadi salah begitu anchor

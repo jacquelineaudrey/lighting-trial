@@ -258,9 +258,9 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.directManipulationRotatesOnly = true
         arSceneViewModel.interactionMode = .moveLight
 
-        let objectCenter = SIMD3<Float>(0, SceneObjectEntityFactory.cubeSize * 0.85 / 2, 0)
+        let objectCenter = SIMD3<Float>(0, SceneObjectSystem.cubeSize * 0.85 / 2, 0)
         let lightPosition = SIMD3<Float>(-0.24, 0.34, 0.28)
-        let aimingAngles = SceneLightEntityFactory.aimingAngles(
+        let aimingAngles = SceneLightSystem.aimingAngles(
             from: lightPosition,
             to: objectCenter
         )

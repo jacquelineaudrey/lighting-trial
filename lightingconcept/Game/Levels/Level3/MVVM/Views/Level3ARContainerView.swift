@@ -9,6 +9,7 @@ struct Level3ARContainerView: UIViewRepresentable {
     func makeCoordinator() -> ARSceneCoordinator {
         ARSceneCoordinator(
             viewModel: sceneViewModel,
+            lessonECSMode: .level3ShadowPresentation,
             telemetryDelegate: telemetryDelegate
         )
     }

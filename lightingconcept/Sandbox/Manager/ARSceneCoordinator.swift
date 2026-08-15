@@ -4,6 +4,14 @@ import RealityKit
 import UIKit
 import Photos
 
+/// Selects optional lesson-specific ECS bridges without making the shared
+/// sandbox ViewModel aware of a particular learning level.
+enum LessonECSMode {
+    case none
+    case level2LightControl
+    case level3ShadowPresentation
+}
+
 @MainActor
 /// Tanggung jawab file:
 /// - menghubungkan SwiftUI state (`ARSceneViewModel`) dengan RealityKit/ARKit scene,
@@ -14,6 +22,7 @@ import Photos
 final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayViewDelegate {
     private let viewModel: ARSceneViewModel
     private let gesturePolicy: ARSceneGesturePolicy
+    private let lessonECSMode: LessonECSMode
     private weak var telemetryDelegate: (any ARSceneTelemetryDelegate)?
     private weak var arView: ARView?
     private var coachingOverlay: ARCoachingOverlayView?
@@ -51,10 +60,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     init(
         viewModel: ARSceneViewModel,
         gesturePolicy: ARSceneGesturePolicy = .full,
+        lessonECSMode: LessonECSMode = .none,
         telemetryDelegate: (any ARSceneTelemetryDelegate)? = nil
     ) {
         self.viewModel = viewModel
         self.gesturePolicy = gesturePolicy
+        self.lessonECSMode = lessonECSMode
         self.telemetryDelegate = telemetryDelegate
     }
 
@@ -136,6 +147,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             updateShadowInfo()
             lastShadowInfoSignature = shadowInfoSignature
         }
+
+        synchronizeLessonECS()
     }
 
     private func addCoachingOverlay(to arView: ARView) {
@@ -577,6 +590,31 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             updateLightPosition: viewModel.updateLightPosition,
             debugLog: viewModel.debugLog
         )
+    }
+
+    /// Bridges MVVM state into level-owned ECS components. The systems apply the
+    /// render-side behavior, while this coordinator only writes component data
+    /// when SwiftUI asks for a scene synchronization.
+    private func synchronizeLessonECS() {
+        guard let anchor = sceneAnchor else { return }
+
+        switch lessonECSMode {
+        case .none:
+            break
+        case .level2LightControl:
+            guard let light = SceneLightSystem.entityWithLightID(viewModel.selectedLightID, in: anchor) else { return }
+            let configuration = viewModel.selectedLight
+            light.components.set(Level2LightControlComponent(
+                intensity: configuration.intensity,
+                outerAngleInDegrees: configuration.effectiveOuterAngleDegrees,
+                isEnabled: configuration.type == .spot
+            ))
+        case .level3ShadowPresentation:
+            guard let object = SceneObjectSystem.entityWithObjectID(viewModel.selectedObjectID, in: anchor) else { return }
+            object.components.set(Level3ShadowPresentationComponent(
+                castsShadow: viewModel.showGroundProjection
+            ))
+        }
     }
 
     private func resolvedObjectPosition(

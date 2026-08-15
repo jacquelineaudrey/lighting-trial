@@ -108,6 +108,22 @@ final class SceneLightSystem: System {
         return simd_normalize(orientation.act(SIMD3<Float>(0, 0, -1)))
     }
 
+    /// Returns the yaw and pitch that point RealityKit's local -Z light axis
+    /// from a light source toward a target in scene coordinates.
+    static func aimingAngles(
+        from lightPosition: SIMD3<Float>,
+        to targetPosition: SIMD3<Float>
+    ) -> (yawDegrees: Float, pitchDegrees: Float)? {
+        let delta = targetPosition - lightPosition
+        guard simd_length_squared(delta) > 0.000001 else { return nil }
+
+        let horizontalDistance = sqrt(delta.x * delta.x + delta.z * delta.z)
+        return (
+            yawDegrees: atan2(-delta.x, -delta.z).radiansToDegrees,
+            pitchDegrees: atan2(delta.y, horizontalDistance).radiansToDegrees
+        )
+    }
+
     private static func makeLightEntity(
         configuration: LightConfiguration,
         selected: Bool

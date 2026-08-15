@@ -13,6 +13,8 @@ struct lightingconceptApp: App {
     init() {
         LidarPhysicsSystem.registerSystem()
         ECSRegistration.registerAll()
+        Level2ECSRegistration.registerAll()
+        Level3ECSRegistration.registerAll()
     }
 
     var body: some SwiftUI.Scene {
