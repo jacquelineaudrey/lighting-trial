@@ -280,6 +280,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.selectedObjectType = .cube
         arSceneViewModel.objectScale = 0.85
         arSceneViewModel.requiresLiDARScanBeforePlacement = false
+        arSceneViewModel.usesLiDARSceneReconstruction = false
         // Matches Level3/Level4: skip environment texturing + light estimation.
         // Level2's cube doesn't need photoreal blending, and this is one of the
         // more thermally expensive ARKit features — Level2 was paying for it

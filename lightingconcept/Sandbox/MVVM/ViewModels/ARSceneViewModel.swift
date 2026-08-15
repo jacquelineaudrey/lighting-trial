@@ -10,6 +10,10 @@ final class ARSceneViewModel: ObservableObject {
     @Published var surfaceState: SurfaceDetectionState = .scanning
     @Published var isObjectPlaced = false
     @Published var isLiDARAvailable = false
+    /// Sandbox can use real-world mesh occlusion and collision. Learning levels
+    /// that only need a horizontal placement plane disable it to avoid the
+    /// continuous LiDAR depth and mesh reconstruction workload.
+    @Published var usesLiDARSceneReconstruction = true
     @Published var lidarScanProgress: Float = 0
     @Published var lidarScannedMeshCount = 0
     @Published var lidarScannedFaceCount = 0

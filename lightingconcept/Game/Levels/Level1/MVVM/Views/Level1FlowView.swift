@@ -63,6 +63,15 @@ struct Level1FlowView: View {
                 .padding(.top, 12)
             }
         }
+        .overlay(alignment: .top) {
+            if let celebration = viewModel.checkpointCelebration {
+                CheckpointCelebrationOverlay(celebration: celebration)
+                    .id(celebration.id)
+                    .transition(.scale(scale: 0.7).combined(with: .opacity))
+                    .padding(.top, 56)
+                    .allowsHitTesting(false)
+            }
+        }
         .confirmationDialog("Keluar dari Level?", isPresented: $showsExitConfirmation, titleVisibility: .visible) {
             Button("Keluar", role: .destructive) { dismiss() }
             Button("Batal", role: .cancel) { }
@@ -70,11 +79,54 @@ struct Level1FlowView: View {
             Text("Progres kamu di level ini tidak akan disimpan.")
         }
         .animation(.easeInOut, value: viewModel.phase)
+        .animation(.spring(response: 0.35, dampingFraction: 0.65), value: viewModel.checkpointCelebration)
         .navigationBarBackButtonHidden(true)
     }
 
     private var showsTextureThumbControls: Bool {
         viewModel.phase == .exploring && viewModel.hasArrivedAtCurrentCheckpoint
+    }
+}
+
+private struct CheckpointCelebrationOverlay: View {
+    let celebration: CheckpointCelebration
+    @State private var hasAppeared = false
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<8, id: \.self) { index in
+                Circle()
+                    .fill(index.isMultiple(of: 2) ? Color.yellow : Color.green)
+                    .frame(width: 10, height: 10)
+                    .offset(
+                        x: hasAppeared ? cos(Double(index) * .pi / 4) * 76 : 0,
+                        y: hasAppeared ? sin(Double(index) * .pi / 4) * 62 : 0
+                    )
+                    .opacity(hasAppeared ? 0 : 1)
+                    .animation(.easeOut(duration: 0.65).delay(0.08), value: hasAppeared)
+            }
+
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 34, weight: .bold))
+                    .foregroundStyle(.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Checkpoint tercapai!")
+                        .font(.headline.bold())
+                    Text("\(celebration.shapeName) • \(celebration.checkpointNumber)/\(celebration.checkpointCount)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .background(.regularMaterial, in: Capsule())
+            .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
+            .scaleEffect(hasAppeared ? 1 : 0.78)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Checkpoint tercapai. \(celebration.shapeName).")
+        .onAppear { hasAppeared = true }
     }
 }
 
@@ -219,16 +271,12 @@ private struct QuizOverlay: View {
                 .multilineTextAlignment(.center)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                ForEach(viewModel.currentQuestion.choices) { choice in
+                ForEach(viewModel.currentQuizChoices) { choice in
                     Button {
                         viewModel.answer(with: choice)
                     } label: {
-                        VStack(spacing: 6) {
-                            Image(systemName: choice.quizSymbolName)
-                                .font(.system(size: 32))
-                            Text(choice.displayName)
-                                .font(.headline)
-                        }
+                        Image(systemName: choice.quizSymbolName)
+                            .font(.system(size: 40))
                         .frame(maxWidth: .infinity, minHeight: 84)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
                     }

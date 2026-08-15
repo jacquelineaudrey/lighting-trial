@@ -9,6 +9,7 @@ struct Level3ARContainerView: UIViewRepresentable {
     func makeCoordinator() -> ARSceneCoordinator {
         ARSceneCoordinator(
             viewModel: sceneViewModel,
+            gesturePolicy: .placementOnly,
             lessonECSMode: .level3ShadowPresentation,
             telemetryDelegate: telemetryDelegate
         )
@@ -21,6 +22,6 @@ struct Level3ARContainerView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {
-        Task { @MainActor in context.coordinator.synchronizeScene() }
+        context.coordinator.requestSceneSynchronization()
     }
 }

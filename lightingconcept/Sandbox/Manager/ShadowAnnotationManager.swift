@@ -5,8 +5,11 @@ import UIKit
 final class ShadowAnnotationManager {
     private let root = Entity()
     private var dots: [ModelEntity] = []
+    private var connectorDashes: [ModelEntity] = []
     private var pulseRings: [PulseRing] = []
     private var updateSubscription: Cancellable?
+    private var lastPulseUpdate = Date.distantPast
+    private var lastMarkerSignature: MarkerSignature?
     private static var cachedRingTexture: TextureResource?
 
     private let dotRadius: Float = 0.004
@@ -22,6 +25,14 @@ final class ShadowAnnotationManager {
         let startTime: Date
     }
 
+    private struct MarkerSignature: Equatable {
+        let visible: Bool
+        let objectType: LearningObjectType
+        let objectPosition: SIMD3<Float>
+        let objectHeight: Float
+        let worldLightDirection: SIMD3<Float>
+    }
+
     func attach(to anchor: AnchorEntity) {
         if root.parent == nil {
             anchor.addChild(root)
@@ -30,8 +41,15 @@ final class ShadowAnnotationManager {
     }
 
     func clear() {
+        clearRenderedMarkers()
+        lastMarkerSignature = nil
+    }
+
+    private func clearRenderedMarkers() {
         dots.forEach { $0.removeFromParent() }
         dots.removeAll()
+        connectorDashes.forEach { $0.removeFromParent() }
+        connectorDashes.removeAll()
         pulseRings.forEach { $0.entity.removeFromParent() }
         pulseRings.removeAll()
     }
@@ -47,7 +65,20 @@ final class ShadowAnnotationManager {
         // di `shadowOffset(worldLightDirection:...)`.
         worldLightDirection: SIMD3<Float>
     ) {
-        clear()
+        let signature = MarkerSignature(
+            visible: visible,
+            objectType: objectType,
+            objectPosition: objectPosition,
+            objectHeight: objectHeight,
+            worldLightDirection: worldLightDirection
+        )
+        // Keep the same RealityKit marker entities alive while the learner
+        // advances dialogue/progress. This preserves the working tap behavior
+        // from the first shadow-search phase and avoids rebuilding meshes,
+        // collision shapes, and pulse materials on every SwiftUI refresh.
+        guard signature != lastMarkerSignature else { return }
+        clearRenderedMarkers()
+        lastMarkerSignature = signature
         guard visible else { return }
 
         subscribeToUpdatesIfNeeded()
@@ -73,7 +104,7 @@ final class ShadowAnnotationManager {
         }
 
         for (concept, position) in concepts {
-            addMarker(concept: concept, position: position)
+            addMarker(concept: concept, position: position, objectPosition: objectPosition)
         }
     }
 
@@ -84,28 +115,66 @@ final class ShadowAnnotationManager {
         }
     }
 
-    private func addMarker(concept: ShadowConcept, position: SIMD3<Float>) {
+    private func addMarker(
+        concept: ShadowConcept,
+        position: SIMD3<Float>,
+        objectPosition: SIMD3<Float>
+    ) {
+        // Float each marker approximately 5 cm away from the object, then
+        // connect it back with a small dotted leader line. This avoids the
+        // marker visually merging into the object's surface.
+        let offset = position - objectPosition
+        let direction = simd_length(offset) > 0.0001
+            ? simd_normalize(offset)
+            : SIMD3<Float>(0, 1, 0)
+        let markerPosition = position + direction * 0.05
+        addDottedConnector(from: position, to: markerPosition)
+
         let dot = ModelEntity(
             mesh: .generateSphere(radius: dotRadius),
             materials: [UnlitMaterial(color: markerColor)]
         )
         dot.name = "Label: \(concept.rawValue)"
-        dot.position = position
+        dot.position = markerPosition
         dot.components.set(CollisionComponent(shapes: [.generateSphere(radius: tapTargetRadius)]))
+        dot.components.set(InputTargetComponent())
         root.addChild(dot)
         dots.append(dot)
 
         let ringMesh = MeshResource.generatePlane(width: ringDiameter, height: ringDiameter)
         let ring = ModelEntity(mesh: ringMesh, materials: [ShadowAnnotationManager.ringMaterial(alpha: 1.0)])
-        ring.name = "Pulse ring: \(concept.rawValue)"
-        ring.position = position
+        // The expanding ring is what learners can see and aim for. Give it the
+        // same label identifier and a larger collision volume as the dot so a
+        // tap opens the SwiftUI explanation during the first Level 3 task.
+        ring.name = "Label: \(concept.rawValue)"
+        ring.position = markerPosition
         ring.components.set(BillboardComponent())
+        ring.components.set(CollisionComponent(shapes: [.generateSphere(radius: tapTargetRadius * 2.5)]))
+        ring.components.set(InputTargetComponent())
         root.addChild(ring)
         pulseRings.append(PulseRing(entity: ring, startTime: Date()))
     }
 
+    private func addDottedConnector(from start: SIMD3<Float>, to end: SIMD3<Float>) {
+        let dashMaterial = UnlitMaterial(color: UIColor.white.withAlphaComponent(0.75))
+        for fraction: Float in [0.25, 0.5, 0.75] {
+            let dash = ModelEntity(
+                mesh: .generateSphere(radius: 0.0018),
+                materials: [dashMaterial]
+            )
+            dash.position = start + (end - start) * fraction
+            root.addChild(dash)
+            connectorDashes.append(dash)
+        }
+    }
+
     private func advancePulses() {
         let now = Date()
+        // The markers are decorative. Eight updates per second keeps the
+        // pulse readable while avoiding repeated material allocations that can
+        // compete with AR tracking on a real device.
+        guard now.timeIntervalSince(lastPulseUpdate) >= (1.0 / 8.0) else { return }
+        lastPulseUpdate = now
         for pulse in pulseRings {
             let elapsed = now.timeIntervalSince(pulse.startTime).truncatingRemainder(dividingBy: pulseDuration)
             let t = Float(elapsed / pulseDuration)

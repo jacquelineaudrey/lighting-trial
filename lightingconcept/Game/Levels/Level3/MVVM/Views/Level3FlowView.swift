@@ -1,4 +1,6 @@
 import SwiftUI
+import Combine
+import RealityKit
 
 struct Level3FlowView: View {
     @State private var viewModel = Level3ViewModel()
@@ -14,16 +16,9 @@ struct Level3FlowView: View {
 
             overlay
         }
+        // ⭐️ FIX: Memanggil wrapper view yang mengobservasi ARSceneViewModel secara langsung
         .overlay {
-            if let concept = viewModel.arSceneViewModel.selectedConcept {
-                ShadowConceptOverlayView(
-                    concept: concept,
-                    tapLocation: viewModel.arSceneViewModel.selectedConceptTapLocation
-                ) {
-                    viewModel.arSceneViewModel.selectedConcept = nil
-                }
-                .transition(.opacity)
-            }
+            Level3ConceptOverlayContainer(sceneViewModel: viewModel.arSceneViewModel)
         }
         .overlay(alignment: .topLeading) {
             if viewModel.phase != .completed {
@@ -84,6 +79,23 @@ struct Level3FlowView: View {
             Level3Review(points: Level3Content.reviewPoints, replayNarration: replayNarration, action: viewModel.finishReview)
         case .completed:
             Level3TaskCard(title: "Level 3 selesai!", progress: 1, total: 1, button: "Selesai", replayNarration: replayNarration, action: dismiss.callAsFunction)
+        }
+    }
+}
+
+// ⭐️ FIX: Wrapper View untuk memaksa SwiftUI merender ulang saat marker di-tap
+private struct Level3ConceptOverlayContainer: View {
+    @ObservedObject var sceneViewModel: ARSceneViewModel
+    
+    var body: some View {
+        if let concept = sceneViewModel.selectedConcept {
+            ShadowConceptOverlayView(
+                concept: concept,
+                tapLocation: sceneViewModel.selectedConceptTapLocation
+            ) {
+                sceneViewModel.selectedConcept = nil
+            }
+            .transition(.opacity)
         }
     }
 }

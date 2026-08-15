@@ -148,16 +148,6 @@ final class SceneLightSystem: System {
         disableShadows(for: marker)
         root.addChild(marker)
 
-        let ring = ModelEntity(
-            mesh: .generateBox(size: SIMD3<Float>(0.07, 0.004, 0.07)),
-            materials: [UnlitMaterial(color: .systemCyan)]
-        )
-        ring.name = "Light Selection Ring"
-        ring.isEnabled = selected
-        ring.generateCollisionShapes(recursive: false)
-        disableShadows(for: ring)
-        root.addChild(ring)
-
         return root
     }
 
@@ -168,8 +158,7 @@ final class SceneLightSystem: System {
     ) {
         guard let light = root.children.first(where: { $0.name == "Light Emitter" }),
               let fillLight = root.children.first(where: { $0.name == "Light Fill" }),
-              let marker = root.children.first(where: { $0.name == "Light Marker" }) as? ModelEntity,
-              let ring = root.children.first(where: { $0.name == "Light Selection Ring" }) as? ModelEntity else { return }
+              let marker = root.children.first(where: { $0.name == "Light Marker" }) as? ModelEntity else { return }
 
         light.components.remove(PointLightComponent.self)
         light.components.remove(SpotLightComponent.self)
@@ -213,9 +202,6 @@ final class SceneLightSystem: System {
         marker.position = .zero
         marker.scale = SIMD3<Float>(repeating: configuration.markerScale)
         marker.model?.materials = [UnlitMaterial(color: configuration.color.uiColor)]
-        ring.position = SIMD3<Float>(0, -0.026 * configuration.markerScale, 0)
-        ring.scale = SIMD3<Float>(repeating: configuration.markerScale)
-        ring.isEnabled = selected
     }
 
     private static func disableShadows(for entity: ModelEntity) {

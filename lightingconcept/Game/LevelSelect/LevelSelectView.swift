@@ -25,9 +25,10 @@ struct LevelSelectView: View {
     //    4: Level4Content.levelTitle
     ]
 
-    /// Level yang boleh diakses dari flow normal. Level 2 dan 3 masih dikunci
-    /// dari output normal; aksesnya hanya lewat tombol DEBUG di bawah untuk testing.
-    private let levelsWithContent: Set<Int> = [1]
+    /// Only levels with a complete player-facing flow participate in the normal
+    /// sequential unlock path. `GameProgressStore` then opens each next level
+    /// when the preceding level is completed.
+    private let levelsWithContent: Set<Int> = [1, 2, 3]
 
     var body: some View {
         ScrollView {

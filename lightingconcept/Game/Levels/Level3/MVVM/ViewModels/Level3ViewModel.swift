@@ -27,6 +27,10 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     private(set) var hasComparedShapes = false
     @ObservationIgnored private var comparedShapes: Set<ComparisonShape> = []
     private(set) var successFeedbackTrigger = 0
+    
+    // --- TAMBAHAN BARU: State untuk mengontrol pop-up marker ---
+    private(set) var isShadowInfoOpen = false
+    // -----------------------------------------------------------
 
     @ObservationIgnored private let progressStore: GameProgressStore
     @ObservationIgnored private var sceneWorldPosition: SIMD3<Float>?
@@ -86,6 +90,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         visitedShadowSectors.removeAll()
         hasCompletedShadowTask = false
         shadowVisible = false
+        isShadowInfoOpen = false // Reset popup state
         guard phase != .onboarding && phase != .completed else { return }
         resumePhaseAfterPlacement = phase == .placingScene ? nil : phase
         phase = .placingScene
@@ -111,6 +116,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     }
 
     func continueFromShadowTask() { guard hasCompletedShadowTask else { return }; phase = .shadowTrivia; shadowTriviaIndex = 0 }
+    
     func advanceShadowTrivia() {
         guard phase == .shadowTrivia else { return }
         if shadowTriviaIndex == Level3Content.shadowTrivia.count - 1 { phase = .shadowTypesInteraction; shadowTypesIndex = 0 } else { shadowTriviaIndex += 1 }
@@ -121,16 +127,24 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.showGroundProjection = shadowVisible
         arSceneViewModel.showProjectionLines = shadowVisible
         arSceneViewModel.showLightDirection = shadowVisible
-        // NOTE: shadow labels (the tappable white info markers) are
-        // intentionally NOT tied to this toggle. In sandbox, "Shadow
-        // Labels" is its own independent control — hiding the ground
-        // shadow there doesn't hide the tappable markers. Previously this
-        // toggle turned labels off together with the shadow, so once a
-        // child tapped "Sembunyikan Bayangan" the white buttons stayed
-        // broken/gone for the rest of the level (shapeComparison included,
-        // where they're most useful). Labels now always stay on, matching
-        // sandbox behaviour.
+        // Label shadow tetap on, dan ini tidak mengganggu state pop-up informasi
     }
+
+    // --- TAMBAHAN BARU: Fungsi untuk Buka/Tutup Marker ---
+    
+    func toggleShadowInfo() {
+        isShadowInfoOpen.toggle()
+        arSceneViewModel.showShadowInformation = isShadowInfoOpen
+    }
+
+    func closeShadowInfo() {
+        if isShadowInfoOpen {
+            isShadowInfoOpen = false
+            arSceneViewModel.showShadowInformation = false
+        }
+    }
+    
+    // -----------------------------------------------------
 
     func advanceShadowTypes() {
         guard phase == .shadowTypesInteraction else { return }
@@ -149,9 +163,6 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         successFeedbackTrigger += 1
     }
 
-    // Pembelajaran sebaran cahaya (dispersity) & intensitas cahaya dihapus
-    // dari Level 3 per request — setelah membandingkan bentuk, level
-    // langsung lanjut ke penutup.
     func finishShapeComparison() {
         guard phase == .shapeComparison, hasComparedShapes else { return }
         phase = .closing
@@ -170,50 +181,38 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     }
 
     #if DEBUG
-    /// Developer-only escape hatch so the entire Level 3 flow can be tested
-    /// without physically completing every AR task. It advances exactly one
-    /// educational phase at a time and reuses the real ViewModel transitions.
     func debugAdvanceCurrentPhase() {
         switch phase {
         case .onboarding:
             onboardingIndex = max(0, Level3Content.onboardingDialog.count - 1)
             phase = .placingScene
-
         case .placingScene:
             sceneDidPlace(at: sceneWorldPosition ?? .zero)
-
         case .shadowExploration:
             visitedShadowSectors = [0, 2, 4]
             hasCompletedShadowTask = true
             phase = .shadowTrivia
             shadowTriviaIndex = 0
-
         case .shadowTrivia:
             shadowTriviaIndex = max(0, Level3Content.shadowTrivia.count - 1)
             phase = .shadowTypesInteraction
             shadowTypesIndex = 0
-
         case .shadowTypesInteraction:
             shadowTypesIndex = max(0, Level3Content.shadowTypesTrivia.count - 1)
             phase = .shapeComparison
-
         case .shapeComparison:
             comparedShapes = Set(ComparisonShape.allCases)
             hasComparedShapes = true
             phase = .closing
             closingIndex = 0
-
         case .closing:
             closingIndex = max(0, Level3Content.closingDialog.count - 1)
             phase = .review
-
         case .review:
             finishReview()
-
         case .completed:
             break
         }
-
         successFeedbackTrigger += 1
     }
 
@@ -236,24 +235,18 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.selectedObjectType = .cube
         arSceneViewModel.objectScale = 0.85
         arSceneViewModel.requiresLiDARScanBeforePlacement = false
-
-        // Matches Level 4: turn off ARKit's realistic environment texturing +
-        // light estimation so the cast shadow reads as a crisp, high-contrast
-        // shape instead of being softened/washed out by real-room lighting.
+        arSceneViewModel.usesLiDARSceneReconstruction = false
         arSceneViewModel.usesRealisticEnvironmentLighting = false
 
-        // Shown from the start (same as sandbox) instead of only appearing
-        // once the child reaches the "Lihat Shadow" button later in the
-        // level — that button was the only thing turning these on before.
         arSceneViewModel.showLightDirection = true
         arSceneViewModel.showLightRays = false
         arSceneViewModel.showProjectionLines = true
         arSceneViewModel.showGroundProjection = true
         arSceneViewModel.showShadowLabels = true
-        arSceneViewModel.showShadowInformation = false
+        
+        // Initial state popup marker tertutup
+        arSceneViewModel.showShadowInformation = isShadowInfoOpen
 
-        // The placed object stays fixed for this level — the player can only
-        // aim the light. Moving the object requires rescanning/re-placing.
         arSceneViewModel.objectDirectManipulationLocked = true
         arSceneViewModel.directManipulationRotatesOnly = true
         arSceneViewModel.interactionMode = .moveLight
@@ -278,9 +271,6 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
             }
         }
 
-        // Only one object should be placed by the player. When we reach the
-        // shape-comparison phase, `chooseComparison(_:)` swaps this same
-        // object's type between cube/sphere instead of adding a second one.
         arSceneViewModel.updateSelectedObject { object in
             object.type = .cube
             object.position = SIMD3<Float>(0, 0, 0)

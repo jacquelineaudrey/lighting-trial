@@ -22,9 +22,6 @@ struct Level2ARContainerView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {
-        let coordinator = context.coordinator
-        Task { @MainActor in
-            coordinator.synchronizeScene()
-        }
+        context.coordinator.requestSceneSynchronization()
     }
 }

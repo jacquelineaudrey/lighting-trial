@@ -76,10 +76,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         arView.renderOptions.insert(.disableMotionBlur)
         arView.renderOptions.insert(.disableDepthOfField)
         arView.renderOptions.insert(.disablePersonOcclusion)
-        arView.environment.sceneUnderstanding.options.insert(.occlusion)
-        arView.environment.sceneUnderstanding.options.insert(.collision)
-        arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
-        arView.environment.sceneUnderstanding.options.insert(.physics)
+        if viewModel.usesLiDARSceneReconstruction {
+            arView.environment.sceneUnderstanding.options.insert(.occlusion)
+            arView.environment.sceneUnderstanding.options.insert(.collision)
+            arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
+            arView.environment.sceneUnderstanding.options.insert(.physics)
+        }
 
         arView.session.delegate = self
         addCoachingOverlay(to: arView)
@@ -273,11 +275,13 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             configuration.environmentTexturing = .none
             configuration.isLightEstimationEnabled = false
         }
-        if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+        if viewModel.usesLiDARSceneReconstruction,
+           ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
             configuration.frameSemantics.insert(.smoothedSceneDepth)
             viewModel.debugLog("LiDAR smoothed scene depth enabled")
         }
-        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+        if viewModel.usesLiDARSceneReconstruction,
+           ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
             // Classification data (wall/floor/table/etc) isn't read anywhere in this
             // codebase, only the raw mesh geometry is needed for occlusion. Plain
             // `.mesh` skips ARKit's per-frame classification pass — matches Level1's
@@ -305,8 +309,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         let location = gesture.location(in: arView)
 
         // Label edukasi adalah entity 3D. Saat diketuk, SwiftUI menampilkan alert penjelasan.
-        if let entity = arView.entity(at: location),
-           entity.name.hasPrefix("Label: ") {
+        if let entity = annotationEntity(at: location, in: arView) {
             let conceptName = entity.name.replacingOccurrences(of: "Label: ", with: "")
             selectedConceptEntity = entity
             viewModel.selectedConceptTapLocation = location
@@ -342,6 +345,15 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                   !viewModel.directManipulationRotatesOnly {
             moveObject(to: result)
         }
+    }
+
+    /// A marker can overlap the lesson object in screen space. `entity(at:)`
+    /// returns only one (often the object), so inspect all collision hits and
+    /// deliberately prefer an educational marker.
+    private func annotationEntity(at location: CGPoint, in arView: ARView) -> Entity? {
+        arView.hitTest(location, query: .all, mask: .all)
+            .map(\.entity)
+            .first { $0.name.hasPrefix("Label: ") }
     }
 
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
@@ -458,6 +470,16 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         annotationManager.attach(to: anchor)
         syncObjects()
         syncLights()
+        // Placement can be initiated directly from an AR tap, before a later
+        // SwiftUI render pass reaches `synchronizeScene()`. Build the learning
+        // overlays now so Level 3's white explanation markers are immediately
+        // available during the first shadow-search challenge.
+        updateEducationalOverlays()
+        updateShadowInfo()
+        synchronizeLessonECS()
+        lastSceneSignature = currentSceneSignature()
+        lastOverlaySignature = currentOverlaySignature()
+        lastShadowInfoSignature = currentShadowInfoSignature()
 
         viewModel.surfaceState = .placed
         viewModel.placementFeedback = nil
