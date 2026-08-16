@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import Combine
+import Observation
 
 /// Menyimpan progres menu "Belajar" (level mana yang sudah selesai) dan menentukan
 /// kapan menu "Sandbox" terbuka.
@@ -14,13 +14,14 @@ import Combine
 /// Nanti kalau konten level 2-6 sudah ada, cukup isi `Level2Content`, dst — angka
 /// `totalBelajarLevels` di sini sudah disiapkan untuk 6 level dari awal.
 @MainActor
-final class GameProgressStore: ObservableObject {
+@Observable
+final class GameProgressStore {
     static let shared = GameProgressStore()
 
     /// Total level Belajar yang direncanakan (fixed di 6 sesuai desain).
     let totalBelajarLevels = 6
 
-    @Published private(set) var completedLevelIDs: Set<Int>
+    private(set) var completedLevelIDs: Set<Int>
 
     private let defaultsKey = "belajar.completedLevelIDs"
 
@@ -41,6 +42,7 @@ final class GameProgressStore: ObservableObject {
     }
 
     func markLevelCompleted(_ levelID: Int) {
+        guard belajarLevelIDs.contains(levelID) else { return }
         guard !completedLevelIDs.contains(levelID) else { return }
         completedLevelIDs.insert(levelID)
         UserDefaults.standard.set(Array(completedLevelIDs), forKey: defaultsKey)
@@ -48,10 +50,11 @@ final class GameProgressStore: ObservableObject {
 
     /// Sandbox baru terbuka setelah SEMUA level Belajar selesai.
     var isSandboxUnlocked: Bool {
-        #if DEBUG
-        if debugForceSandboxUnlocked { return true }
-        #endif
-        return completedLevelIDs.count >= totalBelajarLevels
+        belajarLevelIDs.isSubset(of: completedLevelIDs)
+    }
+
+    private var belajarLevelIDs: Set<Int> {
+        Set(1...totalBelajarLevels)
     }
 
     #if DEBUG
@@ -61,10 +64,5 @@ final class GameProgressStore: ObservableObject {
         UserDefaults.standard.removeObject(forKey: defaultsKey)
     }
 
-    /// Bypass khusus DEBUG supaya Sandbox bisa langsung dites tanpa perlu
-    /// menyelesaikan ke-6 level Belajar dulu (baru Level 1 & 4 yang punya
-    /// konten sekarang). TIDAK ada efeknya di build Release — gate normal
-    /// (`completedLevelIDs.count >= totalBelajarLevels`) tetap berlaku di sana.
-    @Published var debugForceSandboxUnlocked = false
     #endif
 }

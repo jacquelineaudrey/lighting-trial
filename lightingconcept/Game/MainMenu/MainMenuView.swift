@@ -8,62 +8,53 @@
 import SwiftUI
 
 @MainActor
-/// Layar pembuka: pilih "Belajar" atau "Sandbox".
-/// Sandbox terkunci sampai semua level Belajar selesai (lihat `GameProgressStore`).
+/// Layar pembuka: pilih "Mulai Belajar" atau "Coba Simulasi".
+/// Simulasi terkunci sampai semua level Belajar selesai.
 struct MainMenuView: View {
-    @StateObject private var progressStore = GameProgressStore.shared
+    @State private var progressStore = GameProgressStore.shared
     @State private var showLevelSelect = false
     @State private var showSandbox = false
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 28) {
-                Spacer()
+            GeometryReader { proxy in
+                let scale = MainMenuLayout.scale(toFill: proxy.size)
 
-                Text("🔺🔵🟩")
-                    .font(.system(size: 56))
-                Text("Ayo Main!")
-                    .font(.system(size: 34, weight: .heavy, design: .rounded))
+                ZStack(alignment: .topLeading) {
+                    Image(
+                        progressStore.isSandboxUnlocked
+                            ? ImageResource.HomeScreen.homeScreen
+                            : ImageResource.HomeScreen.homeScreenLock
+                    )
+                        .resizable()
+                        .frame(width: MainMenuLayout.canvasSize.width,
+                               height: MainMenuLayout.canvasSize.height)
+                        .accessibilityHidden(true)
 
-                VStack(spacing: 16) {
-                    MenuButton(
-                        title: "Belajar",
-                        subtitle: "Jelajahi bentuk & tekstur",
-                        systemImage: "book.fill",
-                        tint: .blue,
-                        isLocked: false
-                    ) {
-                        showLevelSelect = true
-                    }
+                    MainMenuButton(
+                        title: "Mulai Belajar",
+                        isLocked: false,
+                        action: openLevelSelect
+                    )
+                    .frame(width: MainMenuLayout.buttonSize.width,
+                           height: MainMenuLayout.buttonSize.height)
+                    .position(MainMenuLayout.learnButtonCenter)
 
-                    MenuButton(
-                        title: "Sandbox",
-                        subtitle: progressStore.isSandboxUnlocked
-                            ? "Main bebas dengan semua bentuk"
-                            : "Selesaikan semua level Belajar dulu, yuk!",
-                        systemImage: "shippingbox.fill",
-                        tint: .orange,
-                        isLocked: !progressStore.isSandboxUnlocked
-                    ) {
-                        showSandbox = true
-                    }
+                    MainMenuButton(
+                        title: "Coba Simulasi",
+                        isLocked: !progressStore.isSandboxUnlocked,
+                        action: openSandbox
+                    )
+                    .frame(width: MainMenuLayout.buttonSize.width,
+                           height: MainMenuLayout.buttonSize.height)
+                    .position(MainMenuLayout.sandboxButtonCenter)
                 }
-                .padding(.horizontal, 32)
-
-                #if DEBUG
-                // Sandbox butuh 6 level Belajar selesai, tapi baru Level 1 & 4
-                // yang ada kontennya — tombol ini biar Sandbox bisa langsung
-                // dites tanpa nunggu level 2/3/5/6 jadi.
-                Button("🔧 Buka Sandbox langsung (debug)") {
-                    progressStore.debugForceSandboxUnlocked = true
-                    showSandbox = true
-                }
-                .font(.footnote)
-                #endif
-
-                Spacer()
-                Spacer()
+                .frame(width: MainMenuLayout.canvasSize.width,
+                       height: MainMenuLayout.canvasSize.height)
+                .scaleEffect(scale)
+                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
             }
+            .ignoresSafeArea()
             .navigationDestination(isPresented: $showLevelSelect) {
                 LevelSelectView()
             }
@@ -72,44 +63,14 @@ struct MainMenuView: View {
             }
         }
     }
-}
 
-private struct MenuButton: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let tint: Color
-    let isLocked: Bool
-    let action: () -> Void
+    private func openLevelSelect() {
+        showLevelSelect = true
+    }
 
-    var body: some View {
-        Button {
-            if !isLocked { action() }
-        } label: {
-            HStack(spacing: 16) {
-                Image(systemName: isLocked ? "lock.fill" : systemImage)
-                    .font(.system(size: 28))
-                    .frame(width: 52, height: 52)
-                    .background(isLocked ? Color.gray.opacity(0.3) : tint.opacity(0.15))
-                    .foregroundStyle(isLocked ? .gray : tint)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .foregroundStyle(isLocked ? .gray : .primary)
-                    Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
-                Spacer()
-            }
-            .padding(16)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22))
-        }
-        .buttonStyle(.plain)
-        .opacity(isLocked ? 0.7 : 1)
+    private func openSandbox() {
+        guard progressStore.isSandboxUnlocked else { return }
+        showSandbox = true
     }
 }
 
