@@ -6,12 +6,20 @@
 //
 
 import SwiftUI
+import RealityKit
 
 @main
 struct lightingconceptApp: App {
-    var body: some Scene {
+    init() {
+        LidarPhysicsSystem.registerSystem()
+        ECSRegistration.registerAll()
+        Level2ECSRegistration.registerAll()
+        Level3ECSRegistration.registerAll()
+    }
+
+    var body: some SwiftUI.Scene {
         WindowGroup {
-            ContentView()
+            MainMenuView()
         }
     }
 }
