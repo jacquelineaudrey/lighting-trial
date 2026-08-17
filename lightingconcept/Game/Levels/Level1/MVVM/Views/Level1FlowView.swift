@@ -43,6 +43,10 @@ struct Level1FlowView: View {
                 Level1TextureOverlay(viewModel: viewModel)
             case .shapeChange:
                 Level1ShapeChangeOverlay(viewModel: viewModel)
+            case .drawingPrompt, .drawingReady, .drawingActive:
+                Level1DrawingOverlay(viewModel: viewModel)
+            case .photoPrompt:
+                Level1PhotoOverlay(viewModel: viewModel)
             case .completed:
                 EndLevelView(
                     data: EndLevelViewModel.data(for: Level1Content.levelID),
@@ -80,6 +84,17 @@ struct Level1FlowView: View {
                     .allowsHitTesting(false)
             }
         }
+        .alert(
+            "Foto Gambar",
+            isPresented: Binding(
+                get: { viewModel.photoSaveMessage != nil },
+                set: { _ in viewModel.clearPhotoSaveMessage() }
+            )
+        ) {
+            Button("OK", role: .cancel) { viewModel.clearPhotoSaveMessage() }
+        } message: {
+            Text(viewModel.photoSaveMessage ?? "")
+        }
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
             dismiss()
         }
@@ -87,6 +102,12 @@ struct Level1FlowView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.65), value: viewModel.checkpointCelebration)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
         .task(id: viewModel.narrationID) {
+            // Saat scanning, anak hanya melihat instruksi scan. Lumi dan
+            // narasinya baru mulai setelah surface stabil dan scene siap.
+            guard viewModel.phase != .scanningSurface else {
+                narrator.stop()
+                return
+            }
             narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
         }
         .onDisappear(perform: narrator.stop)
@@ -98,22 +119,7 @@ private struct Level1OpeningOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
 
     var body: some View {
-        VStack {
-            Spacer()
-            HStack {
-                Spacer()
-                VStack(alignment: .trailing, spacing: 18) {
-                    SpeechBubble(text: viewModel.currentDialogLine.text, tail: .bottomTrailing)
-                    Button(viewModel.isLastDialogLine ? "Mulai" : "Selanjutnya", action: viewModel.advanceDialog)
-                        .font(.headline.bold())
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                }
-                .frame(maxWidth: 430)
-                .padding(.trailing, 80)
-                .padding(.bottom, 82)
-            }
-        }
+        EmptyView()
     }
 }
 
@@ -121,33 +127,7 @@ private struct Level1LightShadowOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
 
     var body: some View {
-        ZStack {
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 16) {
-                        if viewModel.currentLightShadowInstruction.radarTarget != nil || viewModel.selectedRadarTarget == nil {
-                            SpeechBubble(text: viewModel.currentLightShadowInstruction.text, tail: .bottomTrailing)
-                        }
-
-                        if viewModel.currentLightShadowInstruction.radarTarget == nil {
-                            Button(lightShadowButtonTitle, action: viewModel.continueLightShadowIntro)
-                                .font(.headline.bold())
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.large)
-                        }
-                    }
-                    .frame(maxWidth: 450)
-                    .padding(.trailing, 64)
-                    .padding(.bottom, 78)
-                }
-            }
-        }
-    }
-
-    private var lightShadowButtonTitle: String {
-        viewModel.lightShadowIndex == 0 ? "Lihat Cahaya" : "Selanjutnya"
+        EmptyView()
     }
 }
 
@@ -168,11 +148,6 @@ private struct Level1FindShapeOverlay: View {
                         .foregroundStyle(.white)
                         .padding(.trailing, 54)
                         .padding(.bottom, 46)
-                } else {
-                    SpeechBubble(text: "Selain kotak, coba temukan bentuk yang lain di sekitarmu!", tail: .bottomTrailing)
-                        .frame(maxWidth: 430)
-                        .padding(.trailing, 70)
-                        .padding(.bottom, 92)
                 }
             }
         }
@@ -196,16 +171,6 @@ private struct Level1TextureTapPromptOverlay: View {
                 }
             }
 
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    SpeechBubble(text: "Coba tekan sekali kotaknya! Kita lihat tekstur yang lain yaa!", tail: .bottomTrailing)
-                        .frame(maxWidth: 430)
-                        .padding(.trailing, 66)
-                        .padding(.bottom, 82)
-                }
-            }
         }
     }
 }
@@ -215,57 +180,11 @@ private struct Level1TextureOverlay: View {
 
     var body: some View {
         ZStack {
-            HStack {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(Array(viewModel.textureStops.enumerated()), id: \.element.id) { index, texture in
-                        Button {
-                            viewModel.selectTexture(at: index)
-                        } label: {
-                            HStack(spacing: 14) {
-                                Text(texture.name)
-                                    .font(.headline)
-                                    .frame(width: 118, alignment: .leading)
-                                TextureSwatch(texture: texture.material)
-                            }
-                            .foregroundStyle(.white)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(18)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
-                .padding(.leading, 70)
-                .padding(.bottom, 86)
-
-                Spacer()
-            }
-            .frame(maxHeight: .infinity, alignment: .bottom)
-
             VStack {
                 Spacer()
-                HStack {
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 14) {
-                        SpeechBubble(text: textureMessage, tail: .bottomTrailing)
-                            .frame(maxWidth: 470)
-                        if viewModel.hasExploredAllTextures {
-                            Button("Selanjutnya", action: viewModel.startShapeChange)
-                                .font(.headline.bold())
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.large)
-                        }
-                    }
-                    .padding(.trailing, 66)
-                    .padding(.bottom, 78)
-                }
+                Level1ExperimentControls(viewModel: viewModel)
             }
         }
-    }
-
-    private var textureMessage: String {
-        viewModel.hasExploredAllTextures
-            ? "Kerja bagus! Kamu berhasil mengganti tekstur benda ini."
-            : "Wah, teksturnya berubah! Coba lihat bayangannya."
     }
 }
 
@@ -274,57 +193,186 @@ private struct Level1ShapeChangeOverlay: View {
 
     var body: some View {
         ZStack {
-            HStack {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(Array(viewModel.shapeOptions.enumerated()), id: \.element.id) { index, shape in
-                        Button {
-                            viewModel.selectShape(at: index)
-                        } label: {
-                            HStack(spacing: 16) {
-                                Text(shape.displayName)
-                                    .font(.headline)
-                                    .frame(width: 118, alignment: .leading)
-                                Image(systemName: shape.quizSymbolName)
-                                    .font(.title2)
-                                    .frame(width: 42, height: 42)
-                                    .foregroundStyle(index == viewModel.selectedShapeIndex ? .white : .secondary)
-                            }
-                            .foregroundStyle(.white)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(18)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
-                .padding(.leading, 70)
-                .padding(.bottom, 72)
-
-                Spacer()
-            }
-            .frame(maxHeight: .infinity, alignment: .bottom)
-
             VStack {
                 Spacer()
-                HStack {
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 14) {
-                        SpeechBubble(text: viewModel.hasChangedShape ? "Kerja bagus! Kamu berhasil mengganti bentuk benda ini." : "Wah, ada banyak bentuk. Kamu bisa ganti bentuk yang lain lho!", tail: .bottomTrailing)
-                            .frame(maxWidth: 450)
+                Level1ExperimentControls(viewModel: viewModel)
+            }
+        }
+    }
+}
 
-                        if viewModel.hasChangedShape {
-                            Button("Selanjutnya", action: viewModel.finishLevel)
-                                .font(.headline.bold())
-                                .padding(.horizontal, 24)
-                                .padding(.vertical, 14)
-                                .background(.blue, in: Capsule())
-                                .foregroundStyle(.white)
-                        }
-                    }
-                    .padding(.trailing, 54)
-                    .padding(.bottom, 46)
+private struct Level1DrawingOverlay: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
+    var body: some View {
+        VStack {
+            Spacer()
+            HStack(alignment: .bottom, spacing: 10) {
+                Spacer()
+                if viewModel.phase == .drawingReady || viewModel.phase == .drawingActive {
+                    Button("Aku Selesai Gambar", action: viewModel.finishDrawing)
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.blue, in: Capsule())
+                        .padding(.trailing, 42)
+                        .padding(.bottom, 32)
                 }
             }
         }
+    }
+}
+
+private struct Level1PhotoOverlay: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
+    var body: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                Button(viewModel.isSavingDrawingPhoto ? "Menyimpan..." : "Foto Gambarku") {
+                    viewModel.captureDrawingPhoto()
+                }
+                .font(.caption.bold())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color.blue, in: Capsule())
+                .disabled(viewModel.isSavingDrawingPhoto)
+                .padding(.trailing, 42)
+                .padding(.bottom, 36)
+            }
+        }
+    }
+}
+
+/// Kontrol interaksi mengikuti panel Figma: daftar vertikal di kiri dan
+/// tombol mode kecil di bawahnya agar area AR tetap terbuka.
+private struct Level1ExperimentControls: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Color.clear
+                .contentShape(.rect)
+                .onTapGesture(perform: viewModel.closeExperimentPanel)
+
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if viewModel.activeExperimentPanel == .texture {
+                        texturePicker
+                    } else if viewModel.activeExperimentPanel == .shape {
+                        shapePicker
+                    }
+
+                    modeButtons
+                }
+                .padding(.leading, 26)
+                .padding(.bottom, 28)
+
+                Spacer()
+
+                if viewModel.canContinueToShapeSelection {
+                    Button("Selanjutnya", action: viewModel.continueToShapeSelection)
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.blue, in: Capsule())
+                        .padding(.trailing, 42)
+                        .padding(.bottom, 36)
+                } else if viewModel.canConfirmDrawingChoices {
+                    Button("Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.blue, in: Capsule())
+                        .padding(.trailing, 42)
+                        .padding(.bottom, 36)
+                }
+            }
+        }
+    }
+
+    private var texturePicker: some View {
+        VStack(spacing: 10) {
+            ForEach(Array(viewModel.textureStops.enumerated()), id: \.element.id) { index, texture in
+                Button { viewModel.selectTexture(at: index) } label: {
+                    HStack(spacing: 12) {
+                        Text(texture.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .frame(width: 78, alignment: .leading)
+
+                        TextureSwatch(texture: texture.material, isSelected: index == viewModel.currentTextureIndex)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(.white.opacity(0.28), lineWidth: 1)
+        )
+    }
+
+    private var shapePicker: some View {
+        VStack(spacing: 10) {
+            ForEach(Array(viewModel.shapeOptions.enumerated()), id: \.element.id) { index, shape in
+                Button { viewModel.selectShape(at: index) } label: {
+                    HStack(spacing: 12) {
+                        Text(shape.displayName)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .frame(width: 78, alignment: .leading)
+
+                        ShapeSwatch(shape: shape, isSelected: index == viewModel.selectedShapeIndex)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(.white.opacity(0.28), lineWidth: 1)
+        )
+    }
+
+    private var modeButtons: some View {
+        HStack(spacing: 8) {
+            modeButton(icon: "cube.transparent.fill", isSelected: viewModel.activeExperimentPanel == .shape) {
+                viewModel.showShapeControls()
+            }
+            modeButton(icon: "square.fill", isSelected: viewModel.activeExperimentPanel == .texture) {
+                viewModel.showTextureControls()
+            }
+        }
+        .padding(6)
+        .background(.ultraThinMaterial, in: Capsule())
+    }
+
+    private func modeButton(icon: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(isSelected ? .white : .white.opacity(0.86))
+                .frame(width: 34, height: 34)
+                .background(isSelected ? Color.blue : Color.white.opacity(0.10), in: Circle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -384,15 +432,41 @@ private struct SpeechBubbleShape: Shape {
 
 private struct TextureSwatch: View {
     let texture: MaterialTexture
+    let isSelected: Bool
 
     var body: some View {
         Circle()
             .fill(texture.fallbackColor.swiftUIColor)
-            .frame(width: 46, height: 46)
+            .frame(width: 30, height: 30)
             .overlay {
                 Image(systemName: texture.previewSystemImage)
-                    .font(.caption.bold())
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.white.opacity(0.82))
+            }
+            .overlay {
+                Circle()
+                    .stroke(isSelected ? Color.blue : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
+            }
+            .shadow(color: .black.opacity(0.16), radius: 2, y: 1)
+    }
+}
+
+private struct ShapeSwatch: View {
+    let shape: GameShape
+    let isSelected: Bool
+
+    var body: some View {
+        Circle()
+            .fill(.white.opacity(isSelected ? 0.95 : 0.22))
+            .frame(width: 30, height: 30)
+            .overlay {
+                Image(systemName: shape.quizSymbolName)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(isSelected ? Color.blue : Color.white.opacity(0.9))
+            }
+            .overlay {
+                Circle()
+                    .stroke(isSelected ? Color.blue : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
             }
     }
 }

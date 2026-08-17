@@ -9,6 +9,8 @@ import SwiftUI
 import RealityKit
 import ARKit
 import Combine
+import Photos
+import UIKit
 
 struct Level1ARView: UIViewRepresentable {
     @ObservedObject var viewModel: Level1ViewModel
@@ -29,11 +31,15 @@ struct Level1ARView: UIViewRepresentable {
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal]
         
-        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+        let supportsLiDAR = ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh)
+        if supportsLiDAR {
             config.sceneReconstruction = .mesh
-            viewModel.arSceneViewModel.isLiDARAvailable = true
-        } else {
-            viewModel.arSceneViewModel.isLiDARAvailable = false
+        }
+        // `makeUIView` dijalankan di dalam update SwiftUI. Menunda publish ke
+        // putaran main queue berikutnya menghindari perubahan ObservableObject
+        // dari dalam lifecycle update view.
+        DispatchQueue.main.async {
+            viewModel.arSceneViewModel.isLiDARAvailable = supportsLiDAR
         }
         
         arView.session.delegate = context.coordinator
@@ -63,6 +69,11 @@ struct Level1ARView: UIViewRepresentable {
     
     func updateUIView(_ uiView: ARView, context: Context) {
         viewModel.syncEntities()
+
+        if context.coordinator.lastCaptureFlag != viewModel.pendingDrawingPhotoCapture {
+            context.coordinator.lastCaptureFlag = viewModel.pendingDrawingPhotoCapture
+            context.coordinator.captureAndSaveSnapshot()
+        }
         
         // Show/Hide Coaching overlay based on Phase
         if viewModel.phase == .scanningSurface {
@@ -79,6 +90,7 @@ struct Level1ARView: UIViewRepresentable {
     class Coordinator: NSObject, ARSessionDelegate, ARCoachingOverlayViewDelegate {
         let viewModel: Level1ViewModel
         var subscription: AnyCancellable?
+        var lastCaptureFlag = false
         weak var arView: ARView?
         
         weak var coachingOverlay: ARCoachingOverlayView? {
@@ -93,6 +105,50 @@ struct Level1ARView: UIViewRepresentable {
             guard let arView else { return }
             let location = recognizer.location(in: arView)
             viewModel.handleTap(on: arView.entity(at: location))
+        }
+
+        func captureAndSaveSnapshot() {
+            guard let arView else {
+                viewModel.completeDrawingPhotoSave(success: false, message: "Kamera AR belum siap.")
+                return
+            }
+
+            arView.snapshot(saveToHDR: false) { [weak self] image in
+                Task { @MainActor in
+                    guard let self else { return }
+                    guard let image else {
+                        self.viewModel.completeDrawingPhotoSave(success: false, message: "Foto AR gagal dibuat.")
+                        return
+                    }
+                    self.saveImageToPhotoLibrary(image)
+                }
+            }
+        }
+
+        private func saveImageToPhotoLibrary(_ image: UIImage) {
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+                guard let self else { return }
+                switch status {
+                case .authorized, .limited:
+                    PHPhotoLibrary.shared().performChanges {
+                        PHAssetChangeRequest.creationRequestForAsset(from: image)
+                    } completionHandler: { success, error in
+                        Task { @MainActor in
+                            self.viewModel.completeDrawingPhotoSave(
+                                success: success,
+                                message: success ? "Keren! Gambarmu sudah tersimpan." : "Foto belum tersimpan. \(error?.localizedDescription ?? "")"
+                            )
+                        }
+                    }
+                default:
+                    Task { @MainActor in
+                        self.viewModel.completeDrawingPhotoSave(
+                            success: false,
+                            message: "Izinkan akses Photos untuk menyimpan foto."
+                        )
+                    }
+                }
+            }
         }
         
         // The coaching overlay only helps find a horizontal surface. Level 1

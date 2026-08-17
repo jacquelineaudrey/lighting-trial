@@ -20,7 +20,16 @@ enum Level1Phase: Equatable {
     case textureTapPrompt
     case textureExploration
     case shapeChange
+    case drawingPrompt
+    case drawingReady
+    case drawingActive
+    case photoPrompt
     case completed
+}
+
+enum Level1ExperimentPanel: Equatable {
+    case texture
+    case shape
 }
 
 enum Level1RadarTarget: String, CaseIterable, Equatable {
@@ -45,12 +54,17 @@ struct CheckpointCelebration: Identifiable, Equatable {
 @MainActor
 final class Level1ViewModel: ObservableObject {
 
-    let checkpoints = Level1Content.checkpoints
+    // Objek muncul bertahap: kubus adalah tujuan pertama, lalu bola baru
+    // ditampilkan ketika pemain sudah mencapai kubus.
+    let checkpoints = [
+        Checkpoint(id: "cp-0", order: 0, shape: Level1Content.kubus),
+        Checkpoint(id: "cp-1", order: 1, shape: Level1Content.bola)
+    ]
     let textureStops = Level1Content.kubus.textures
-    let shapeOptions = Level1Content.checkpoints.map(\.shape)
+    let shapeOptions = [Level1Content.kubus, Level1Content.bola]
     let onboardingDialog = Level1Content.onboardingDialog
 
-    @Published private(set) var phase: Level1Phase = .onboarding
+    @Published private(set) var phase: Level1Phase = .scanningSurface
     @Published private(set) var onboardingIndex = 0
     @Published private(set) var lightShadowIndex = 0
     @Published private(set) var currentCheckpointIndex = 0
@@ -61,10 +75,17 @@ final class Level1ViewModel: ObservableObject {
     @Published private(set) var checkpointCelebration: CheckpointCelebration?
     @Published private(set) var selectedRadarTarget: Level1RadarTarget?
     @Published private(set) var showsObjectModeBadge = false
+    @Published private(set) var activeExperimentPanel: Level1ExperimentPanel?
+    @Published private(set) var hasSelectedTexture = false
+    @Published private(set) var hasSelectedShape = false
     @Published private(set) var hasChangedShape = false
+    @Published private(set) var hidesGuideForDrawing = false
+    @Published private(set) var pendingDrawingPhotoCapture = false
+    @Published private(set) var isSavingDrawingPhoto = false
+    @Published private(set) var photoSaveMessage: String?
     @Published private(set) var successFeedbackTrigger = 0
 
-    private var visitedCheckpoints: Set<Int> = [0]
+    private var visitedCheckpoints: Set<Int> = []
     private var visitedTextures: Set<Int> = [0]
     private let progressStore = GameProgressStore.shared
     let arSceneViewModel = ARSceneViewModel()
@@ -73,6 +94,7 @@ final class Level1ViewModel: ObservableObject {
     private var pathAnchor: AnchorEntity?
     private var checkpointLightEntities: [Entity] = []
     private var radarEntities: [Level1RadarTarget: Entity] = [:]
+    private var radarWorldPositions: [Level1RadarTarget: SIMD3<Float>] = [:]
     private var radarLabelEntity: Entity?
     private var hasPlacedScene = false
     private var latestHorizontalPlaneAnchor: ARPlaneAnchor?
@@ -89,11 +111,20 @@ final class Level1ViewModel: ObservableObject {
     private var directionIndicatorLabel: ModelEntity?
     private var lastIndicatorDistanceText: String?
     private var lastArrivedIndex: Int?
+    private let shadowReceiverManager = ShadowReceiverManager()
+    private var guideRoot: Entity?
+    private var guideCharacter: Entity?
+    private var guideCharacterAsset: CharacterGuideAsset?
+    private var guideCloud: Entity?
+    private var guideText: String?
+    private var guideNeedsPlacement = true
 
     private let hapticGenerator = UINotificationFeedbackGenerator()
     private let pathRadius: Float = 3.2
-    private let checkpointHeight: Float = 0.50
+    private let checkpointHeight: Float = 0.34
     private let markerRadius: Float = 1.0
+
+    private static var cachedRadarRingTexture: TextureResource?
 
     private let lightShadowInstructions: [Level1Instruction] = [
         Level1Instruction(
@@ -139,7 +170,9 @@ final class Level1ViewModel: ObservableObject {
 
     func setupLevel(in anchor: AnchorEntity) {
         rootAnchor = anchor
+        scanStartTime = Date()
         setupDirectionIndicator()
+        setupGuideCharacter()
     }
 
     func trackLatestHorizontalPlane(_ anchor: ARAnchor) {
@@ -156,8 +189,9 @@ final class Level1ViewModel: ObservableObject {
         if let bestPlane = latestHorizontalPlaneAnchor, planeArea(bestPlane) > 0.6,
            let start = scanStartTime, Date().timeIntervalSince(start) > 4.0 {
             placeSceneIfNeeded()
-            phase = .lightShadowIntro
-            lightShadowIndex = 0
+            // Urutan Level 1: scan dahulu, scene siap, baru Lumi membuka dialog.
+            phase = .onboarding
+            onboardingIndex = 0
             syncEntities()
         }
     }
@@ -172,10 +206,12 @@ final class Level1ViewModel: ObservableObject {
         let length = simd_length(horizontalForward)
         guard length > 0.0001 else { return }
         latestCameraForwardXZ = horizontalForward / length
+        updateGuidePosition(cameraPosition: position, horizontalForward: horizontalForward / length)
     }
 
     func processSceneUpdate(cameraTransform: simd_float4x4) {
-        guard phase == .findingShapes else { return }
+        let isFindingFirstObject = phase == .onboarding && onboardingIndex == 2
+        guard phase == .findingShapes || isFindingFirstObject else { return }
         let cameraPosition = SIMD3<Float>(
             cameraTransform.columns.3.x,
             cameraTransform.columns.3.y,
@@ -190,16 +226,48 @@ final class Level1ViewModel: ObservableObject {
             tapRadarTarget(target)
         } else if phase == .textureTapPrompt, entityBelongsToLearningObject(entity) {
             objectTappedForTexture()
+        } else {
+            closeExperimentPanel()
+            advanceNarrativeFromWorldTap()
+        }
+    }
+
+    /// Dialog Lumi maju dengan tap di ruang AR. Saat sebuah marker tugas
+    /// aktif, tap kosong sengaja tidak melakukan apa-apa sampai marker itu
+    /// sendiri disentuh.
+    private func advanceNarrativeFromWorldTap() {
+        switch phase {
+        case .onboarding:
+            advanceDialog()
+        case .lightShadowIntro where currentLightShadowInstruction.radarTarget == nil:
+            continueLightShadowIntro()
+        case .findingShapes where hasFoundAllShapes:
+            continueToTextureLesson()
+        case .drawingPrompt:
+            phase = .drawingReady
+            syncEntities()
+            hideGuideAfterDrawingInstruction()
+        default:
+            break
         }
     }
 
     func advanceDialog() {
         guard phase == .onboarding else { return }
+        // Dialog "Coba cari objek…" adalah tugas waypoint. Ia tidak boleh
+        // dilewati dengan tap kosong sebelum pemain benar-benar sampai.
+        guard onboardingIndex != 2 else { return }
         if onboardingIndex == onboardingDialog.count - 1 {
-            phase = .scanningSurface
-            scanStartTime = Date()
+            phase = .lightShadowIntro
+            lightShadowIndex = 0
+            hasWaypointTarget = false
+            syncEntities()
         } else {
             onboardingIndex += 1
+            if onboardingIndex == 2 {
+                hasWaypointTarget = true
+                syncEntities()
+            }
         }
     }
 
@@ -216,6 +284,7 @@ final class Level1ViewModel: ObservableObject {
         pathAnchor = nil
         checkpointLightEntities.removeAll()
         radarEntities.removeAll()
+        radarWorldPositions.removeAll()
         radarLabelEntity = nil
         hasPlacedScene = false
         checkpointEntities.removeAll()
@@ -223,7 +292,10 @@ final class Level1ViewModel: ObservableObject {
         checkpointLocalPositions.removeAll()
         markerWorldPositions.removeAll()
         checkpointHighlightEntities.removeAll()
+        shadowReceiverManager.reset()
         latestHorizontalPlaneAnchor = nil
+        guideNeedsPlacement = true
+        guideRoot?.isEnabled = false
         hasWaypointTarget = false
         scanStartTime = Date()
         phase = .scanningSurface
@@ -235,11 +307,48 @@ final class Level1ViewModel: ObservableObject {
             phase = .findingShapes
             selectedRadarTarget = nil
             hasWaypointTarget = true
-            syncEntities()
         } else {
             lightShadowIndex += 1
             selectedRadarTarget = nil
         }
+        syncEntities()
+    }
+
+    /// Dua pilihan Figma dapat dibuka kapan saja setelah anak menyentuh
+    /// objek. Keduanya tetap memakai entity RealityKit yang sama.
+    func showTextureControls() {
+        guard phase == .textureExploration || phase == .shapeChange else { return }
+        phase = .textureExploration
+        activeExperimentPanel = .texture
+        showsObjectModeBadge = true
+        syncEntities()
+    }
+
+    func showShapeControls() {
+        guard phase == .textureExploration || phase == .shapeChange else { return }
+        phase = .shapeChange
+        activeExperimentPanel = .shape
+        showsObjectModeBadge = true
+        syncEntities()
+    }
+
+    func closeExperimentPanel() {
+        guard phase == .textureExploration || phase == .shapeChange else { return }
+        activeExperimentPanel = nil
+        showsObjectModeBadge = false
+    }
+
+    var canContinueToShapeSelection: Bool {
+        phase == .textureExploration && hasSelectedTexture
+    }
+
+    var canConfirmDrawingChoices: Bool {
+        phase == .shapeChange && hasSelectedTexture && hasSelectedShape
+    }
+
+    func continueToShapeSelection() {
+        guard canContinueToShapeSelection else { return }
+        showShapeControls()
     }
 
     func tapRadarTarget(_ target: Level1RadarTarget) {
@@ -249,6 +358,7 @@ final class Level1ViewModel: ObservableObject {
         if lightShadowIndex < lightShadowInstructions.count - 1 {
             lightShadowIndex += 1
         }
+        syncEntities()
     }
 
     func continueToTextureLesson() {
@@ -257,6 +367,9 @@ final class Level1ViewModel: ObservableObject {
         currentCheckpointIndex = 0
         currentTextureIndex = 0
         visitedTextures = [0]
+        activeExperimentPanel = nil
+        hasSelectedTexture = false
+        hasSelectedShape = false
         showsObjectModeBadge = false
         hasWaypointTarget = false
         syncEntities()
@@ -265,6 +378,7 @@ final class Level1ViewModel: ObservableObject {
     func objectTappedForTexture() {
         guard phase == .textureTapPrompt else { return }
         showsObjectModeBadge = true
+        activeExperimentPanel = .texture
         phase = .textureExploration
         triggerSuccessFeedback()
         syncEntities()
@@ -274,29 +388,66 @@ final class Level1ViewModel: ObservableObject {
         guard phase == .textureExploration, textureStops.indices.contains(index) else { return }
         currentTextureIndex = index
         visitedTextures.insert(index)
+        hasSelectedTexture = true
         triggerSuccessFeedback()
         applyCurrentTextureToPrimaryObject()
+        syncEntities()
     }
 
     func startShapeChange() {
-        guard phase == .textureExploration, hasExploredAllTextures else { return }
+        guard phase == .textureExploration else { return }
         phase = .shapeChange
-        hasChangedShape = false
+        activeExperimentPanel = .shape
+        showsObjectModeBadge = true
         syncEntities()
     }
 
     func selectShape(at index: Int) {
         guard phase == .shapeChange, shapeOptions.indices.contains(index) else { return }
         selectedShapeIndex = index
+        hasSelectedShape = true
         hasChangedShape = index != 0
         triggerSuccessFeedback()
         applyCurrentShapeToPrimaryObject()
+        syncEntities()
     }
 
-    func finishLevel() {
-        guard phase == .shapeChange, hasChangedShape else { return }
-        phase = .completed
-        progressStore.markLevelCompleted(Level1Content.levelID)
+    func confirmDrawingChoices() {
+        guard (phase == .textureExploration || phase == .shapeChange), canConfirmDrawingChoices else { return }
+        activeExperimentPanel = nil
+        showsObjectModeBadge = false
+        hidesGuideForDrawing = false
+        phase = .drawingPrompt
+        triggerSuccessFeedback()
+        syncEntities()
+    }
+
+    func finishDrawing() {
+        guard phase == .drawingReady || phase == .drawingActive else { return }
+        hidesGuideForDrawing = false
+        phase = .photoPrompt
+        triggerSuccessFeedback()
+        syncEntities()
+    }
+
+    func captureDrawingPhoto() {
+        guard phase == .photoPrompt, !isSavingDrawingPhoto else { return }
+        isSavingDrawingPhoto = true
+        pendingDrawingPhotoCapture.toggle()
+    }
+
+    func completeDrawingPhotoSave(success: Bool, message: String?) {
+        isSavingDrawingPhoto = false
+        photoSaveMessage = message
+        if success {
+            phase = .completed
+            progressStore.markLevelCompleted(Level1Content.levelID)
+        }
+        syncEntities()
+    }
+
+    func clearPhotoSaveMessage() {
+        photoSaveMessage = nil
     }
 
     var currentDialogLine: DialogLine { onboardingDialog[onboardingIndex] }
@@ -308,6 +459,9 @@ final class Level1ViewModel: ObservableObject {
     var hasFoundAllShapes: Bool { checkpoints.indices.allSatisfy { visitedCheckpoints.contains($0) } }
     var hasExploredAllTextures: Bool { textureStops.indices.allSatisfy { visitedTextures.contains($0) } }
     var nextTargetCheckpointIndex: Int? {
+        if phase == .onboarding, onboardingIndex == 2, !visitedCheckpoints.contains(0) {
+            return 0
+        }
         guard phase == .findingShapes else { return nil }
         return checkpoints.indices.first { !visitedCheckpoints.contains($0) }
     }
@@ -327,11 +481,19 @@ final class Level1ViewModel: ObservableObject {
         case .textureTapPrompt:
             "Coba tekan sekali kotaknya! Kita lihat tekstur yang lain ya!"
         case .textureExploration:
-            currentTexture.description
+            hasSelectedTexture ? currentTexture.description : "Kamu bisa ganti tekstur yang kamu suka, lho."
         case .shapeChange:
-            hasChangedShape ? "Kerja bagus! Kamu berhasil mengganti bentuk benda ini." : "Coba tekan tombol ini. Kita ganti bentuk yang lain ya!"
+            hasSelectedShape
+                ? "Kalau sudah, tekan tombol ini ya!"
+                : "Kamu bisa ganti bentuk yang kamu suka, lho."
+        case .drawingPrompt:
+            "Sekarang, mari kita gambar di kertas ya!"
+        case .drawingReady, .drawingActive:
+            "Kalau sudah, tekan tombol ini ya!"
+        case .photoPrompt:
+            "Yeay, gambarmu sudah jadi! Sekarang, yuk foto gambarmu!"
         case .completed:
-            "Kerja bagus! Kamu berhasil mengganti bentuk benda ini."
+            "Keren! Gambarmu sudah tersimpan."
         }
     }
 
@@ -350,18 +512,43 @@ final class Level1ViewModel: ObservableObject {
         case .textureTapPrompt:
             "level-1/14 Coba tekan sekali kotaknya Kita lihat tekstur yang lain yaa.mp3"
         case .textureExploration:
-            currentTexture.audioFileName
+            hasSelectedTexture
+                ? currentTexture.audioFileName
+                : "level-1/19 Kamu bisa ganti bentuk dan tekstur yang kamu suka lho.mp3"
         case .shapeChange:
-            hasChangedShape
-                ? "level-1/17 Kerja bagus Kamu berhasil mengganti bentuk benda ini.mp3"
+            hasSelectedShape
+                ? "level-1/20 Kalau sudah tekan tombol ini ya.mp3"
                 : "level-1/15 Wah ada banyak bentuk Kamu bisa ganti bentuk yang lain lho.mp3"
+        case .drawingPrompt:
+            "level-1/18 Sekarang kita coba menggambar yaa.mp3"
+        case .drawingReady, .drawingActive:
+            "level-1/22 Kalau sudah tekan tombol ini ya.mp3"
+        case .photoPrompt:
+            "level-1/23 Yeay gambarmu sudah jadi Sekarang yuk foto gambarmu.mp3"
         case .completed:
-            "level-1/17 Kerja bagus Kamu berhasil mengganti bentuk benda ini.mp3"
+            "level-1/24 Keren Gambarmu sudah tersimpan.mp3"
         }
     }
 
     var narrationID: String {
-        "\(phase)-\(onboardingIndex)-\(lightShadowIndex)-\(currentCheckpointIndex)-\(currentTextureIndex)-\(selectedShapeIndex)-\(hasFoundAllShapes)-\(hasChangedShape)"
+        let phaseID: String
+        switch phase {
+        case .drawingActive:
+            phaseID = "\(Level1Phase.drawingReady)"
+        default:
+            phaseID = "\(phase)"
+        }
+
+        let choiceID: String
+        switch phase {
+        case .textureExploration:
+            choiceID = "texture-\(currentTextureIndex)"
+        case .shapeChange:
+            choiceID = "shape-\(selectedShapeIndex)"
+        default:
+            choiceID = "none"
+        }
+        return "\(phaseID)-\(onboardingIndex)-\(lightShadowIndex)-\(currentCheckpointIndex)-\(hasFoundAllShapes)-\(hasSelectedTexture)-\(hasSelectedShape)-\(choiceID)"
     }
 
     private func placeSceneIfNeeded() {
@@ -381,12 +568,20 @@ final class Level1ViewModel: ObservableObject {
         let anchorGroup = AnchorEntity(world: matrix)
         root.addChild(anchorGroup)
         pathAnchor = anchorGroup
+        shadowReceiverManager.setupReceiver(on: anchorGroup, usesFlatFallback: true, surfaceTexture: .defaultGrid)
 
         for (index, checkpoint) in checkpoints.enumerated() {
-            let angleStep = (2 * Float.pi) / Float(count)
-            let baseAngle = atan2(firstCheckpointDirection.y, firstCheckpointDirection.x)
-            let angle = baseAngle + angleStep * Float(index)
-            let shapeXZ = pathCenterXZ + SIMD2<Float>(cos(angle), sin(angle)) * pathRadius
+            let shapeXZ: SIMD2<Float>
+            if count == 2 {
+                // Dua target dibuat sebagai jalur lurus di depan pemain agar
+                // waypoint mudah diikuti dan objek kedua tidak muncul terlalu jauh.
+                shapeXZ = scanCameraXZ + scanForwardXZ * (firstCheckpointDistance + Float(index) * 1.40)
+            } else {
+                let angleStep = (2 * Float.pi) / Float(count)
+                let baseAngle = atan2(firstCheckpointDirection.y, firstCheckpointDirection.x)
+                let angle = baseAngle + angleStep * Float(index)
+                shapeXZ = pathCenterXZ + SIMD2<Float>(cos(angle), sin(angle)) * pathRadius
+            }
             let worldPosition = SIMD3<Float>(shapeXZ.x, floorY + 0.005, shapeXZ.y)
             markerWorldPositions.append(worldPosition)
 
@@ -399,36 +594,56 @@ final class Level1ViewModel: ObservableObject {
             checkpointEntities.append(shapeEntity)
             anchorGroup.addChild(shapeEntity)
 
-            let shadowEntity = makeShadowEntity(for: checkpoint.shape.objectType)
-            shadowEntity.position = localPosition + shadowOffset(for: checkpoint.shape.objectType)
-            checkpointShadowEntities.append(shadowEntity)
-            anchorGroup.addChild(shadowEntity)
-
             let lightPosition = localPosition + lightOffset(for: checkpoint.shape.objectType)
             let lightTarget = localPosition + SIMD3<Float>(0, checkpointHeight * 0.55, 0)
             let lightEntity = makeLightEntity(from: lightPosition, aimingAt: lightTarget)
             checkpointLightEntities.append(lightEntity)
             anchorGroup.addChild(lightEntity)
 
-            let highlightEntity = makeCheckpointHighlightEntity()
-            highlightEntity.position = SIMD3<Float>(localPosition.x, 0.016, localPosition.z)
-            checkpointHighlightEntities.append(highlightEntity)
-            anchorGroup.addChild(highlightEntity)
+            let shadowEntity = makeShadowEntity(
+                for: checkpoint.shape.objectType,
+                objectPosition: localPosition,
+                lightPosition: lightPosition
+            )
+            checkpointShadowEntities.append(shadowEntity)
+            anchorGroup.addChild(shadowEntity)
+
+            // Checkpoint floor ring sengaja tidak dibuat: Level 1 sekarang
+            // fokus pada cahaya, bayangan, dan objek uji yang sama.
         }
 
         let primaryObjectPosition = checkpointLocalPositions.first ?? .zero
         let primaryLightPosition = checkpointLightEntities.first?.position ?? primaryObjectPosition + lightOffset(for: .cube)
-        let primaryShadowPosition = checkpointShadowEntities.first?.position ?? primaryObjectPosition + shadowOffset(for: .cube)
-        let objectRadarPosition = primaryObjectPosition + objectRadarOffset(from: primaryObjectPosition)
-        let radarPositions: [Level1RadarTarget: SIMD3<Float>] = [
-            .light: primaryLightPosition + SIMD3<Float>(0, 0.035, 0),
-            .shadow: primaryShadowPosition + SIMD3<Float>(0, 0.10, 0),
-            .object: objectRadarPosition
+        // Semua checkpoint selalu membuat entity bayangan. Fallback di sini
+        // hanya untuk menjaga posisi marker tetap aman bila scene dibersihkan.
+        let primaryShadowPosition = checkpointShadowEntities.first?.position ?? primaryObjectPosition
+        // White mark diberi jarak dari target dan terhubung garis putus-putus,
+        // supaya tidak tenggelam ke dalam objek atau bayangan.
+        let objectTargetPosition = primaryObjectPosition + SIMD3<Float>(0, checkpointHeight * 0.62, 0)
+        let radarPositions: [Level1RadarTarget: (target: SIMD3<Float>, marker: SIMD3<Float>)] = [
+            .light: (
+                primaryLightPosition,
+                primaryLightPosition + diagonalMarkerOffset(direction: SIMD3<Float>(1, 1, 1), distance: 0.30)
+            ),
+            .shadow: (
+                primaryShadowPosition + SIMD3<Float>(0, 0.025, 0),
+                primaryShadowPosition + diagonalMarkerOffset(direction: SIMD3<Float>(-1, 1, 1), distance: 0.40)
+            ),
+            .object: (
+                objectTargetPosition,
+                objectTargetPosition + diagonalMarkerOffset(direction: SIMD3<Float>(1, 1, 1), distance: 0.40)
+            )
         ]
-        for (target, position) in radarPositions {
+        for (target, positions) in radarPositions {
             let radar = makeRadarEntity(target: target)
-            radar.position = position
+            radar.position = positions.marker
+            radar.addChild(makeDashedLeader(toward: positions.target - positions.marker))
             radarEntities[target] = radar
+            radarWorldPositions[target] = SIMD3<Float>(
+                pathCenterXZ.x + positions.marker.x,
+                floorY + positions.marker.y,
+                pathCenterXZ.y + positions.marker.z
+            )
             anchorGroup.addChild(radar)
         }
 
@@ -458,20 +673,34 @@ final class Level1ViewModel: ObservableObject {
         currentCheckpointIndex = index
         visitedCheckpoints.insert(index)
         triggerSuccessFeedback()
+        if phase == .onboarding {
+            // Setelah anak mencapai lokasi waypoint, kubus baru ditampilkan
+            // bersama dialog "Yeay ketemu!". Lampu tetap belum menyala.
+            onboardingIndex = min(onboardingDialog.count - 1, 3)
+            hasWaypointTarget = false
+            syncEntities()
+            return
+        }
         showCelebration(for: index)
         syncEntities()
     }
 
     func syncEntities() {
+        syncGuidePresentation()
+        moveGuideIfNeeded()
         let showLightAndShadow = phase != .onboarding && phase != .scanningSurface
 
         for (index, entity) in checkpointEntities.enumerated() {
             switch phase {
+            case .onboarding:
+                entity.isEnabled = index == 0
             case .surfaceReady, .lightShadowIntro:
                 entity.isEnabled = index == 0
             case .findingShapes:
-                entity.isEnabled = visitedCheckpoints.contains(index) || index == nextTargetCheckpointIndex
-            case .textureTapPrompt, .textureExploration, .shapeChange, .completed:
+                // Hanya target berikutnya yang dimunculkan. Checkpoint yang
+                // sudah selesai disembunyikan bersama lampu dan bayangannya.
+                entity.isEnabled = index == nextTargetCheckpointIndex
+            case .textureTapPrompt, .textureExploration, .shapeChange, .drawingPrompt, .drawingReady, .drawingActive, .photoPrompt, .completed:
                 entity.isEnabled = index == 0
             default:
                 entity.isEnabled = false
@@ -552,33 +781,22 @@ final class Level1ViewModel: ObservableObject {
         entity.collision = replacement.collision
         let finalScale = checkpointHeight / SceneObjectSystem.baseDimensions(for: selectedShape.objectType).y
         if let primaryShadow = checkpointShadowEntities.first {
-            configureShadowEntity(primaryShadow, for: selectedShape.objectType)
-            primaryShadow.position = (checkpointLocalPositions.first ?? .zero) + shadowOffset(for: selectedShape.objectType)
-        }
-        entity.scale = SIMD3<Float>(repeating: 0.05)
-        entity.move(
-            to: Transform(
-                scale: SIMD3<Float>(repeating: finalScale * 1.14),
-                rotation: entity.orientation,
-                translation: entity.position
-            ),
-            relativeTo: entity.parent,
-            duration: 0.18,
-            timingFunction: .easeOut
-        )
-        Task { @MainActor [weak entity] in
-            try? await Task.sleep(for: .seconds(0.18))
-            guard let entity else { return }
-            entity.move(
-                to: Transform(
-                    scale: SIMD3<Float>(repeating: finalScale),
-                    rotation: entity.orientation,
-                    translation: entity.position
-                ),
-                relativeTo: entity.parent,
-                duration: 0.16,
-                timingFunction: .easeInOut
+            configureShadowEntity(
+                primaryShadow,
+                for: selectedShape.objectType,
+                objectPosition: checkpointLocalPositions.first ?? .zero,
+                lightPosition: checkpointLightEntities.first?.position ?? lightOffset(for: selectedShape.objectType)
             )
+        }
+        entity.scale = SIMD3<Float>(repeating: finalScale)
+    }
+
+    private func hideGuideAfterDrawingInstruction() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4.0))
+            guard self?.phase == .drawingReady else { return }
+            self?.phase = .drawingActive
+            self?.syncEntities()
         }
     }
 
@@ -608,22 +826,29 @@ final class Level1ViewModel: ObservableObject {
         let activeTarget = phase == .lightShadowIntro ? currentLightShadowInstruction.radarTarget : nil
         let explainedTarget = phase == .lightShadowIntro && currentLightShadowInstruction.radarTarget == nil ? selectedRadarTarget : nil
         for (target, entity) in radarEntities {
-            entity.isEnabled = activeTarget == target || explainedTarget == target
+            let isVisible = activeTarget == target || explainedTarget == target
+            entity.isEnabled = isVisible
+            updateRadarAppearance(entity, isSelected: explainedTarget == target)
         }
 
         radarLabelEntity?.removeFromParent()
         radarLabelEntity = nil
 
-        guard phase == .lightShadowIntro,
-              currentLightShadowInstruction.radarTarget == nil,
-              let selectedRadarTarget,
-              let radar = radarEntities[selectedRadarTarget],
-              let parent = radar.parent else { return }
+        // Penjelasan setelah white mark ditekan ditampilkan lewat bubble Lumi.
+        // Label marker terpisah sengaja tidak dibuat agar dialog tidak duplikat.
+    }
 
-        let label = makeRadarLabel(text: currentLightShadowInstruction.text)
-        label.position = radar.position + labelOffset(for: selectedRadarTarget)
-        parent.addChild(label)
-        radarLabelEntity = label
+    private func updateRadarAppearance(_ entity: Entity, isSelected: Bool) {
+        guard let center = entity.children.first(where: { $0.name.contains("-center") }) as? ModelEntity else { return }
+
+        if isSelected {
+            center.model?.materials = [UnlitMaterial(color: .systemRed)]
+            center.components.set(PulseAnimationComponent(baseScale: 1, speed: 5.0, amplitude: 0.35, isActiveTarget: true))
+        } else {
+            center.model?.materials = [UnlitMaterial(color: .white)]
+            center.components.remove(PulseAnimationComponent.self)
+            center.scale = SIMD3<Float>(repeating: 1)
+        }
     }
 
     private func setupDirectionIndicator() {
@@ -671,6 +896,185 @@ final class Level1ViewModel: ObservableObject {
         return entity
     }
 
+    // MARK: - Lumi AR Guide
+
+    private func setupGuideCharacter() {
+        guard guideRoot == nil, let root = rootAnchor else { return }
+        let guide = Entity()
+        guide.name = "Level 1 Guide — Lumi"
+        guide.isEnabled = false
+        let asset = currentGuideAsset
+        if let character = CharacterGuideFactory.makeCharacter(asset: asset, width: 0.10, height: 0.14) {
+            guide.addChild(character)
+            guideCharacter = character
+            guideCharacterAsset = asset
+        }
+        root.addChild(guide)
+        guideRoot = guide
+    }
+
+    private func updateGuidePosition(cameraPosition: SIMD3<Float>, horizontalForward: SIMD2<Float>) {
+        guard hasPlacedScene, let guide = guideRoot else { return }
+        let forward = SIMD3<Float>(horizontalForward.x, 0, horizontalForward.y)
+        let right = SIMD3<Float>(-horizontalForward.y, 0, horizontalForward.x)
+        let destination: SIMD3<Float>
+
+        if let activeTarget = activeGuideRadarTarget,
+           let radarPosition = radarWorldPositions[activeTarget] {
+            let side: Float = radarAppearsOnRight(radarPosition: radarPosition, cameraPosition: cameraPosition, cameraRight: right) ? -1 : 1
+            destination = radarPosition + right * (0.14 * side) + SIMD3<Float>(0, 0.02, 0)
+        } else {
+            destination = cameraPosition + forward * 0.66 + right * 0.30 + SIMD3<Float>(0, -0.54, 0)
+        }
+
+        if guideNeedsPlacement {
+            guide.position = destination
+            guideNeedsPlacement = false
+            guide.isEnabled = shouldShowGuide
+            syncGuidePresentation()
+        } else {
+            guide.position += (destination - guide.position) * 0.24
+        }
+        guide.look(at: cameraPosition, from: guide.position, relativeTo: nil)
+        guideCloud?.position = guideCloudPosition(cameraPosition: cameraPosition, cameraRight: right)
+    }
+
+    private func syncGuidePresentation() {
+        guard let guide = guideRoot else { return }
+        guide.isEnabled = shouldShowGuide && !guideNeedsPlacement
+        syncGuideCharacterAsset()
+        let text = narrationText
+        guard guideText != text else { return }
+        guideText = text
+        guideCloud?.removeFromParent()
+        let speechLayout = guideSpeechLayout(for: text)
+        let cloud = CharacterGuideFactory.makeSpeechCloud(
+            text: speechLayout.text,
+            width: speechLayout.width,
+            height: speechLayout.height,
+            fontSize: 0.013,
+            textHorizontalInset: 0.025,
+            textVerticalInset: 0.030
+        )
+        cloud.name = "Lumi Speech Cloud"
+        cloud.position = defaultGuideCloudPosition
+        guide.addChild(cloud)
+        guideCloud = cloud
+    }
+
+    private func moveGuideIfNeeded() {
+        guideCloud?.position = defaultGuideCloudPosition
+    }
+
+    private var shouldShowGuide: Bool {
+        phase != .scanningSurface && phase != .drawingActive && phase != .completed
+    }
+
+    private var activeGuideRadarTarget: Level1RadarTarget? {
+        guard phase == .lightShadowIntro else { return nil }
+        return currentLightShadowInstruction.radarTarget ?? selectedRadarTarget
+    }
+
+    private var currentGuideAsset: CharacterGuideAsset {
+        switch phase {
+        case .onboarding:
+            switch onboardingIndex {
+            case 0:
+                return .lumiIdle
+            case 1:
+                return .lumiPoint
+            case 2:
+                return .lumiQuestion
+            default:
+                return .lumiPointWink
+            }
+        case .surfaceReady:
+            return .lumiPoint
+        case .lightShadowIntro:
+            return currentLightShadowInstruction.radarTarget == nil ? .lumiPointWink : .lumiPoint
+        case .findingShapes:
+            return .lumiQuestion
+        case .textureTapPrompt:
+            return .lumiPoint
+        case .textureExploration:
+            return hasSelectedTexture ? .lumiPointWink : .lumiQuestion
+        case .shapeChange:
+            return hasSelectedShape ? .lumiPointWink : .lumiPoint
+        case .drawingPrompt:
+            return .lumiIdle
+        case .drawingReady, .photoPrompt:
+            return .lumiQuestion
+        case .drawingActive, .scanningSurface, .completed:
+            return .lumiIdle
+        }
+    }
+
+    private func syncGuideCharacterAsset() {
+        guard let guide = guideRoot else { return }
+        let asset = currentGuideAsset
+        guard guideCharacterAsset != asset else { return }
+
+        guard let character = CharacterGuideFactory.makeCharacter(asset: asset, width: 0.10, height: 0.14) else {
+            return
+        }
+        guideCharacter?.removeFromParent()
+        guide.addChild(character)
+        guideCharacter = character
+        guideCharacterAsset = asset
+    }
+
+    private var defaultGuideCloudPosition: SIMD3<Float> {
+        SIMD3<Float>(0.22, 0.14, 0)
+    }
+
+    private func guideSpeechLayout(for text: String) -> (text: String, width: Float, height: Float) {
+        let wrappedText = wrappedGuideText(text, maximumWordsPerLine: 8)
+        let lines = wrappedText.split(separator: "\n", omittingEmptySubsequences: false)
+        let longestLineCount = lines.map(\.count).max() ?? text.count
+        let width = clamped(Float(longestLineCount) * 0.0064 + 0.10, 0.24, 0.56)
+        let height = clamped(Float(lines.count) * 0.022 + 0.060, 0.082, 0.24)
+        return (wrappedText, width, height)
+    }
+
+    private func wrappedGuideText(_ text: String, maximumWordsPerLine: Int) -> String {
+        let words = text.split(separator: " ").map(String.init)
+        var lines: [String] = []
+        var currentWords: [String] = []
+
+        for word in words {
+            if currentWords.count == maximumWordsPerLine {
+                lines.append(currentWords.joined(separator: " "))
+                currentWords = [word]
+            } else {
+                currentWords.append(word)
+            }
+        }
+
+        if !currentWords.isEmpty {
+            lines.append(currentWords.joined(separator: " "))
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func guideCloudPosition(cameraPosition: SIMD3<Float>, cameraRight: SIMD3<Float>) -> SIMD3<Float> {
+        defaultGuideCloudPosition
+    }
+
+    private func radarAppearsOnRight(
+        radarPosition: SIMD3<Float>,
+        cameraPosition: SIMD3<Float>,
+        cameraRight: SIMD3<Float>
+    ) -> Bool {
+        simd_dot(radarPosition - cameraPosition, cameraRight) > 0
+    }
+
+    private func diagonalMarkerOffset(direction: SIMD3<Float>, distance: Float) -> SIMD3<Float> {
+        let length = simd_length(direction)
+        guard length > 0.0001 else { return SIMD3<Float>(0, distance, 0) }
+        return direction / length * distance
+    }
+
     private func makeCheckpointHighlightEntity() -> Entity {
         let root = Entity()
         var material = UnlitMaterial(color: UIColor.systemBlue.withAlphaComponent(0.55))
@@ -685,110 +1089,86 @@ final class Level1ViewModel: ObservableObject {
         let root = Entity()
         root.name = "level1-radar-\(target.rawValue)"
 
-        let color: UIColor = target == .shadow ? .systemRed : .white
-        var outerMaterial = UnlitMaterial(color: color.withAlphaComponent(0.32))
-        outerMaterial.blending = .transparent(opacity: 0.32)
-        let outer = ModelEntity(mesh: .generateSphere(radius: 0.10), materials: [outerMaterial])
-        outer.name = "level1-radar-\(target.rawValue)-outer"
-        outer.scale = SIMD3<Float>(1, 0.04, 1)
-        outer.components.set(PulseAnimationComponent(baseScale: 1, speed: 5.2, amplitude: 0.18, isActiveTarget: true))
-        outer.components.set(DynamicLightShadowComponent(castsShadow: false))
-        outer.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.16)]))
-        outer.components.set(InputTargetComponent())
-        root.addChild(outer)
+        let dot = ModelEntity(
+            mesh: .generateSphere(radius: 0.007),
+            materials: [UnlitMaterial(color: .white)]
+        )
+        dot.name = "level1-radar-\(target.rawValue)-center"
+        dot.components.set(DynamicLightShadowComponent(castsShadow: false))
+        dot.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.018)]))
+        dot.components.set(InputTargetComponent())
+        root.addChild(dot)
 
-        var ringMaterial = UnlitMaterial(color: UIColor.white.withAlphaComponent(0.92))
-        ringMaterial.blending = .transparent(opacity: 0.92)
-        let ring = ModelEntity(mesh: .generateSphere(radius: 0.068), materials: [ringMaterial])
+        let ring = ModelEntity(
+            mesh: .generatePlane(width: 0.022, height: 0.022),
+            materials: [Self.radarRingMaterial(alpha: 1.0)]
+        )
         ring.name = "level1-radar-\(target.rawValue)-ring"
-        ring.scale = SIMD3<Float>(1, 0.035, 1)
+        ring.components.set(BillboardComponent())
         ring.components.set(DynamicLightShadowComponent(castsShadow: false))
-        ring.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.14)]))
+        ring.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.04)]))
         ring.components.set(InputTargetComponent())
+        ring.components.set(PulseAnimationComponent(baseScale: 1, speed: 3.8, amplitude: 0.45, isActiveTarget: true))
         root.addChild(ring)
 
-        let center = ModelEntity(
-            mesh: .generateSphere(radius: 0.032),
-            materials: [UnlitMaterial(color: target == .shadow ? .systemRed : .systemYellow)]
-        )
-        center.name = "level1-radar-\(target.rawValue)-center"
-        center.components.set(DynamicLightShadowComponent(castsShadow: false))
-        center.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.12)]))
-        center.components.set(InputTargetComponent())
-        root.addChild(center)
-
-        root.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.18)]))
+        root.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.04)]))
         root.components.set(InputTargetComponent())
         return root
     }
 
-    private func makeRadarLabel(text: String) -> Entity {
-        let root = Entity()
-        root.components.set(BillboardComponent())
-
-        let lines = wrappedRadarLabelText(text)
-        let textMesh = MeshResource.generateText(
-            lines,
-            extrusionDepth: 0.002,
-            font: .boldSystemFont(ofSize: 0.052)
-        )
-        let textEntity = ModelEntity(mesh: textMesh, materials: [UnlitMaterial(color: .black)])
-        let textBounds = textMesh.bounds
-        let padding = SIMD2<Float>(0.14, 0.10)
-        let backgroundWidth = max(0.36, textBounds.extents.x + padding.x)
-        let backgroundHeight = max(0.18, textBounds.extents.y + padding.y)
-        textEntity.position = SIMD3<Float>(
-            -textBounds.center.x,
-            -textBounds.center.y,
-            0.005
-        )
-
-        var backgroundMaterial = UnlitMaterial(color: UIColor.white.withAlphaComponent(0.78))
-        backgroundMaterial.blending = .transparent(opacity: 0.78)
-        let background = ModelEntity(
-            mesh: .generateBox(width: backgroundWidth, height: backgroundHeight, depth: 0.006),
-            materials: [backgroundMaterial]
-        )
-        background.components.set(DynamicLightShadowComponent(castsShadow: false))
-
-        root.addChild(background)
-        root.addChild(textEntity)
-        return root
+    private static func radarRingMaterial(alpha: Float) -> UnlitMaterial {
+        var material = UnlitMaterial()
+        if let texture = cachedRadarRingTexture ?? generateRadarRingTexture() {
+            cachedRadarRingTexture = texture
+            material.color = .init(
+                tint: UIColor.white.withAlphaComponent(CGFloat(alpha)),
+                texture: .init(texture)
+            )
+        } else {
+            material.color = .init(tint: UIColor.white.withAlphaComponent(CGFloat(alpha)))
+        }
+        material.blending = .transparent(opacity: .init(floatLiteral: alpha))
+        return material
     }
 
-    private func wrappedRadarLabelText(_ text: String) -> String {
-        let words = text.split(separator: " ")
-        var lines: [String] = []
-        var currentLine = ""
-        let maximumCharactersPerLine = 24
-
-        for word in words {
-            let candidate = currentLine.isEmpty ? String(word) : "\(currentLine) \(word)"
-            if candidate.count > maximumCharactersPerLine, !currentLine.isEmpty {
-                lines.append(currentLine)
-                currentLine = String(word)
-            } else {
-                currentLine = candidate
-            }
+    private static func generateRadarRingTexture(
+        size: CGFloat = 256,
+        strokeWidthFraction: CGFloat = 0.1
+    ) -> TextureResource? {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        let image = renderer.image { context in
+            let rect = CGRect(x: 0, y: 0, width: size, height: size)
+            context.cgContext.clear(rect)
+            let lineWidth = size * strokeWidthFraction
+            let ringRect = rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
+            context.cgContext.setStrokeColor(UIColor.white.cgColor)
+            context.cgContext.setLineWidth(lineWidth)
+            context.cgContext.strokeEllipse(in: ringRect)
         }
-
-        if !currentLine.isEmpty {
-            lines.append(currentLine)
-        }
-
-        return lines.joined(separator: "\n")
+        guard let cgImage = image.cgImage else { return nil }
+        return try? TextureResource(image: cgImage, withName: nil, options: .init(semantic: .color))
     }
 
-    private func labelOffset(for target: Level1RadarTarget) -> SIMD3<Float> {
-        switch target {
-        case .light:
-            SIMD3<Float>(0.48, 0.03, 0)
-        case .shadow:
-            SIMD3<Float>(-0.54, 0.08, 0)
-        case .object:
-            SIMD3<Float>(0.52, 0.12, 0)
+    /// Dibuat sebagai anak dari marker, sehingga ikut berpindah bersamanya.
+    /// Titik-titik kecil memberi visual garis putus-putus tanpa update per
+    /// frame atau overlay SwiftUI tambahan.
+    private func makeDashedLeader(toward targetOffset: SIMD3<Float>) -> Entity {
+        let leader = Entity()
+        let length = simd_length(targetOffset)
+        guard length > 0.001 else { return leader }
+
+        let material = UnlitMaterial(color: UIColor.white.withAlphaComponent(0.9))
+        let fractions: [Float] = [0.14, 0.26, 0.38, 0.50, 0.62, 0.74, 0.86]
+
+        for fraction in fractions {
+            let dash = ModelEntity(mesh: .generateSphere(radius: 0.0032), materials: [material])
+            dash.position = targetOffset * fraction
+            dash.components.set(DynamicLightShadowComponent(castsShadow: false))
+            leader.addChild(dash)
         }
+        return leader
     }
+
 
     private func makeLightEntity(from position: SIMD3<Float>, aimingAt target: SIMD3<Float>) -> Entity {
         let root = Entity()
@@ -797,11 +1177,16 @@ final class Level1ViewModel: ObservableObject {
         let light = Entity()
         var component = SpotLightComponent()
         component.color = .yellow
-        component.intensity = 4_800
-        component.attenuationRadius = 7
-        component.innerAngleInDegrees = 18
-        component.outerAngleInDegrees = 48
+        component.intensity = 3_400
+        component.attenuationRadius = 3.2
+        component.innerAngleInDegrees = 14
+        component.outerAngleInDegrees = 34
         light.components.set(component)
+        var shadow = SpotLightComponent.Shadow()
+        shadow.zNear = .fixed(0.01)
+        shadow.zFar = .fixed(4)
+        shadow.depthBias = 0.03
+        light.components.set(shadow)
         if let angles = SceneLightSystem.aimingAngles(from: position, to: target) {
             light.orientation = SceneLightSystem.orientation(
                 yawDegrees: angles.yawDegrees,
@@ -817,47 +1202,95 @@ final class Level1ViewModel: ObservableObject {
     }
 
     private func lightOffset(for objectType: LearningObjectType) -> SIMD3<Float> {
-        let heightAdjustment: Float = objectType == .sphere ? 0.08 : 0
-        return SIMD3<Float>(0.62, 0.78 + heightAdjustment, -0.58)
+        let heightAdjustment: Float = objectType == .sphere ? 0.04 : 0
+        return SIMD3<Float>(0.28, 0.42 + heightAdjustment, -0.24)
     }
 
-    private func shadowOffset(for objectType: LearningObjectType) -> SIMD3<Float> {
-        let radiusAdjustment: Float = objectType == .sphere ? 0.04 : 0
-        return SIMD3<Float>(-0.24 - radiusAdjustment, 0.012, 0.22)
-    }
 
-    private func objectRadarOffset(from objectPosition: SIMD3<Float>) -> SIMD3<Float> {
-        let radialDirection = SIMD2<Float>(objectPosition.x, objectPosition.z)
-        let radialLength = simd_length(radialDirection)
-        let outward = radialLength > 0.001 ? radialDirection / radialLength : SIMD2<Float>(0, 1)
-        return SIMD3<Float>(outward.x * 0.34, checkpointHeight * 0.72, outward.y * 0.34)
-    }
-
-    private func makeShadowEntity(for objectType: LearningObjectType) -> Entity {
+    private func makeShadowEntity(
+        for objectType: LearningObjectType,
+        objectPosition: SIMD3<Float>,
+        lightPosition: SIMD3<Float>
+    ) -> Entity {
         let root = Entity()
-        configureShadowEntity(root, for: objectType)
+        configureShadowEntity(root, for: objectType, objectPosition: objectPosition, lightPosition: lightPosition)
         return root
     }
 
-    private func configureShadowEntity(_ root: Entity, for objectType: LearningObjectType) {
+    /// Mengikuti rumus yang dipakai Level 2: arah bayangan adalah proyeksi
+    /// horizontal arah datang cahaya dan panjangnya berasal dari segitiga
+    /// sebangun terhadap tinggi objek.
+    private func configureShadowEntity(
+        _ root: Entity,
+        for objectType: LearningObjectType,
+        objectPosition: SIMD3<Float>,
+        lightPosition: SIMD3<Float>
+    ) {
         root.children.removeAll()
-        root.orientation = simd_quatf(angle: -.pi / 9, axis: [0, 1, 0])
+        let lightDirection = simd_normalize(objectPosition - lightPosition)
+        let groundDirection = ShadowGeometryCalculator.groundShadowDirection(lightDirection: lightDirection)
+            ?? SIMD3<Float>(-1, 0, 0)
+        let rawLength = ShadowGeometryCalculator.approximateShadowLength(
+            lightDirection: lightDirection,
+            objectHeight: checkpointHeight
+        ) ?? 0.38
+        let length = clamped(rawLength, 0.34, 0.92)
+        root.position = objectPosition + groundDirection * (length * 0.50) + SIMD3<Float>(0, 0.018, 0)
+        root.orientation = simd_quatf(angle: atan2(groundDirection.z, groundDirection.x), axis: [0, 1, 0])
 
-        let baseRadius: Float = objectType == .sphere ? 0.34 : 0.40
-        let layers: [(scale: SIMD3<Float>, alpha: Float)] = [
-            (SIMD3<Float>(1.35, 0.012, 0.58), 0.035),
-            (SIMD3<Float>(1.65, 0.010, 0.78), 0.022),
-            (SIMD3<Float>(1.95, 0.008, 0.96), 0.010)
+        let shadowWidth = shadowBaseWidth(for: objectType)
+        let layers: [(lengthMultiplier: Float, widthMultiplier: Float, alpha: Float)] = [
+            (1.00, 1.08, 0.52),
+            (1.18, 1.32, 0.26),
+            (1.38, 1.56, 0.12)
         ]
 
         for (index, layer) in layers.enumerated() {
             var material = UnlitMaterial(color: UIColor.black.withAlphaComponent(CGFloat(layer.alpha)))
             material.blending = .transparent(opacity: .init(floatLiteral: layer.alpha))
-            let ellipse = ModelEntity(mesh: .generateSphere(radius: baseRadius), materials: [material])
-            ellipse.name = "level1-soft-shadow-\(index)"
-            ellipse.scale = layer.scale
-            ellipse.components.set(DynamicLightShadowComponent(castsShadow: false))
-            root.addChild(ellipse)
+            let shadow = makeShadowLayer(
+                for: objectType,
+                length: length * layer.lengthMultiplier,
+                width: shadowWidth * layer.widthMultiplier,
+                material: material
+            )
+            shadow.name = "level1-soft-shadow-\(index)"
+            shadow.position.y = Float(index) * 0.002
+            shadow.components.set(DynamicLightShadowComponent(castsShadow: false))
+            root.addChild(shadow)
+        }
+    }
+
+    private func makeShadowLayer(
+        for objectType: LearningObjectType,
+        length: Float,
+        width: Float,
+        material: UnlitMaterial
+    ) -> ModelEntity {
+        switch objectType {
+        case .cube, .cuboid, .squarePyramid, .triangularPyramid:
+            return ModelEntity(
+                mesh: .generateBox(width: max(length, 0.12), height: 0.005, depth: max(width, 0.09)),
+                materials: [material]
+            )
+        case .sphere, .cylinder, .cone, .hemisphere:
+            let radius = max(width * 0.5, 0.04)
+            let entity = ModelEntity(mesh: .generateSphere(radius: radius), materials: [material])
+            entity.scale = SIMD3<Float>(max(length / max(width, 0.001), 0.8), 0.012, 1.0)
+            return entity
+        }
+    }
+
+    private func shadowBaseWidth(for objectType: LearningObjectType) -> Float {
+        switch objectType {
+        case .cube:
+            checkpointHeight * 0.72
+        case .cuboid:
+            checkpointHeight * 0.92
+        case .squarePyramid, .triangularPyramid:
+            checkpointHeight * 0.78
+        case .sphere, .cylinder, .cone, .hemisphere:
+            checkpointHeight * 0.70
         }
     }
 }
