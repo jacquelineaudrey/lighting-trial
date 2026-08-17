@@ -53,6 +53,10 @@ struct Level1ARView: UIViewRepresentable {
             guard let cameraTransform = arView.session.currentFrame?.camera.transform else { return }
             viewModel.processSceneUpdate(cameraTransform: cameraTransform)
         })
+
+        let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        arView.addGestureRecognizer(tapRecognizer)
+        context.coordinator.arView = arView
         
         return arView
     }
@@ -75,6 +79,7 @@ struct Level1ARView: UIViewRepresentable {
     class Coordinator: NSObject, ARSessionDelegate, ARCoachingOverlayViewDelegate {
         let viewModel: Level1ViewModel
         var subscription: AnyCancellable?
+        weak var arView: ARView?
         
         weak var coachingOverlay: ARCoachingOverlayView? {
             didSet { coachingOverlay?.delegate = self }
@@ -83,9 +88,15 @@ struct Level1ARView: UIViewRepresentable {
         init(viewModel: Level1ViewModel) {
             self.viewModel = viewModel
         }
+
+        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
+            guard let arView else { return }
+            let location = recognizer.location(in: arView)
+            viewModel.handleTap(on: arView.entity(at: location))
+        }
         
-        // The overlay only helps find the surface. The learner explicitly
-        // confirms it from the Lanjut / Scan Ulang card before the path appears.
+        // The coaching overlay only helps find a horizontal surface. Level 1
+        // advances automatically once the scan is stable enough.
         func coachingOverlayViewDidDeactivate(_ coachingOverlayView: ARCoachingOverlayView) {
         }
         

@@ -9,6 +9,14 @@ import SwiftUI
 
 struct EndLevelView: View {
     let data: EndLevelModel
+    let onBack: () -> Void
+    let onNext: (() -> Void)?
+
+    init(data: EndLevelModel, onBack: @escaping () -> Void, onNext: (() -> Void)? = nil) {
+        self.data = data
+        self.onBack = onBack
+        self.onNext = onNext
+    }
 
     var body: some View {
 
@@ -43,7 +51,7 @@ struct EndLevelView: View {
 
                 HStack {
                     Button(action: {
-                        // TODO: back action
+                        onBack()
                     }) {
                         Text("Kembali")
                             .font(.system(size: 17))
@@ -60,9 +68,13 @@ struct EndLevelView: View {
                     Spacer()
 
                     Button(action: {
-                        // TODO: next action
+                        if let onNext {
+                            onNext()
+                        } else {
+                            onBack()
+                        }
                     }) {
-                        Text("Selanjutnya")
+                        Text(onNext == nil ? "Selesai" : "Selanjutnya")
                             .font(.system(size: 17))
                             .fontWeight(.bold)
                             .foregroundColor(.white)
@@ -91,5 +103,5 @@ struct EndLevelView: View {
         levelNumber: 1,
         message: "Kamu hebat!\nSekarang kamu bisa ke level berikutnya!",
         mascotImageName: "lumiIdle"
-    ))
+    ), onBack: { }, onNext: { })
 }

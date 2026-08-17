@@ -10,326 +10,408 @@ import SwiftUI
 struct Level1FlowView: View {
     @StateObject private var viewModel = Level1ViewModel()
     @Environment(\.dismiss) private var dismiss
+    @State private var narrator = LessonAudioNarrator()
     @State private var showsExitConfirmation = false
+    let onNextLevel: (() -> Void)?
+
+    init(onNextLevel: (() -> Void)? = nil) {
+        self.onNextLevel = onNextLevel
+    }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             Level1ARView(viewModel: viewModel)
                 .ignoresSafeArea()
 
             switch viewModel.phase {
             case .onboarding:
-                TriviaDialogOverlay(viewModel: viewModel)
+                Level1OpeningOverlay(viewModel: viewModel)
             case .scanningSurface:
-                ScanningSurfaceOverlay(viewModel: viewModel)
+                VStack {
+                    SurfaceScanInstruction(sceneViewModel: viewModel.arSceneViewModel)
+                    Spacer()
+                }
             case .surfaceReady:
-                SurfaceReadyOverlay(
-                    onContinue: viewModel.continueAfterSurfaceCheck,
-                    onRescan: viewModel.rescanSurface
-                )
-            case .exploring:
-                CheckpointExploreOverlay(viewModel: viewModel)
-            case .quiz:
-                QuizOverlay(viewModel: viewModel)
-            case .returningToStart:
-                ReturnToStartOverlay(viewModel: viewModel)
+                EmptyView()
+            case .lightShadowIntro:
+                Level1LightShadowOverlay(viewModel: viewModel)
+            case .findingShapes:
+                Level1FindShapeOverlay(viewModel: viewModel)
+            case .textureTapPrompt:
+                Level1TextureTapPromptOverlay()
+            case .textureExploration:
+                Level1TextureOverlay(viewModel: viewModel)
+            case .shapeChange:
+                Level1ShapeChangeOverlay(viewModel: viewModel)
             case .completed:
-                LevelCompletedOverlay { dismiss() }
-            }
-        }
-        .overlay(alignment: .bottomLeading) {
-            if showsTextureThumbControls {
-                ThumbNavButton(systemImage: "chevron.left", isEnabled: viewModel.canGoToPreviousTexture) {
-                    viewModel.previousTexture()
-                }
-                .padding(.leading, 20)
-                .padding(.bottom, 170)
-            }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if showsTextureThumbControls {
-                ThumbNavButton(systemImage: "chevron.right", isEnabled: viewModel.canGoToNextTexture) {
-                    viewModel.nextTexture()
-                }
-                .padding(.trailing, 20)
-                .padding(.bottom, 170)
+                EndLevelView(
+                    data: EndLevelViewModel.data(for: Level1Content.levelID),
+                    onBack: dismiss.callAsFunction,
+                    onNext: onNextLevel
+                )
+                .padding(.bottom, 24)
             }
         }
         .overlay(alignment: .topLeading) {
             if viewModel.phase != .completed {
-                Button(action: { showsExitConfirmation = true }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(12)
-                        .background(.black.opacity(0.4), in: Circle())
-                }
-                .padding(.leading, 16)
-                .padding(.top, 12)
+                LevelBackButton { showsExitConfirmation = true }
+                    .padding(.leading, 16)
+                    .padding(.top, 12)
+            }
+        }
+        .overlay(alignment: .top) {
+            if viewModel.showsObjectModeBadge {
+                Text("Kamu jadi objek!")
+                    .font(.headline.bold())
+                    .foregroundStyle(Color(hex: "21415D"))
+                    .padding(.horizontal, 34)
+                    .padding(.vertical, 12)
+                    .background(Color(red: 0.74, green: 0.88, blue: 1.0), in: Capsule())
+                    .overlay(Capsule().stroke(.blue, lineWidth: 2))
+                    .padding(.top, 28)
             }
         }
         .overlay(alignment: .top) {
             if let celebration = viewModel.checkpointCelebration {
-                CheckpointCelebrationOverlay(celebration: celebration)
+                ShapeFoundToast(celebration: celebration)
                     .id(celebration.id)
                     .transition(.scale(scale: 0.7).combined(with: .opacity))
-                    .padding(.top, 56)
+                    .padding(.top, 64)
                     .allowsHitTesting(false)
             }
         }
-        .confirmationDialog("Keluar dari Level?", isPresented: $showsExitConfirmation, titleVisibility: .visible) {
-            Button("Keluar", role: .destructive) { dismiss() }
-            Button("Batal", role: .cancel) { }
-        } message: {
-            Text("Progres kamu di level ini tidak akan disimpan.")
+        .levelExitConfirmation(isPresented: $showsExitConfirmation) {
+            dismiss()
         }
-        .animation(.easeInOut, value: viewModel.phase)
+        .animation(.easeInOut(duration: 0.25), value: viewModel.phase)
         .animation(.spring(response: 0.35, dampingFraction: 0.65), value: viewModel.checkpointCelebration)
+        .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
+        .task(id: viewModel.narrationID) {
+            narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
+        }
+        .onDisappear(perform: narrator.stop)
         .navigationBarBackButtonHidden(true)
-    }
-
-    private var showsTextureThumbControls: Bool {
-        viewModel.phase == .exploring && viewModel.hasArrivedAtCurrentCheckpoint
     }
 }
 
-private struct CheckpointCelebrationOverlay: View {
-    let celebration: CheckpointCelebration
-    @State private var hasAppeared = false
+private struct Level1OpeningOverlay: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
+    var body: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                VStack(alignment: .trailing, spacing: 18) {
+                    SpeechBubble(text: viewModel.currentDialogLine.text, tail: .bottomTrailing)
+                    Button(viewModel.isLastDialogLine ? "Mulai" : "Selanjutnya", action: viewModel.advanceDialog)
+                        .font(.headline.bold())
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                }
+                .frame(maxWidth: 430)
+                .padding(.trailing, 80)
+                .padding(.bottom, 82)
+            }
+        }
+    }
+}
+
+private struct Level1LightShadowOverlay: View {
+    @ObservedObject var viewModel: Level1ViewModel
 
     var body: some View {
         ZStack {
-            ForEach(0..<8, id: \.self) { index in
-                Circle()
-                    .fill(index.isMultiple(of: 2) ? Color.yellow : Color.green)
-                    .frame(width: 10, height: 10)
-                    .offset(
-                        x: hasAppeared ? cos(Double(index) * .pi / 4) * 76 : 0,
-                        y: hasAppeared ? sin(Double(index) * .pi / 4) * 62 : 0
-                    )
-                    .opacity(hasAppeared ? 0 : 1)
-                    .animation(.easeOut(duration: 0.65).delay(0.08), value: hasAppeared)
-            }
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 16) {
+                        if viewModel.currentLightShadowInstruction.radarTarget != nil || viewModel.selectedRadarTarget == nil {
+                            SpeechBubble(text: viewModel.currentLightShadowInstruction.text, tail: .bottomTrailing)
+                        }
 
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 34, weight: .bold))
-                    .foregroundStyle(.green)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Checkpoint tercapai!")
+                        if viewModel.currentLightShadowInstruction.radarTarget == nil {
+                            Button(lightShadowButtonTitle, action: viewModel.continueLightShadowIntro)
+                                .font(.headline.bold())
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.large)
+                        }
+                    }
+                    .frame(maxWidth: 450)
+                    .padding(.trailing, 64)
+                    .padding(.bottom, 78)
+                }
+            }
+        }
+    }
+
+    private var lightShadowButtonTitle: String {
+        viewModel.lightShadowIndex == 0 ? "Lihat Cahaya" : "Selanjutnya"
+    }
+}
+
+private struct Level1FindShapeOverlay: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
+    var body: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                if viewModel.hasFoundAllShapes {
+                    Button("Selanjutnya", action: viewModel.continueToTextureLesson)
                         .font(.headline.bold())
-                    Text("\(celebration.shapeName) • \(celebration.checkpointNumber)/\(celebration.checkpointCount)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
-            .background(.regularMaterial, in: Capsule())
-            .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
-            .scaleEffect(hasAppeared ? 1 : 0.78)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Checkpoint tercapai. \(celebration.shapeName).")
-        .onAppear { hasAppeared = true }
-    }
-}
-
-// MARK: - UI Components & Overlays
-
-private struct ThumbNavButton: View {
-    let systemImage: String
-    let isEnabled: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 34, weight: .bold))
-                .frame(width: 96, height: 96)
-                .background(isEnabled ? .blue : Color.gray.opacity(0.4), in: Circle())
-                .foregroundStyle(.white)
-                .shadow(radius: 4, y: 2)
-        }
-        .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.5)
-    }
-}
-
-private struct TriviaDialogOverlay: View {
-    @ObservedObject var viewModel: Level1ViewModel
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("🦉")
-                .font(.system(size: 64))
-                .accessibilityHidden(true)
-            Text(viewModel.currentDialogLine.characterName)
-                .font(.headline)
-                .foregroundStyle(.blue)
-            Text(viewModel.currentDialogLine.text)
-                .font(.system(size: 20, weight: .medium, design: .rounded))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 12)
-
-            Button {
-                viewModel.advanceDialog()
-            } label: {
-                Text(viewModel.isLastDialogLine ? "Ayo Mulai!" : "Lanjut")
-                    .font(.title3.bold())
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(.blue, in: RoundedRectangle(cornerRadius: 18))
-                    .foregroundStyle(.white)
-            }
-        }
-        .padding(24)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 28))
-        .padding(.horizontal, 20)
-        .padding(.bottom, 40)
-    }
-}
-
-private struct ScanningSurfaceOverlay: View {
-    @ObservedObject var viewModel: Level1ViewModel
-
-    var body: some View {
-        SurfaceScanInstruction(sceneViewModel: viewModel.arSceneViewModel)
-    }
-}
-
-private struct CheckpointExploreOverlay: View {
-    @ObservedObject var viewModel: Level1ViewModel
-
-    var body: some View {
-        VStack(spacing: 14) {
-            if viewModel.hasArrivedAtCurrentCheckpoint {
-                Text("Checkpoint \(viewModel.currentCheckpointIndex + 1) dari \(viewModel.checkpoints.count) — \(viewModel.currentCheckpoint.shape.displayName)")
-                    .font(.subheadline.bold())
-
-                VStack(spacing: 2) {
-                    Text("Tekstur: \(viewModel.currentTexture.name)")
-                        .font(.title3.bold())
-                    Text(viewModel.currentTexture.description)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-
-                if viewModel.hasExploredAllCheckpoints {
-                    Button {
-                        viewModel.startQuiz()
-                    } label: {
-                        Text("Mulai Kuis Yuk! 🎉")
-                            .font(.title3.bold())
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(.green, in: RoundedRectangle(cornerRadius: 18))
-                            .foregroundStyle(.white)
-                    }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 14)
+                        .background(.blue, in: Capsule())
+                        .foregroundStyle(.white)
+                        .padding(.trailing, 54)
+                        .padding(.bottom, 46)
                 } else {
-                    Text("🔵 Jalan ke lingkaran biru berikutnya untuk checkpoint baru")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+                    SpeechBubble(text: "Selain kotak, coba temukan bentuk yang lain di sekitarmu!", tail: .bottomTrailing)
+                        .frame(maxWidth: 430)
+                        .padding(.trailing, 70)
+                        .padding(.bottom, 92)
                 }
-            } else {
-                Text("🔵 Cari lingkaran biru yang berdenyut, lalu jalan masuk ke dalamnya!")
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
             }
         }
-        .padding(18)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
-        .padding(.horizontal, 16)
-        .padding(.bottom, 30)
     }
 }
 
-private struct QuizOverlay: View {
+private struct Level1TextureTapPromptOverlay: View {
+    var body: some View {
+        ZStack {
+            VStack {
+                Spacer()
+                HStack {
+                    Image("Finger")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 74, height: 160)
+                        .opacity(0.9)
+                        .padding(.leading, 118)
+                        .padding(.bottom, 126)
+                    Spacer()
+                }
+            }
+
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    SpeechBubble(text: "Coba tekan sekali kotaknya! Kita lihat tekstur yang lain yaa!", tail: .bottomTrailing)
+                        .frame(maxWidth: 430)
+                        .padding(.trailing, 66)
+                        .padding(.bottom, 82)
+                }
+            }
+        }
+    }
+}
+
+private struct Level1TextureOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("Kuis \(viewModel.quizIndex + 1) dari \(viewModel.quizQuestions.count)")
-                .font(.subheadline.bold())
-                .foregroundStyle(.secondary)
-
-            Text(viewModel.currentQuestion.prompt)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .multilineTextAlignment(.center)
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                ForEach(viewModel.currentQuizChoices) { choice in
-                    Button {
-                        viewModel.answer(with: choice)
-                    } label: {
-                        Image(systemName: choice.quizSymbolName)
-                            .font(.system(size: 40))
-                        .frame(maxWidth: .infinity, minHeight: 84)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        ZStack {
+            HStack {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(Array(viewModel.textureStops.enumerated()), id: \.element.id) { index, texture in
+                        Button {
+                            viewModel.selectTexture(at: index)
+                        } label: {
+                            HStack(spacing: 14) {
+                                Text(texture.name)
+                                    .font(.headline)
+                                    .frame(width: 118, alignment: .leading)
+                                TextureSwatch(texture: texture.material)
+                            }
+                            .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(viewModel.lastAnswerWasCorrect != nil)
                 }
-            }
+                .padding(18)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+                .padding(.leading, 70)
+                .padding(.bottom, 86)
 
-            if let isCorrect = viewModel.lastAnswerWasCorrect {
-                VStack(spacing: 10) {
-                    Text(isCorrect ? "Benar sekali! 🎉" : "Belum tepat, coba ingat-ingat lagi ya 😊")
-                        .font(.title3.bold())
-                        .foregroundStyle(isCorrect ? .green : .orange)
-                    Button("Lanjut") { viewModel.nextQuestion() }
-                        .buttonStyle(.borderedProminent)
+                Spacer()
+            }
+            .frame(maxHeight: .infinity, alignment: .bottom)
+
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 14) {
+                        SpeechBubble(text: textureMessage, tail: .bottomTrailing)
+                            .frame(maxWidth: 470)
+                        if viewModel.hasExploredAllTextures {
+                            Button("Selanjutnya", action: viewModel.startShapeChange)
+                                .font(.headline.bold())
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.large)
+                        }
+                    }
+                    .padding(.trailing, 66)
+                    .padding(.bottom, 78)
                 }
             }
         }
-        .padding(20)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
-        .padding(.horizontal, 16)
-        .padding(.bottom, 30)
+    }
+
+    private var textureMessage: String {
+        viewModel.hasExploredAllTextures
+            ? "Kerja bagus! Kamu berhasil mengganti tekstur benda ini."
+            : "Wah, teksturnya berubah! Coba lihat bayangannya."
     }
 }
 
-private struct ReturnToStartOverlay: View {
+private struct Level1ShapeChangeOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
 
     var body: some View {
-        VStack(spacing: 12) {
-            Text("Skor kamu: \(viewModel.quizScore)/\(viewModel.quizQuestions.count) 🌟")
-                .font(.title3.bold())
-            Image(systemName: "arrow.uturn.backward.circle.fill")
-                .font(.system(size: 44))
-                .foregroundStyle(.blue)
-            Text("Yuk, jalan balik ke \"\(viewModel.checkpoints[0].shape.displayName)\" — checkpoint pertama tadi!")
-                .font(.headline)
-                .multilineTextAlignment(.center)
+        ZStack {
+            HStack {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(Array(viewModel.shapeOptions.enumerated()), id: \.element.id) { index, shape in
+                        Button {
+                            viewModel.selectShape(at: index)
+                        } label: {
+                            HStack(spacing: 16) {
+                                Text(shape.displayName)
+                                    .font(.headline)
+                                    .frame(width: 118, alignment: .leading)
+                                Image(systemName: shape.quizSymbolName)
+                                    .font(.title2)
+                                    .frame(width: 42, height: 42)
+                                    .foregroundStyle(index == viewModel.selectedShapeIndex ? .white : .secondary)
+                            }
+                            .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(18)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+                .padding(.leading, 70)
+                .padding(.bottom, 72)
+
+                Spacer()
+            }
+            .frame(maxHeight: .infinity, alignment: .bottom)
+
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 14) {
+                        SpeechBubble(text: viewModel.hasChangedShape ? "Kerja bagus! Kamu berhasil mengganti bentuk benda ini." : "Wah, ada banyak bentuk. Kamu bisa ganti bentuk yang lain lho!", tail: .bottomTrailing)
+                            .frame(maxWidth: 450)
+
+                        if viewModel.hasChangedShape {
+                            Button("Selanjutnya", action: viewModel.finishLevel)
+                                .font(.headline.bold())
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 14)
+                                .background(.blue, in: Capsule())
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .padding(.trailing, 54)
+                    .padding(.bottom, 46)
+                }
+            }
         }
-        .padding(20)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
-        .padding(.horizontal, 16)
-        .padding(.bottom, 40)
     }
 }
 
-private struct LevelCompletedOverlay: View {
-    let onFinish: () -> Void
+private struct SpeechBubble: View {
+    enum Tail {
+        case bottomLeading
+        case bottomTrailing
+    }
+
+    let text: String
+    var tail: Tail = .bottomTrailing
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("🏆").font(.system(size: 64))
-            Text("Level 1 Selesai!")
-                .font(.system(size: 26, weight: .heavy, design: .rounded))
-            Text("Kamu sudah belajar banyak bentuk dan tekstur baru!")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Kembali ke Menu") { onFinish() }
-                .buttonStyle(.borderedProminent)
+        Text(text)
+            .font(.system(size: 22, weight: .medium))
+            .foregroundStyle(.black)
+            .multilineTextAlignment(.leading)
+            .lineLimit(4)
+            .minimumScaleFactor(0.82)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 22)
+            .background {
+                SpeechBubbleShape(tail: tail)
+                    .fill(.white.opacity(0.82))
+                    .stroke(.white, lineWidth: 1.5)
+            }
+            .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+    }
+}
+
+private struct SpeechBubbleShape: Shape {
+    let tail: SpeechBubble.Tail
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let radius: CGFloat = 4
+        let tailHeight: CGFloat = 34
+        let bubbleRect = CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height - tailHeight)
+
+        path.addRoundedRect(in: bubbleRect, cornerSize: CGSize(width: radius, height: radius))
+
+        switch tail {
+        case .bottomLeading:
+            path.move(to: CGPoint(x: bubbleRect.minX + 70, y: bubbleRect.maxY - 1))
+            path.addLine(to: CGPoint(x: bubbleRect.minX + 28, y: rect.maxY))
+            path.addLine(to: CGPoint(x: bubbleRect.minX + 116, y: bubbleRect.maxY - 1))
+        case .bottomTrailing:
+            path.move(to: CGPoint(x: bubbleRect.maxX - 116, y: bubbleRect.maxY - 1))
+            path.addLine(to: CGPoint(x: bubbleRect.maxX - 28, y: rect.maxY))
+            path.addLine(to: CGPoint(x: bubbleRect.maxX - 70, y: bubbleRect.maxY - 1))
         }
-        .padding(24)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 28))
-        .padding(.horizontal, 24)
-        .padding(.bottom, 60)
+
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct TextureSwatch: View {
+    let texture: MaterialTexture
+
+    var body: some View {
+        Circle()
+            .fill(texture.fallbackColor.swiftUIColor)
+            .frame(width: 46, height: 46)
+            .overlay {
+                Image(systemName: texture.previewSystemImage)
+                    .font(.caption.bold())
+                    .foregroundStyle(.white.opacity(0.82))
+            }
+    }
+}
+
+private struct ShapeFoundToast: View {
+    let celebration: CheckpointCelebration
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 30, weight: .bold))
+                .foregroundStyle(.green)
+            Text("Yeay, ketemu! Ada bentuk apa lagi, ya?")
+                .font(.headline.bold())
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
+        .accessibilityElement(children: .combine)
     }
 }

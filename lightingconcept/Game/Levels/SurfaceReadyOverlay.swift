@@ -3,27 +3,70 @@ import SwiftUI
 /// Instruksi dan progres scan yang identik di seluruh level AR.
 struct SurfaceScanInstruction: View {
     @ObservedObject var sceneViewModel: ARSceneViewModel
+    @State private var fallbackProgress = 0.08
 
     var body: some View {
-        VStack {
-            Text("📱👇 Arahkan iPad pelan-pelan ke lantai atau meja beberapa detik ya!")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .multilineTextAlignment(.center)
-                .padding(14)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
-                .padding(.top, 24)
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: sceneViewModel.surfaceState == .found ? "checkmark.viewfinder" : "viewfinder")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(sceneViewModel.surfaceState == .found ? .green : .cyan)
+                    .frame(width: 44, height: 44)
+                    .background(.thinMaterial, in: Circle())
 
-            if sceneViewModel.isLiDARAvailable {
-                LiDARScanProgressCard(viewModel: sceneViewModel)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-            } else if sceneViewModel.surfaceState == .scanning {
-                ProgressView("Scanning surface...")
-                    .font(.subheadline)
-                    .padding(.top, 8)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(sceneViewModel.surfaceState == .found ? "Siap" : "Scan")
+                            .font(.headline.weight(.bold))
+                        Spacer()
+                        Text("\(Int(scanProgress * 100))%")
+                            .font(.headline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ProgressView(value: scanProgress)
+                        .tint(sceneViewModel.surfaceState == .found ? .green : .cyan)
+
+                    HStack(spacing: 8) {
+                        scanDot(isActive: scanProgress >= 0.25)
+                        scanDot(isActive: scanProgress >= 0.55)
+                        scanDot(isActive: scanProgress >= 0.85)
+                    }
+                    .accessibilityHidden(true)
+                }
             }
+            .padding(14)
+            .frame(maxWidth: 420)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .padding(.horizontal, 16)
+            .padding(.top, 24)
         }
         .frame(maxWidth: .infinity)
+        .onAppear(perform: startFallbackProgress)
+    }
+
+    private var scanProgress: Double {
+        switch sceneViewModel.surfaceState {
+        case .found, .placed:
+            1
+        case .scanning:
+            sceneViewModel.isLiDARAvailable
+                ? Double(sceneViewModel.lidarPlacementProgress)
+                : fallbackProgress
+        }
+    }
+
+    private func scanDot(isActive: Bool) -> some View {
+        Circle()
+            .fill(isActive ? Color.green : Color.secondary.opacity(0.28))
+            .frame(width: 8, height: 8)
+    }
+
+    private func startFallbackProgress() {
+        guard !sceneViewModel.isLiDARAvailable else { return }
+        withAnimation(.easeInOut(duration: 3.8).repeatForever(autoreverses: false)) {
+            fallbackProgress = 0.82
+        }
     }
 }
 

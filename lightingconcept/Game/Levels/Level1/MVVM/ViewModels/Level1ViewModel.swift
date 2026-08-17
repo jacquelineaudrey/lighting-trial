@@ -5,20 +5,34 @@
 //  Created by Justin Hartanto Widjaja on 13/08/26.
 //
 
-import Foundation
+import ARKit
 import Combine
+import Foundation
 import RealityKit
 import UIKit
-import ARKit
 
 enum Level1Phase: Equatable {
     case onboarding
     case scanningSurface
     case surfaceReady
-    case exploring
-    case quiz
-    case returningToStart
+    case lightShadowIntro
+    case findingShapes
+    case textureTapPrompt
+    case textureExploration
+    case shapeChange
     case completed
+}
+
+enum Level1RadarTarget: String, CaseIterable, Equatable {
+    case light
+    case shadow
+    case object
+}
+
+struct Level1Instruction: Equatable {
+    let text: String
+    let audioFileName: String?
+    let radarTarget: Level1RadarTarget?
 }
 
 struct CheckpointCelebration: Identifiable, Equatable {
@@ -32,72 +46,105 @@ struct CheckpointCelebration: Identifiable, Equatable {
 final class Level1ViewModel: ObservableObject {
 
     let checkpoints = Level1Content.checkpoints
+    let textureStops = Level1Content.kubus.textures
+    let shapeOptions = Level1Content.checkpoints.map(\.shape)
     let onboardingDialog = Level1Content.onboardingDialog
-    let quizQuestions = Level1Content.quiz
-    private let randomizedQuizChoices: [[GameShape]]
 
     @Published private(set) var phase: Level1Phase = .onboarding
     @Published private(set) var onboardingIndex = 0
+    @Published private(set) var lightShadowIndex = 0
     @Published private(set) var currentCheckpointIndex = 0
     @Published private(set) var currentTextureIndex = 0
-    @Published private(set) var quizIndex = 0
-    @Published private(set) var quizScore = 0
-    @Published var lastAnswerWasCorrect: Bool?
-    
-    @Published private(set) var waypointBearingDegrees: Double = 0
+    @Published private(set) var selectedShapeIndex = 0
     @Published private(set) var waypointDistanceMeters: Double = 0
     @Published private(set) var hasWaypointTarget = false
     @Published private(set) var checkpointCelebration: CheckpointCelebration?
+    @Published private(set) var selectedRadarTarget: Level1RadarTarget?
+    @Published private(set) var showsObjectModeBadge = false
+    @Published private(set) var hasChangedShape = false
+    @Published private(set) var successFeedbackTrigger = 0
 
-    private var visitedTextures: [Int: Set<Int>] = [:]
+    private var visitedCheckpoints: Set<Int> = [0]
+    private var visitedTextures: Set<Int> = [0]
     private let progressStore = GameProgressStore.shared
     let arSceneViewModel = ARSceneViewModel()
 
-    // AR State
     private weak var rootAnchor: AnchorEntity?
     private var pathAnchor: AnchorEntity?
-    private var hasPlacedPath = false
+    private var checkpointLightEntities: [Entity] = []
+    private var radarEntities: [Level1RadarTarget: Entity] = [:]
+    private var radarLabelEntity: Entity?
+    private var hasPlacedScene = false
     private var latestHorizontalPlaneAnchor: ARPlaneAnchor?
-
-    // Current device camera pose (XZ-plane only), refreshed every frame so the
-    // checkpoint path can be spawned in front of wherever the child is actually
-    // looking when the surface is found — see `updateCameraPose` / `placePathIfNeeded`.
     private var latestCameraPositionXZ: SIMD2<Float>?
     private var latestCameraForwardXZ: SIMD2<Float>?
     private var scanStartTime: Date?
-    
-    private var checkpointWorldPositions: [SIMD3<Float>] = []
-    private var markerWorldPositions: [SIMD3<Float>] = []
+
     private var checkpointEntities: [ModelEntity] = []
+    private var checkpointShadowEntities: [Entity] = []
+    private var checkpointLocalPositions: [SIMD3<Float>] = []
+    private var markerWorldPositions: [SIMD3<Float>] = []
     private var checkpointHighlightEntities: [Entity] = []
     private var directionIndicatorRoot: ModelEntity?
     private var directionIndicatorLabel: ModelEntity?
     private var lastIndicatorDistanceText: String?
-
     private var lastArrivedIndex: Int?
-    
+
     private let hapticGenerator = UINotificationFeedbackGenerator()
-    
-    // Config
     private let pathRadius: Float = 3.2
-    private let childTargetHeight: Float = 0.50
-    private let markerRadius: Float = 1.0
     private let checkpointHeight: Float = 0.50
+    private let markerRadius: Float = 1.0
+
+    private let lightShadowInstructions: [Level1Instruction] = [
+        Level1Instruction(
+            text: "Coba jalan dan lihat keliling kotak! Ada yang terang dan ada yang gelap lho.",
+            audioFileName: "level-1/5 coba jalan dan lihat keliling kotak.mp3",
+            radarTarget: nil
+        ),
+        Level1Instruction(
+            text: "Coba deh tekan lingkaran ini.",
+            audioFileName: "level-1/marker/6 [marker] coba deh tekan lingkaran ini.mp3",
+            radarTarget: .light
+        ),
+        Level1Instruction(
+            text: "Yang bagian terang ini Cahaya!",
+            audioFileName: "level-1/marker/7 [marker] yang bagian terang ini cahaya.mp3",
+            radarTarget: nil
+        ),
+        Level1Instruction(
+            text: "Sekarang tekan lingkaran ini.",
+            audioFileName: "level-1/8 sekarang tekan lingkaran ini.mp3",
+            radarTarget: .shadow
+        ),
+        Level1Instruction(
+            text: "Bayangan muncul karena kotak menghalangi cahaya!",
+            audioFileName: "level-1/marker/9 [marker] Bayangan muncul karena kotak menghalangi cahaya.mp3",
+            radarTarget: nil
+        ),
+        Level1Instruction(
+            text: "Yuk, coba tekan lingkaran ini!",
+            audioFileName: "level-1/10 Yuk coba tekan lingkaran ini.mp3",
+            radarTarget: .object
+        ),
+        Level1Instruction(
+            text: "Ini Kubus! Semua sisinya sama besar, lho!",
+            audioFileName: "level-1/marker/objek/[kubus] Ini Kubus Semua sisinya sama besar lho.mp3",
+            radarTarget: nil
+        )
+    ]
+
     init() {
-        randomizedQuizChoices = Level1Content.quiz.map { $0.choices.shuffled() }
         hapticGenerator.prepare()
     }
 
     func setupLevel(in anchor: AnchorEntity) {
-        self.rootAnchor = anchor
+        rootAnchor = anchor
         setupDirectionIndicator()
     }
 
-    // MARK: - ARKit Plane Tracking
-    
     func trackLatestHorizontalPlane(_ anchor: ARAnchor) {
-        guard !hasPlacedPath, phase == .scanningSurface, let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .horizontal else { return }
-        
+        guard !hasPlacedScene, phase == .scanningSurface, let planeAnchor = anchor as? ARPlaneAnchor, planeAnchor.alignment == .horizontal else { return }
+
         if let existing = latestHorizontalPlaneAnchor {
             if planeArea(planeAnchor) > planeArea(existing) {
                 latestHorizontalPlaneAnchor = planeAnchor
@@ -105,21 +152,20 @@ final class Level1ViewModel: ObservableObject {
         } else {
             latestHorizontalPlaneAnchor = planeAnchor
         }
-        
-        if let bestPlane = latestHorizontalPlaneAnchor, planeArea(bestPlane) > 0.6 {
-            if let start = scanStartTime, Date().timeIntervalSince(start) > 4.0 {
-                placePathIfNeeded(startExploring: false)
-                phase = .surfaceReady
-            }
+
+        if let bestPlane = latestHorizontalPlaneAnchor, planeArea(bestPlane) > 0.6,
+           let start = scanStartTime, Date().timeIntervalSince(start) > 4.0 {
+            placeSceneIfNeeded()
+            phase = .lightShadowIntro
+            lightShadowIndex = 0
+            syncEntities()
         }
     }
-    
+
     private func planeArea(_ planeAnchor: ARPlaneAnchor) -> Float {
-        return planeAnchor.planeExtent.width * planeAnchor.planeExtent.height
+        planeAnchor.planeExtent.width * planeAnchor.planeExtent.height
     }
 
-    /// Called every frame with the device's current camera transform so we know
-    /// where the child is standing/looking at the moment the surface gets locked in.
     func updateCameraPose(position: SIMD3<Float>, forward: SIMD3<Float>) {
         latestCameraPositionXZ = SIMD2<Float>(position.x, position.z)
         let horizontalForward = SIMD2<Float>(forward.x, forward.z)
@@ -127,207 +173,29 @@ final class Level1ViewModel: ObservableObject {
         guard length > 0.0001 else { return }
         latestCameraForwardXZ = horizontalForward / length
     }
-    
-    // MARK: - Camera Tracking & Arrow
-    
+
     func processSceneUpdate(cameraTransform: simd_float4x4) {
-        guard phase == .exploring || phase == .returningToStart else { return }
-        
-        let camPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-        
-        checkProximity(cameraPosition: camPos)
-        updateDirectionIndicator(cameraTransform: cameraTransform, cameraPosition: camPos)
-    }
-    
-    private func updateDirectionIndicator(cameraTransform: simd_float4x4, cameraPosition: SIMD3<Float>) {
-        guard let root = directionIndicatorRoot, root.isEnabled,
-              let targetIndex = nextTargetCheckpointIndex,
-              markerWorldPositions.indices.contains(targetIndex) else { return }
-        
-        let targetPosition = markerWorldPositions[targetIndex]
-        
-        let forward3D = -SIMD3<Float>(cameraTransform.columns.2.x, cameraTransform.columns.2.y, cameraTransform.columns.2.z)
-        let horizontalForward3D = SIMD3<Float>(forward3D.x, 0, forward3D.z)
-        let forwardLength = simd_length(horizontalForward3D)
-        guard forwardLength > 0.0001 else { return }
-        
-        let normalizedForward = horizontalForward3D / forwardLength
-        let dx = cameraPosition.x - targetPosition.x
-        let dz = cameraPosition.z - targetPosition.z
-        let distanceMeters = sqrt(dx * dx + dz * dz)
-        let time = Float(CACurrentMediaTime())
-        let forwardBackward = sin(time * 2.4) * 0.10
-        let verticalFloat = sin(time * 2.0) * 0.015
-        let safeOffset = min(1.15, distanceMeters - 0.4)
-        let finalOffset = max(0.3, safeOffset)
-
-        let position = cameraPosition
-            + normalizedForward * (finalOffset + forwardBackward)
-            + SIMD3<Float>(0, -0.35 + verticalFloat, 0)
-
-        let targetXZ = SIMD3<Float>(targetPosition.x, position.y, targetPosition.z)
-        root.look(at: targetXZ, from: position, relativeTo: nil)
-
-        updateIndicatorDistanceLabel(meters: Double(distanceMeters), parent: root)
-    }
-    
-    private func checkProximity(cameraPosition: SIMD3<Float>) {
-        guard let targetIndex = nextTargetCheckpointIndex,
-              markerWorldPositions.indices.contains(targetIndex) else { return }
-        
-        let targetPos = markerWorldPositions[targetIndex]
-        let dx = cameraPosition.x - targetPos.x
-        let dz = cameraPosition.z - targetPos.z
-        let distance = sqrt(dx * dx + dz * dz)
-        
-        if distance < markerRadius {
-            guard lastArrivedIndex != targetIndex else { return }
-            lastArrivedIndex = targetIndex
-            
-            triggerCheckpointReachedFeedback(at: targetPos)
-            arrive(atCheckpointIndex: targetIndex)
-        } else if lastArrivedIndex == targetIndex {
-            lastArrivedIndex = nil
-        }
-    }
-    
-    private func triggerCheckpointReachedFeedback(at worldPosition: SIMD3<Float>) {
-        hapticGenerator.notificationOccurred(.success)
-        hapticGenerator.prepare()
-
-        let celebration = CheckpointCelebration(
-            checkpointNumber: currentCheckpointIndex + 1,
-            checkpointCount: checkpoints.count,
-            shapeName: currentCheckpoint.shape.displayName
+        guard phase == .findingShapes else { return }
+        let cameraPosition = SIMD3<Float>(
+            cameraTransform.columns.3.x,
+            cameraTransform.columns.3.y,
+            cameraTransform.columns.3.z
         )
-        checkpointCelebration = celebration
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.6))
-            guard self?.checkpointCelebration?.id == celebration.id else { return }
-            self?.checkpointCelebration = nil
-        }
-        
-        guard let root = rootAnchor else { return }
-        
-        var material = UnlitMaterial(color: UIColor(red: 0.75, green: 1.0, blue: 0.15, alpha: 1.0))
-        material.blending = .transparent(opacity: 0.9)
-        let flash = ModelEntity(mesh: .generateSphere(radius: 0.05), materials: [material])
-        
-        var matrix = matrix_identity_float4x4
-        matrix.columns.3 = SIMD4<Float>(worldPosition.x, worldPosition.y + childTargetHeight / 2, worldPosition.z, 1)
-        let flashAnchor = AnchorEntity(world: matrix)
-        flashAnchor.addChild(flash)
-        root.addChild(flashAnchor)
-        
-        var expanded = flash.transform
-        expanded.scale = SIMD3<Float>(repeating: 9)
-        flash.move(to: expanded, relativeTo: flash.parent, duration: 0.22, timingFunction: .easeOut)
-        
-        Task {
-            try? await Task.sleep(for: .seconds(0.22))
-            flashAnchor.removeFromParent()
-        }
-    }
-    
-    func placePathIfNeeded(startExploring: Bool = true) {
-        guard !hasPlacedPath, let root = rootAnchor else { return }
-        hasPlacedPath = true
-        
-        let count = checkpoints.isEmpty ? 1 : checkpoints.count
-        // FIX: This used to hardcode originXZ = .zero and forwardXZ = (0, -1), i.e. the
-        // fixed ARKit world origin/axis established when the AR session first started
-        // (usually while the phone was still pointed at the onboarding dialog, not the
-        // floor). That placed the checkpoint path in a fixed world direction that had
-        // nothing to do with where the child was actually looking once scanning
-        // finished, so the path could easily spawn behind them or out of view — making
-        // it look like nothing was placed. Now we spawn relative to the child's current
-        // position/facing direction at the moment the surface is confirmed.
-        let scanCameraXZ = latestCameraPositionXZ ?? .zero
-        let scanForwardXZ = latestCameraForwardXZ ?? SIMD2<Float>(0, -1)
-        var floorY: Float = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
-        
-        // FIX 2: Grab the exact real-world coordinates of the scanned floor!
-        let planeY = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
-        floorY = planeY
-
-        // The first cube is always placed in front of the player at the
-        // moment scanning completes. The remaining checkpoints form a ring
-        // farther in that same direction.
-        let firstCheckpointDistance: Float = 1.25
-        let pathCenterXZ = scanCameraXZ + scanForwardXZ * (pathRadius + firstCheckpointDistance)
-        let firstCheckpointDirection = -scanForwardXZ
-        let shapePositionsXZ = (0..<count).map { i -> SIMD2<Float> in
-            let angleStep = (2 * Float.pi) / Float(count)
-            let baseAngle = atan2(firstCheckpointDirection.y, firstCheckpointDirection.x)
-            let angle = baseAngle + angleStep * Float(i)
-            return pathCenterXZ + SIMD2<Float>(cos(angle), sin(angle)) * pathRadius
-        }
-
-        var matrix = matrix_identity_float4x4
-        matrix.columns.3 = SIMD4<Float>(pathCenterXZ.x, floorY, pathCenterXZ.y, 1)
-        let anchorGroup = AnchorEntity(world: matrix)
-        
-        root.addChild(anchorGroup)
-        pathAnchor = anchorGroup
-        
-        for (index, checkpoint) in checkpoints.enumerated() {
-            let shapeXZ = shapePositionsXZ[index]
-            let shapeWorldPosition = SIMD3<Float>(shapeXZ.x, floorY, shapeXZ.y)
-            checkpointWorldPositions.append(shapeWorldPosition)
-            
-            let markerXZ = shapeXZ
-            let markerWorldPosition = SIMD3<Float>(markerXZ.x, floorY + 0.005, markerXZ.y)
-            markerWorldPositions.append(markerWorldPosition)
-            
-            let shapeLocalPosition = SIMD3<Float>(shapeXZ.x - pathCenterXZ.x, 0, shapeXZ.y - pathCenterXZ.y)
-            let shapeEntity = makeCheckpointEntity(for: checkpoint)
-            shapeEntity.position += shapeLocalPosition
-            checkpointEntities.append(shapeEntity)
-            anchorGroup.addChild(shapeEntity)
-
-            let highlightEntity = makeCheckpointHighlightEntity()
-            highlightEntity.position = SIMD3<Float>(shapeLocalPosition.x, 0.016, shapeLocalPosition.z)
-            highlightEntity.isEnabled = false
-            checkpointHighlightEntities.append(highlightEntity)
-            anchorGroup.addChild(highlightEntity)
-        }
-        
-        if startExploring {
-            phase = .exploring
-        }
-        hasWaypointTarget = true
-        syncEntities()
+        checkProximity(cameraPosition: cameraPosition)
+        updateDirectionIndicator(cameraTransform: cameraTransform, cameraPosition: cameraPosition)
     }
 
-    func continueAfterSurfaceCheck() {
-        guard phase == .surfaceReady else { return }
-        phase = .exploring
-        syncEntities()
+    func handleTap(on entity: Entity?) {
+        if let target = radarTarget(for: entity) {
+            tapRadarTarget(target)
+        } else if phase == .textureTapPrompt, entityBelongsToLearningObject(entity) {
+            objectTappedForTexture()
+        }
     }
-
-    func rescanSurface() {
-        guard phase == .surfaceReady || phase == .scanningSurface else { return }
-        pathAnchor?.removeFromParent()
-        pathAnchor = nil
-        hasPlacedPath = false
-        checkpointWorldPositions.removeAll()
-        markerWorldPositions.removeAll()
-        checkpointEntities.removeAll()
-        checkpointHighlightEntities.removeAll()
-        hasWaypointTarget = false
-        latestHorizontalPlaneAnchor = nil
-        scanStartTime = Date()
-        phase = .scanningSurface
-    }
-
-    // MARK: - Dialog & Logic
-    
-    var currentDialogLine: DialogLine { onboardingDialog[onboardingIndex] }
-    var isLastDialogLine: Bool { onboardingIndex == onboardingDialog.count - 1 }
 
     func advanceDialog() {
         guard phase == .onboarding else { return }
-        if isLastDialogLine {
+        if onboardingIndex == onboardingDialog.count - 1 {
             phase = .scanningSurface
             scanStartTime = Date()
         } else {
@@ -335,123 +203,428 @@ final class Level1ViewModel: ObservableObject {
         }
     }
 
-    var currentCheckpoint: Checkpoint { checkpoints[currentCheckpointIndex] }
-    var currentTexture: TextureStop { currentCheckpoint.shape.textures[currentTextureIndex] }
-    var canGoToPreviousTexture: Bool { currentTextureIndex > 0 }
-    var canGoToNextTexture: Bool { currentTextureIndex < currentCheckpoint.shape.textures.count - 1 }
-
-    func nextTexture() {
-        guard phase == .exploring, canGoToNextTexture else { return }
-        currentTextureIndex += 1
-        markTextureVisited()
+    func continueAfterSurfaceCheck() {
+        guard phase == .surfaceReady else { return }
+        phase = .lightShadowIntro
+        lightShadowIndex = 0
         syncEntities()
     }
 
-    func previousTexture() {
-        guard phase == .exploring, canGoToPreviousTexture else { return }
-        currentTextureIndex -= 1
-        markTextureVisited()
-        syncEntities()
+    func rescanSurface() {
+        guard phase == .surfaceReady || phase == .scanningSurface else { return }
+        pathAnchor?.removeFromParent()
+        pathAnchor = nil
+        checkpointLightEntities.removeAll()
+        radarEntities.removeAll()
+        radarLabelEntity = nil
+        hasPlacedScene = false
+        checkpointEntities.removeAll()
+        checkpointShadowEntities.removeAll()
+        checkpointLocalPositions.removeAll()
+        markerWorldPositions.removeAll()
+        checkpointHighlightEntities.removeAll()
+        latestHorizontalPlaneAnchor = nil
+        hasWaypointTarget = false
+        scanStartTime = Date()
+        phase = .scanningSurface
     }
 
-    private func markTextureVisited() {
-        visitedTextures[currentCheckpointIndex, default: []].insert(currentTextureIndex)
-    }
-
-    var hasExploredAllCheckpoints: Bool {
-        // FIX 1: Make the quiz instantly available as soon as you step into the last shape.
-        // You no longer have to manually cycle through every texture to unlock it.
-        checkpoints.indices.allSatisfy { visitedTextures[$0] != nil }
-    }
-
-    var hasArrivedAtCurrentCheckpoint: Bool { visitedTextures[currentCheckpointIndex] != nil }
-
-    var nextTargetCheckpointIndex: Int? {
-        guard phase == .exploring || phase == .returningToStart else { return nil }
-        return phase == .returningToStart ? 0 : checkpoints.indices.first { visitedTextures[$0] == nil }
-    }
-
-    func arrive(atCheckpointIndex index: Int) {
-        guard checkpoints.indices.contains(index) else { return }
-        if phase == .exploring {
-            currentCheckpointIndex = index
-            currentTextureIndex = 0
-            markTextureVisited()
-        } else if phase == .returningToStart, index == 0 {
-            phase = .completed
-            progressStore.markLevelCompleted(Level1Content.levelID)
-        }
-        syncEntities()
-    }
-
-    func startQuiz() {
-        guard phase == .exploring, hasExploredAllCheckpoints else { return }
-        phase = .quiz
-        quizIndex = 0
-        quizScore = 0
-        lastAnswerWasCorrect = nil
-        hasWaypointTarget = false // Hide arrow during the quiz
-        syncEntities()
-    }
-
-    var currentQuestion: TriviaQuestion { quizQuestions[quizIndex] }
-    var currentQuizChoices: [GameShape] { randomizedQuizChoices[quizIndex] }
-
-    @discardableResult
-    func answer(with shape: GameShape) -> Bool {
-        guard phase == .quiz, lastAnswerWasCorrect == nil else { return false }
-        let isCorrect = shape.id == currentQuestion.correctShapeID
-        lastAnswerWasCorrect = isCorrect
-        if isCorrect { quizScore += 1 }
-        return isCorrect
-    }
-
-    func nextQuestion() {
-        guard phase == .quiz else { return }
-        lastAnswerWasCorrect = nil
-        if quizIndex == quizQuestions.count - 1 {
-            phase = .returningToStart
-            hasWaypointTarget = true // Reactivate arrow pointing to Start
+    func continueLightShadowIntro() {
+        guard phase == .lightShadowIntro else { return }
+        if lightShadowIndex == lightShadowInstructions.count - 1 {
+            phase = .findingShapes
+            selectedRadarTarget = nil
+            hasWaypointTarget = true
             syncEntities()
         } else {
-            quizIndex += 1
+            lightShadowIndex += 1
+            selectedRadarTarget = nil
         }
     }
 
-    // MARK: - State Sync to ECS
-    
+    func tapRadarTarget(_ target: Level1RadarTarget) {
+        guard phase == .lightShadowIntro, currentLightShadowInstruction.radarTarget == target else { return }
+        triggerSuccessFeedback()
+        selectedRadarTarget = target
+        if lightShadowIndex < lightShadowInstructions.count - 1 {
+            lightShadowIndex += 1
+        }
+    }
+
+    func continueToTextureLesson() {
+        guard phase == .findingShapes, hasFoundAllShapes else { return }
+        phase = .textureTapPrompt
+        currentCheckpointIndex = 0
+        currentTextureIndex = 0
+        visitedTextures = [0]
+        showsObjectModeBadge = false
+        hasWaypointTarget = false
+        syncEntities()
+    }
+
+    func objectTappedForTexture() {
+        guard phase == .textureTapPrompt else { return }
+        showsObjectModeBadge = true
+        phase = .textureExploration
+        triggerSuccessFeedback()
+        syncEntities()
+    }
+
+    func selectTexture(at index: Int) {
+        guard phase == .textureExploration, textureStops.indices.contains(index) else { return }
+        currentTextureIndex = index
+        visitedTextures.insert(index)
+        triggerSuccessFeedback()
+        applyCurrentTextureToPrimaryObject()
+    }
+
+    func startShapeChange() {
+        guard phase == .textureExploration, hasExploredAllTextures else { return }
+        phase = .shapeChange
+        hasChangedShape = false
+        syncEntities()
+    }
+
+    func selectShape(at index: Int) {
+        guard phase == .shapeChange, shapeOptions.indices.contains(index) else { return }
+        selectedShapeIndex = index
+        hasChangedShape = index != 0
+        triggerSuccessFeedback()
+        applyCurrentShapeToPrimaryObject()
+    }
+
+    func finishLevel() {
+        guard phase == .shapeChange, hasChangedShape else { return }
+        phase = .completed
+        progressStore.markLevelCompleted(Level1Content.levelID)
+    }
+
+    var currentDialogLine: DialogLine { onboardingDialog[onboardingIndex] }
+    var isLastDialogLine: Bool { onboardingIndex == onboardingDialog.count - 1 }
+    var currentLightShadowInstruction: Level1Instruction { lightShadowInstructions[lightShadowIndex] }
+    var currentCheckpoint: Checkpoint { checkpoints[currentCheckpointIndex] }
+    var currentTexture: TextureStop { textureStops[currentTextureIndex] }
+    var selectedShape: GameShape { shapeOptions[selectedShapeIndex] }
+    var hasFoundAllShapes: Bool { checkpoints.indices.allSatisfy { visitedCheckpoints.contains($0) } }
+    var hasExploredAllTextures: Bool { textureStops.indices.allSatisfy { visitedTextures.contains($0) } }
+    var nextTargetCheckpointIndex: Int? {
+        guard phase == .findingShapes else { return nil }
+        return checkpoints.indices.first { !visitedCheckpoints.contains($0) }
+    }
+
+    var narrationText: String {
+        switch phase {
+        case .onboarding:
+            currentDialogLine.text
+        case .scanningSurface:
+            "Arahkan iPad pelan-pelan ke lantai atau meja."
+        case .surfaceReady:
+            "Permukaan sudah siap."
+        case .lightShadowIntro:
+            currentLightShadowInstruction.text
+        case .findingShapes:
+            hasFoundAllShapes ? "Wah, semua bentuk sudah kamu temukan!" : "Selain kotak, coba temukan bentuk yang lain di sekitarmu!"
+        case .textureTapPrompt:
+            "Coba tekan sekali kotaknya! Kita lihat tekstur yang lain ya!"
+        case .textureExploration:
+            currentTexture.description
+        case .shapeChange:
+            hasChangedShape ? "Kerja bagus! Kamu berhasil mengganti bentuk benda ini." : "Coba tekan tombol ini. Kita ganti bentuk yang lain ya!"
+        case .completed:
+            "Kerja bagus! Kamu berhasil mengganti bentuk benda ini."
+        }
+    }
+
+    var narrationAudioFileName: String? {
+        switch phase {
+        case .onboarding:
+            currentDialogLine.audioFileName
+        case .scanningSurface:
+            "level-1/3 coba cari objek berbentuk kotak di sekitarmu.mp3"
+        case .surfaceReady:
+            "level-1/4 yeay ketemu sekarang lumi hidupin lampu.mp3"
+        case .lightShadowIntro:
+            currentLightShadowInstruction.audioFileName
+        case .findingShapes:
+            hasFoundAllShapes ? nil : "level-1/12 Selain kotak coba temukan bentuk yang lain di sekitarmu.mp3"
+        case .textureTapPrompt:
+            "level-1/14 Coba tekan sekali kotaknya Kita lihat tekstur yang lain yaa.mp3"
+        case .textureExploration:
+            currentTexture.audioFileName
+        case .shapeChange:
+            hasChangedShape
+                ? "level-1/17 Kerja bagus Kamu berhasil mengganti bentuk benda ini.mp3"
+                : "level-1/15 Wah ada banyak bentuk Kamu bisa ganti bentuk yang lain lho.mp3"
+        case .completed:
+            "level-1/17 Kerja bagus Kamu berhasil mengganti bentuk benda ini.mp3"
+        }
+    }
+
+    var narrationID: String {
+        "\(phase)-\(onboardingIndex)-\(lightShadowIndex)-\(currentCheckpointIndex)-\(currentTextureIndex)-\(selectedShapeIndex)-\(hasFoundAllShapes)-\(hasChangedShape)"
+    }
+
+    private func placeSceneIfNeeded() {
+        guard !hasPlacedScene, let root = rootAnchor else { return }
+        hasPlacedScene = true
+
+        let count = checkpoints.count
+        let scanCameraXZ = latestCameraPositionXZ ?? .zero
+        let scanForwardXZ = latestCameraForwardXZ ?? SIMD2<Float>(0, -1)
+        let floorY = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
+        let firstCheckpointDistance: Float = 1.25
+        let pathCenterXZ = scanCameraXZ + scanForwardXZ * (pathRadius + firstCheckpointDistance)
+        let firstCheckpointDirection = -scanForwardXZ
+
+        var matrix = matrix_identity_float4x4
+        matrix.columns.3 = SIMD4<Float>(pathCenterXZ.x, floorY, pathCenterXZ.y, 1)
+        let anchorGroup = AnchorEntity(world: matrix)
+        root.addChild(anchorGroup)
+        pathAnchor = anchorGroup
+
+        for (index, checkpoint) in checkpoints.enumerated() {
+            let angleStep = (2 * Float.pi) / Float(count)
+            let baseAngle = atan2(firstCheckpointDirection.y, firstCheckpointDirection.x)
+            let angle = baseAngle + angleStep * Float(index)
+            let shapeXZ = pathCenterXZ + SIMD2<Float>(cos(angle), sin(angle)) * pathRadius
+            let worldPosition = SIMD3<Float>(shapeXZ.x, floorY + 0.005, shapeXZ.y)
+            markerWorldPositions.append(worldPosition)
+
+            let localPosition = SIMD3<Float>(shapeXZ.x - pathCenterXZ.x, 0, shapeXZ.y - pathCenterXZ.y)
+            checkpointLocalPositions.append(localPosition)
+
+            let shapeEntity = makeCheckpointEntity(for: checkpoint)
+            shapeEntity.name = "level1-object-\(checkpoint.shape.id)"
+            shapeEntity.position += localPosition
+            checkpointEntities.append(shapeEntity)
+            anchorGroup.addChild(shapeEntity)
+
+            let shadowEntity = makeShadowEntity(for: checkpoint.shape.objectType)
+            shadowEntity.position = localPosition + shadowOffset(for: checkpoint.shape.objectType)
+            checkpointShadowEntities.append(shadowEntity)
+            anchorGroup.addChild(shadowEntity)
+
+            let lightPosition = localPosition + lightOffset(for: checkpoint.shape.objectType)
+            let lightTarget = localPosition + SIMD3<Float>(0, checkpointHeight * 0.55, 0)
+            let lightEntity = makeLightEntity(from: lightPosition, aimingAt: lightTarget)
+            checkpointLightEntities.append(lightEntity)
+            anchorGroup.addChild(lightEntity)
+
+            let highlightEntity = makeCheckpointHighlightEntity()
+            highlightEntity.position = SIMD3<Float>(localPosition.x, 0.016, localPosition.z)
+            checkpointHighlightEntities.append(highlightEntity)
+            anchorGroup.addChild(highlightEntity)
+        }
+
+        let primaryObjectPosition = checkpointLocalPositions.first ?? .zero
+        let primaryLightPosition = checkpointLightEntities.first?.position ?? primaryObjectPosition + lightOffset(for: .cube)
+        let primaryShadowPosition = checkpointShadowEntities.first?.position ?? primaryObjectPosition + shadowOffset(for: .cube)
+        let objectRadarPosition = primaryObjectPosition + objectRadarOffset(from: primaryObjectPosition)
+        let radarPositions: [Level1RadarTarget: SIMD3<Float>] = [
+            .light: primaryLightPosition + SIMD3<Float>(0, 0.035, 0),
+            .shadow: primaryShadowPosition + SIMD3<Float>(0, 0.10, 0),
+            .object: objectRadarPosition
+        ]
+        for (target, position) in radarPositions {
+            let radar = makeRadarEntity(target: target)
+            radar.position = position
+            radarEntities[target] = radar
+            anchorGroup.addChild(radar)
+        }
+
+        syncEntities()
+    }
+
+    private func checkProximity(cameraPosition: SIMD3<Float>) {
+        guard let targetIndex = nextTargetCheckpointIndex,
+              markerWorldPositions.indices.contains(targetIndex) else { return }
+
+        let targetPosition = markerWorldPositions[targetIndex]
+        let dx = cameraPosition.x - targetPosition.x
+        let dz = cameraPosition.z - targetPosition.z
+        let distance = sqrt(dx * dx + dz * dz)
+
+        if distance < markerRadius {
+            guard lastArrivedIndex != targetIndex else { return }
+            lastArrivedIndex = targetIndex
+            arrive(atCheckpointIndex: targetIndex)
+        } else if lastArrivedIndex == targetIndex {
+            lastArrivedIndex = nil
+        }
+    }
+
+    private func arrive(atCheckpointIndex index: Int) {
+        guard checkpoints.indices.contains(index), !visitedCheckpoints.contains(index) else { return }
+        currentCheckpointIndex = index
+        visitedCheckpoints.insert(index)
+        triggerSuccessFeedback()
+        showCelebration(for: index)
+        syncEntities()
+    }
+
     func syncEntities() {
+        let showLightAndShadow = phase != .onboarding && phase != .scanningSurface
+
         for (index, entity) in checkpointEntities.enumerated() {
-            if phase == .returningToStart || nextTargetCheckpointIndex == nil {
-                entity.isEnabled = true
-            } else {
-                entity.isEnabled = index <= nextTargetCheckpointIndex!
-            }
-            
-            if index == currentCheckpointIndex && hasArrivedAtCurrentCheckpoint {
-                var material = SceneObjectSystem.makeMaterial(for: currentTexture.material)
-                material.faceCulling = PhysicallyBasedMaterial.FaceCulling.none
-                entity.model?.materials = [material]
+            switch phase {
+            case .surfaceReady, .lightShadowIntro:
+                entity.isEnabled = index == 0
+            case .findingShapes:
+                entity.isEnabled = visitedCheckpoints.contains(index) || index == nextTargetCheckpointIndex
+            case .textureTapPrompt, .textureExploration, .shapeChange, .completed:
+                entity.isEnabled = index == 0
+            default:
+                entity.isEnabled = false
             }
         }
 
-        // The active destination gets a bright, non-interactive outline on
-        // the floor. This stays visible even when the arrow moves aside to
-        // avoid the object.
+        for (index, shadow) in checkpointShadowEntities.enumerated() {
+            shadow.isEnabled = showLightAndShadow && (checkpointEntities[safe: index]?.isEnabled == true)
+        }
+
+        for (index, light) in checkpointLightEntities.enumerated() {
+            light.isEnabled = showLightAndShadow && (checkpointEntities[safe: index]?.isEnabled == true)
+        }
+
         for (index, highlight) in checkpointHighlightEntities.enumerated() {
-            // Saat preview setelah scan, semua checkpoint terlihat di bawah
-            // objek agar user bisa mengecek posisi path sebelum memulai.
-            highlight.isEnabled = phase == .surfaceReady || index == nextTargetCheckpointIndex
+            highlight.isEnabled = phase == .findingShapes && index == nextTargetCheckpointIndex
         }
 
-        if let root = directionIndicatorRoot {
-            // Arrow baru aktif setelah user menekan Lanjut; pada preview scan
-            // ia sengaja disembunyikan agar tidak mengganggu objek checkpoint.
-            root.isEnabled = hasWaypointTarget && phase != .surfaceReady
+        directionIndicatorRoot?.isEnabled = hasWaypointTarget && nextTargetCheckpointIndex != nil
+        syncRadarEntities()
+    }
+
+    private func updateDirectionIndicator(cameraTransform: simd_float4x4, cameraPosition: SIMD3<Float>) {
+        guard let root = directionIndicatorRoot,
+              let targetIndex = nextTargetCheckpointIndex,
+              markerWorldPositions.indices.contains(targetIndex) else { return }
+
+        let targetPosition = markerWorldPositions[targetIndex]
+        let forward3D = -SIMD3<Float>(cameraTransform.columns.2.x, cameraTransform.columns.2.y, cameraTransform.columns.2.z)
+        let horizontalForward3D = SIMD3<Float>(forward3D.x, 0, forward3D.z)
+        let forwardLength = simd_length(horizontalForward3D)
+        guard forwardLength > 0.0001 else { return }
+
+        let normalizedForward = horizontalForward3D / forwardLength
+        let dx = cameraPosition.x - targetPosition.x
+        let dz = cameraPosition.z - targetPosition.z
+        let distanceMeters = sqrt(dx * dx + dz * dz)
+        let time = Float(CACurrentMediaTime())
+        let position = cameraPosition
+            + normalizedForward * (max(0.3, min(1.15, distanceMeters - 0.4)) + sin(time * 2.4) * 0.10)
+            + SIMD3<Float>(0, -0.35 + sin(time * 2.0) * 0.015, 0)
+
+        root.look(at: SIMD3<Float>(targetPosition.x, position.y, targetPosition.z), from: position, relativeTo: nil)
+        updateIndicatorDistanceLabel(meters: Double(distanceMeters), parent: root)
+    }
+
+    private func triggerSuccessFeedback() {
+        successFeedbackTrigger += 1
+        hapticGenerator.notificationOccurred(.success)
+        hapticGenerator.prepare()
+    }
+
+    private func showCelebration(for checkpointIndex: Int) {
+        let celebration = CheckpointCelebration(
+            checkpointNumber: max(checkpointIndex, 1),
+            checkpointCount: checkpoints.count - 1,
+            shapeName: checkpoints[checkpointIndex].shape.displayName
+        )
+        checkpointCelebration = celebration
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.4))
+            guard self?.checkpointCelebration?.id == celebration.id else { return }
+            self?.checkpointCelebration = nil
         }
     }
 
-    // MARK: - ECS Entity Factory Helpers
+    private func applyCurrentTextureToPrimaryObject() {
+        guard let entity = checkpointEntities.first else { return }
+        var material = SceneObjectSystem.makeMaterial(for: currentTexture.material)
+        material.faceCulling = .none
+        entity.model?.materials = [material]
+    }
+
+    private func applyCurrentShapeToPrimaryObject() {
+        guard let entity = checkpointEntities.first else { return }
+        let replacement = SceneObjectSystem.makeObject(type: selectedShape.objectType, texture: currentTexture.material)
+        entity.model = replacement.model
+        entity.collision = replacement.collision
+        let finalScale = checkpointHeight / SceneObjectSystem.baseDimensions(for: selectedShape.objectType).y
+        if let primaryShadow = checkpointShadowEntities.first {
+            configureShadowEntity(primaryShadow, for: selectedShape.objectType)
+            primaryShadow.position = (checkpointLocalPositions.first ?? .zero) + shadowOffset(for: selectedShape.objectType)
+        }
+        entity.scale = SIMD3<Float>(repeating: 0.05)
+        entity.move(
+            to: Transform(
+                scale: SIMD3<Float>(repeating: finalScale * 1.14),
+                rotation: entity.orientation,
+                translation: entity.position
+            ),
+            relativeTo: entity.parent,
+            duration: 0.18,
+            timingFunction: .easeOut
+        )
+        Task { @MainActor [weak entity] in
+            try? await Task.sleep(for: .seconds(0.18))
+            guard let entity else { return }
+            entity.move(
+                to: Transform(
+                    scale: SIMD3<Float>(repeating: finalScale),
+                    rotation: entity.orientation,
+                    translation: entity.position
+                ),
+                relativeTo: entity.parent,
+                duration: 0.16,
+                timingFunction: .easeInOut
+            )
+        }
+    }
+
+    private func entityBelongsToLearningObject(_ entity: Entity?) -> Bool {
+        var candidate = entity
+        while let current = candidate {
+            if current.name.hasPrefix("level1-object") {
+                return true
+            }
+            candidate = current.parent
+        }
+        return false
+    }
+
+    private func radarTarget(for entity: Entity?) -> Level1RadarTarget? {
+        var candidate = entity
+        while let current = candidate {
+            for target in Level1RadarTarget.allCases where current.name.contains("level1-radar-\(target.rawValue)") {
+                return target
+            }
+            candidate = current.parent
+        }
+        return nil
+    }
+
+    private func syncRadarEntities() {
+        let activeTarget = phase == .lightShadowIntro ? currentLightShadowInstruction.radarTarget : nil
+        let explainedTarget = phase == .lightShadowIntro && currentLightShadowInstruction.radarTarget == nil ? selectedRadarTarget : nil
+        for (target, entity) in radarEntities {
+            entity.isEnabled = activeTarget == target || explainedTarget == target
+        }
+
+        radarLabelEntity?.removeFromParent()
+        radarLabelEntity = nil
+
+        guard phase == .lightShadowIntro,
+              currentLightShadowInstruction.radarTarget == nil,
+              let selectedRadarTarget,
+              let radar = radarEntities[selectedRadarTarget],
+              let parent = radar.parent else { return }
+
+        let label = makeRadarLabel(text: currentLightShadowInstruction.text)
+        label.position = radar.position + labelOffset(for: selectedRadarTarget)
+        parent.addChild(label)
+        radarLabelEntity = label
+    }
 
     private func setupDirectionIndicator() {
         guard let root = rootAnchor else { return }
@@ -459,21 +632,22 @@ final class Level1ViewModel: ObservableObject {
         rootEntity.isEnabled = false
 
         let mesh = MeshResource.generateText("➔", extrusionDepth: 0.04, font: .systemFont(ofSize: 0.35, weight: .black))
-        let arrowMat = SimpleMaterial(color: UIColor(red: 0.05, green: 0.40, blue: 1.0, alpha: 1.0), roughness: 0.2, isMetallic: false)
-        let arrowEntity = ModelEntity(mesh: mesh, materials: [arrowMat])
-
+        let arrowEntity = ModelEntity(
+            mesh: mesh,
+            materials: [SimpleMaterial(color: UIColor(red: 0.44, green: 0.06, blue: 0.74, alpha: 1), roughness: 0.2, isMetallic: false)]
+        )
         arrowEntity.position = SIMD3<Float>(-mesh.bounds.center.x, -mesh.bounds.center.y, -mesh.bounds.center.z)
+
         let pivot = Entity()
         pivot.addChild(arrowEntity)
         pivot.orientation = simd_quatf(angle: .pi / 2, axis: [0, 1, 0]) * simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
-
         rootEntity.addChild(pivot)
         root.addChild(rootEntity)
         directionIndicatorRoot = rootEntity
     }
 
     private func updateIndicatorDistanceLabel(meters: Double, parent: ModelEntity) {
-        let text = meters < 1 ? "Sudah dekat!" : String(format: "%.1f m", meters)
+        let text = String(format: "%.1f Meter ke kiri", max(meters, 0.1))
         guard text != lastIndicatorDistanceText else { return }
         lastIndicatorDistanceText = text
 
@@ -488,10 +662,12 @@ final class Level1ViewModel: ObservableObject {
 
     private func makeCheckpointEntity(for checkpoint: Checkpoint) -> ModelEntity {
         let entity = SceneObjectSystem.makeObject(type: checkpoint.shape.objectType, texture: checkpoint.shape.textures[0].material)
-        let naturalHeight = SceneObjectSystem.baseDimensions(for: checkpoint.shape.objectType).y
-        let scale = checkpointHeight / naturalHeight
+        let scale = checkpointHeight / SceneObjectSystem.baseDimensions(for: checkpoint.shape.objectType).y
         entity.scale = SIMD3<Float>(repeating: scale)
         entity.position.y = checkpointHeight / 2
+        var material = SceneObjectSystem.makeMaterial(for: checkpoint.shape.textures[0].material)
+        material.faceCulling = .none
+        entity.model?.materials = [material]
         return entity
     }
 
@@ -499,13 +675,195 @@ final class Level1ViewModel: ObservableObject {
         let root = Entity()
         var material = UnlitMaterial(color: UIColor.systemBlue.withAlphaComponent(0.55))
         material.blending = .transparent(opacity: 0.55)
-        let circle = ModelEntity(
-            mesh: .generateSphere(radius: 0.55),
-            materials: [material]
-        )
+        let circle = ModelEntity(mesh: .generateSphere(radius: 0.55), materials: [material])
         circle.scale = SIMD3<Float>(1, 0.035, 1)
         root.addChild(circle)
-
         return root
+    }
+
+    private func makeRadarEntity(target: Level1RadarTarget) -> Entity {
+        let root = Entity()
+        root.name = "level1-radar-\(target.rawValue)"
+
+        let color: UIColor = target == .shadow ? .systemRed : .white
+        var outerMaterial = UnlitMaterial(color: color.withAlphaComponent(0.32))
+        outerMaterial.blending = .transparent(opacity: 0.32)
+        let outer = ModelEntity(mesh: .generateSphere(radius: 0.10), materials: [outerMaterial])
+        outer.name = "level1-radar-\(target.rawValue)-outer"
+        outer.scale = SIMD3<Float>(1, 0.04, 1)
+        outer.components.set(PulseAnimationComponent(baseScale: 1, speed: 5.2, amplitude: 0.18, isActiveTarget: true))
+        outer.components.set(DynamicLightShadowComponent(castsShadow: false))
+        outer.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.16)]))
+        outer.components.set(InputTargetComponent())
+        root.addChild(outer)
+
+        var ringMaterial = UnlitMaterial(color: UIColor.white.withAlphaComponent(0.92))
+        ringMaterial.blending = .transparent(opacity: 0.92)
+        let ring = ModelEntity(mesh: .generateSphere(radius: 0.068), materials: [ringMaterial])
+        ring.name = "level1-radar-\(target.rawValue)-ring"
+        ring.scale = SIMD3<Float>(1, 0.035, 1)
+        ring.components.set(DynamicLightShadowComponent(castsShadow: false))
+        ring.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.14)]))
+        ring.components.set(InputTargetComponent())
+        root.addChild(ring)
+
+        let center = ModelEntity(
+            mesh: .generateSphere(radius: 0.032),
+            materials: [UnlitMaterial(color: target == .shadow ? .systemRed : .systemYellow)]
+        )
+        center.name = "level1-radar-\(target.rawValue)-center"
+        center.components.set(DynamicLightShadowComponent(castsShadow: false))
+        center.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.12)]))
+        center.components.set(InputTargetComponent())
+        root.addChild(center)
+
+        root.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.18)]))
+        root.components.set(InputTargetComponent())
+        return root
+    }
+
+    private func makeRadarLabel(text: String) -> Entity {
+        let root = Entity()
+        root.components.set(BillboardComponent())
+
+        let lines = wrappedRadarLabelText(text)
+        let textMesh = MeshResource.generateText(
+            lines,
+            extrusionDepth: 0.002,
+            font: .boldSystemFont(ofSize: 0.052)
+        )
+        let textEntity = ModelEntity(mesh: textMesh, materials: [UnlitMaterial(color: .black)])
+        let textBounds = textMesh.bounds
+        let padding = SIMD2<Float>(0.14, 0.10)
+        let backgroundWidth = max(0.36, textBounds.extents.x + padding.x)
+        let backgroundHeight = max(0.18, textBounds.extents.y + padding.y)
+        textEntity.position = SIMD3<Float>(
+            -textBounds.center.x,
+            -textBounds.center.y,
+            0.005
+        )
+
+        var backgroundMaterial = UnlitMaterial(color: UIColor.white.withAlphaComponent(0.78))
+        backgroundMaterial.blending = .transparent(opacity: 0.78)
+        let background = ModelEntity(
+            mesh: .generateBox(width: backgroundWidth, height: backgroundHeight, depth: 0.006),
+            materials: [backgroundMaterial]
+        )
+        background.components.set(DynamicLightShadowComponent(castsShadow: false))
+
+        root.addChild(background)
+        root.addChild(textEntity)
+        return root
+    }
+
+    private func wrappedRadarLabelText(_ text: String) -> String {
+        let words = text.split(separator: " ")
+        var lines: [String] = []
+        var currentLine = ""
+        let maximumCharactersPerLine = 24
+
+        for word in words {
+            let candidate = currentLine.isEmpty ? String(word) : "\(currentLine) \(word)"
+            if candidate.count > maximumCharactersPerLine, !currentLine.isEmpty {
+                lines.append(currentLine)
+                currentLine = String(word)
+            } else {
+                currentLine = candidate
+            }
+        }
+
+        if !currentLine.isEmpty {
+            lines.append(currentLine)
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func labelOffset(for target: Level1RadarTarget) -> SIMD3<Float> {
+        switch target {
+        case .light:
+            SIMD3<Float>(0.48, 0.03, 0)
+        case .shadow:
+            SIMD3<Float>(-0.54, 0.08, 0)
+        case .object:
+            SIMD3<Float>(0.52, 0.12, 0)
+        }
+    }
+
+    private func makeLightEntity(from position: SIMD3<Float>, aimingAt target: SIMD3<Float>) -> Entity {
+        let root = Entity()
+        root.position = position
+
+        let light = Entity()
+        var component = SpotLightComponent()
+        component.color = .yellow
+        component.intensity = 4_800
+        component.attenuationRadius = 7
+        component.innerAngleInDegrees = 18
+        component.outerAngleInDegrees = 48
+        light.components.set(component)
+        if let angles = SceneLightSystem.aimingAngles(from: position, to: target) {
+            light.orientation = SceneLightSystem.orientation(
+                yawDegrees: angles.yawDegrees,
+                pitchDegrees: angles.pitchDegrees
+            )
+        }
+        root.addChild(light)
+
+        let marker = ModelEntity(mesh: .generateSphere(radius: 0.08), materials: [UnlitMaterial(color: .yellow)])
+        marker.components.set(DynamicLightShadowComponent(castsShadow: false))
+        root.addChild(marker)
+        return root
+    }
+
+    private func lightOffset(for objectType: LearningObjectType) -> SIMD3<Float> {
+        let heightAdjustment: Float = objectType == .sphere ? 0.08 : 0
+        return SIMD3<Float>(0.62, 0.78 + heightAdjustment, -0.58)
+    }
+
+    private func shadowOffset(for objectType: LearningObjectType) -> SIMD3<Float> {
+        let radiusAdjustment: Float = objectType == .sphere ? 0.04 : 0
+        return SIMD3<Float>(-0.24 - radiusAdjustment, 0.012, 0.22)
+    }
+
+    private func objectRadarOffset(from objectPosition: SIMD3<Float>) -> SIMD3<Float> {
+        let radialDirection = SIMD2<Float>(objectPosition.x, objectPosition.z)
+        let radialLength = simd_length(radialDirection)
+        let outward = radialLength > 0.001 ? radialDirection / radialLength : SIMD2<Float>(0, 1)
+        return SIMD3<Float>(outward.x * 0.34, checkpointHeight * 0.72, outward.y * 0.34)
+    }
+
+    private func makeShadowEntity(for objectType: LearningObjectType) -> Entity {
+        let root = Entity()
+        configureShadowEntity(root, for: objectType)
+        return root
+    }
+
+    private func configureShadowEntity(_ root: Entity, for objectType: LearningObjectType) {
+        root.children.removeAll()
+        root.orientation = simd_quatf(angle: -.pi / 9, axis: [0, 1, 0])
+
+        let baseRadius: Float = objectType == .sphere ? 0.34 : 0.40
+        let layers: [(scale: SIMD3<Float>, alpha: Float)] = [
+            (SIMD3<Float>(1.35, 0.012, 0.58), 0.035),
+            (SIMD3<Float>(1.65, 0.010, 0.78), 0.022),
+            (SIMD3<Float>(1.95, 0.008, 0.96), 0.010)
+        ]
+
+        for (index, layer) in layers.enumerated() {
+            var material = UnlitMaterial(color: UIColor.black.withAlphaComponent(CGFloat(layer.alpha)))
+            material.blending = .transparent(opacity: .init(floatLiteral: layer.alpha))
+            let ellipse = ModelEntity(mesh: .generateSphere(radius: baseRadius), materials: [material])
+            ellipse.name = "level1-soft-shadow-\(index)"
+            ellipse.scale = layer.scale
+            ellipse.components.set(DynamicLightShadowComponent(castsShadow: false))
+            root.addChild(ellipse)
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
