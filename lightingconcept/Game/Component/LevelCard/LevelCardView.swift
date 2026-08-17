@@ -9,6 +9,7 @@ import SwiftUI
 
 struct LevelCardView: View {
     let level: Level
+    var onStart: () -> Void = {}
 
     var body: some View {
         ZStack {
@@ -46,19 +47,24 @@ struct LevelCardView: View {
                             .stroke(Color(hex: "D6CF91"), lineWidth: 2)
                     )
 
-                ZStack {
-                    Image("button")
-                    Text("MULAI")
-                        .font(.system(size: 36))
-                        .fontWeight(.bold)
-                        .foregroundColor(.white)
-                        .offset(x: 0, y: -3)
+                Button(action: onStart) {
+                    ZStack {
+                        Image("button")
+                        Text("MULAI")
+                            .font(.system(size: 36))
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .offset(x: 0, y: -3)
+                    }
                 }
+                .buttonStyle(.plain)
             }
         }
     }
 }
 
 #Preview(traits: .landscapeLeft) {
-    LevelCardView(level: Level(id: 1, levelNumber: 1, title: "Bentuk dan\nTekstur", subtitle: "Yuk, lihat perbedaan\nbayangannya!"))
+    LevelCardView(level: Level(id: 1, levelNumber: 1, title: "Bentuk dan\nTekstur", subtitle: "Yuk, lihat perbedaan\nbayangannya!")) {
+        print("Tapped MULAI")
+    }
 }
