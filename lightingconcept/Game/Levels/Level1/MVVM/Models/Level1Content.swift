@@ -20,6 +20,7 @@ struct TextureStop: Identifiable, Hashable {
     let material: MaterialTexture
     let name: String          // ditampilkan ke anak, contoh: "Kasar"
     let description: String   // kalimat pendek untuk dialog/trivia
+    let audioFileName: String?
 
     var id: String { material.id }
 }
@@ -45,6 +46,13 @@ struct DialogLine: Identifiable, Hashable {
     let id = UUID()
     let characterName: String
     let text: String
+    let audioFileName: String?
+
+    init(characterName: String, text: String, audioFileName: String? = nil) {
+        self.characterName = characterName
+        self.text = text
+        self.audioFileName = audioFileName
+    }
 }
 
 /// Satu soal trivia bergambar (multiple choice, pilihan berupa bentuk).
@@ -62,30 +70,40 @@ enum Level1Content {
     static let levelID = 1
     static let levelTitle = "Bentuk dan Tekstur"
 
-    // 4 material yang sudah ada di `MaterialTexture.library` dipakai ulang di
+    // Material yang sudah ada di `MaterialTexture.library` dipakai ulang di
     // tiap bentuk, cuma label & deskripsinya yang diterjemahkan/disesuaikan
     // untuk anak-anak. Urutan ini juga urutan next/back di checkpoint.
     private static func textures() -> [TextureStop] {
         [
             TextureStop(
                 material: .defaultGrid,
-                name: "Halus",
-                description: "Coba raba, permukaannya rata dan licin ya!"
+                name: "Kotak-kotak",
+                description: "Polanya rapi seperti papan catur.",
+                audioFileName: "level-1/marker/tekstur/[kotak kotak]Ini Tekstur Kotak-kotak! Polanya rapi dan bersilangan mirip seperti papan catur, lho!.mp3"
             ),
             TextureStop(
                 material: MaterialTexture.library.first { $0.id == "marble" }!,
-                name: "Licin & Mengkilap",
-                description: "Permukaannya mengkilap seperti lantai marmer."
+                name: "Marmer",
+                description: "Halus dan punya corak yang cantik.",
+                audioFileName: "level-1/marker/tekstur/[marmer] Ini Tekstur Marmer! Halus dan punya corak yang cantik!.mp3"
             ),
             TextureStop(
                 material: MaterialTexture.library.first { $0.id == "wood" }!,
-                name: "Kasar",
-                description: "Permukaannya kasar, ada garis-garis seperti kayu."
+                name: "Kayu",
+                description: "Permukaannya kasar, ada garis-garis seperti kayu.",
+                audioFileName: "level-1/marker/tekstur/[kayu]Ini Tekstur Kayu! Punya garis-garis serat alami yang khas dan sangat unik, lho!.mp3"
+            ),
+            TextureStop(
+                material: MaterialTexture.library.first { $0.id == "metal" }!,
+                name: "Besi",
+                description: "Permukaannya keras dan terlihat mengkilap.",
+                audioFileName: "level-1/marker/tekstur/[besi] Ini Tekstur Besi! Permukaannya terasa keras, padat, dan terlihat mengkilap, lho!.mp3"
             ),
             TextureStop(
                 material: MaterialTexture.library.first { $0.id == "cutout" }!,
-                name: "Berbintik",
-                description: "Ada bintik-bintik kecil di seluruh permukaannya."
+                name: "Berlubang",
+                description: "Permukaannya punya bolongan kecil.",
+                audioFileName: "level-1/marker/tekstur/[berlubang] Ini Tekstur Berlubang! Permukaannya dipenuhi bolongan atau rongga-rongga kecil seperti spons, lho!.mp3"
             )
         ]
     }
@@ -97,6 +115,14 @@ enum Level1Content {
     static let bola = GameShape(
         id: "bola", displayName: "Bola", objectType: .sphere,
         quizSymbolName: "circle.fill", textures: textures()
+    )
+    static let balok = GameShape(
+        id: "balok", displayName: "Balok", objectType: .cuboid,
+        quizSymbolName: "rectangle.fill", textures: textures()
+    )
+    static let piramida = GameShape(
+        id: "piramida", displayName: "Piramida", objectType: .squarePyramid,
+        quizSymbolName: "pyramid.fill", textures: textures()
     )
     static let tabung = GameShape(
         id: "tabung", displayName: "Tabung", objectType: .cylinder,
@@ -111,16 +137,18 @@ enum Level1Content {
     /// di dunia nyata mengikuti urutan array ini.
     static let checkpoints: [Checkpoint] = [
         Checkpoint(id: "cp-0", order: 0, shape: kubus),
-        Checkpoint(id: "cp-1", order: 1, shape: bola),
-        Checkpoint(id: "cp-2", order: 2, shape: tabung),
-        Checkpoint(id: "cp-3", order: 3, shape: kerucut)
+        Checkpoint(id: "cp-1", order: 1, shape: balok),
+        Checkpoint(id: "cp-2", order: 2, shape: bola),
+        Checkpoint(id: "cp-3", order: 3, shape: piramida),
+        Checkpoint(id: "cp-4", order: 4, shape: kerucut),
+        Checkpoint(id: "cp-5", order: 5, shape: tabung)
     ]
 
     static let onboardingDialog: [DialogLine] = [
-        DialogLine(characterName: "Kiki", text: "Halo, teman-teman! Aku Kiki 🦉"),
-        DialogLine(characterName: "Kiki", text: "Hari ini kita akan jalan-jalan mencari bentuk-bentuk seru di sekitar kita!"),
-        DialogLine(characterName: "Kiki", text: "Setiap bentuk itu punya tekstur yang berbeda lho. Ada yang halus, ada juga yang kasar."),
-        DialogLine(characterName: "Kiki", text: "Nanti akan muncul bentuk 3D di layar kameramu — dekati untuk mulai menjelajah checkpoint pertama!")
+        DialogLine(characterName: "Lumi", text: "Hai, Penjelajah Kecil! Namaku Lumi.", audioFileName: "level-1/1 Hai Penjelajah Kecil namaku Lumy.mp3"),
+        DialogLine(characterName: "Lumi", text: "Yuk, kenalan sama bentuk dan tekstur!", audioFileName: "level-1/2 Yuk kenalan sama bentuk dan tekstur.mp3"),
+        DialogLine(characterName: "Lumi", text: "Coba cari objek berbentuk kotak di sekitarmu!", audioFileName: "level-1/3 coba cari objek berbentuk kotak di sekitarmu.mp3"),
+        DialogLine(characterName: "Lumi", text: "Yeay ketemu! Sekarang Lumi hidupin lampu dulu sebagai sumber cahaya ya.", audioFileName: "level-1/4 yeay ketemu sekarang lumi hidupin lampu.mp3")
     ]
 
     static let quiz: [TriviaQuestion] = [

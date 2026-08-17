@@ -70,6 +70,35 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         }
     }
 
+    var narrationAudioFileName: String? {
+        switch phase {
+        case .onboarding:
+            currentOnboardingLine.audioFileName
+        case .placingScene:
+            nil
+        case .surfaceReady:
+            nil
+        case .shadowExploration:
+            hasCompletedShadowTask ? "level-3/3 Keren! Kamu sudah belajar jenis bayangan!.mp3" : nil
+        case .shadowTrivia:
+            currentShadowTriviaLine.audioFileName
+        case .shadowTypesInteraction:
+            currentShadowTypesLine.audioFileName
+        case .shapeComparison:
+            "level-3/4 Sekarang coba kita lihat di bentuk lain ya!.mp3"
+        case .closing:
+            currentClosingLine.audioFileName
+        case .review:
+            "level-3/9 Nahh, sekarang coba ingat-ingat lagi apa yang udah dipelajari. Kita coba lagi yuk!.mp3"
+        case .completed:
+            "level-3/12 Wah, kamu sudah mencoba banyak hal ya! Kerennnnn!.mp3"
+        }
+    }
+
+    var narrationID: String {
+        "\(phase.rawValue)-\(onboardingIndex)-\(shadowTriviaIndex)-\(shadowTypesIndex)-\(closingIndex)-\(hasCompletedShadowTask)-\(selectedComparison.rawValue)"
+    }
+
     var shadowProgress: Int { min(visitedShadowSectors.count, 3) }
 
     func advanceOnboarding() {

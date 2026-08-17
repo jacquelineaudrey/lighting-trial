@@ -6,10 +6,9 @@
 //
 
 import Foundation
-import Combine
 
-class EndLevelViewModel: ObservableObject {
-    @Published var endLevels: [EndLevelModel] = [
+final class EndLevelViewModel {
+    static let endLevels: [EndLevelModel] = [
         EndLevelModel(
             id: 1,
             levelNumber: 1,
@@ -29,4 +28,13 @@ class EndLevelViewModel: ObservableObject {
             mascotImageName: "bayoIdle"
         )
     ]
+
+    static func data(for levelID: Int) -> EndLevelModel {
+        endLevels.first { $0.id == levelID } ?? EndLevelModel(
+            id: levelID,
+            levelNumber: levelID,
+            message: "Kamu hebat!\nLevel ini sudah selesai!",
+            mascotImageName: "lumiIdle"
+        )
+    }
 }

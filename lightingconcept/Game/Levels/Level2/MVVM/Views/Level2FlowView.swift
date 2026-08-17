@@ -2,10 +2,15 @@ import SwiftUI
 
 struct Level2FlowView: View {
     @State private var viewModel = Level2ViewModel()
-    @State private var narrator = AppleSpeechNarrator()
+    @State private var narrator = LessonAudioNarrator()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
+    let onNextLevel: (() -> Void)?
+
+    init(onNextLevel: (() -> Void)? = nil) {
+        self.onNextLevel = onNextLevel
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -92,7 +97,12 @@ struct Level2FlowView: View {
                     onFinish: viewModel.finishReview
                 )
             case .completed:
-                Level2CompletedOverlay(onFinish: dismiss.callAsFunction)
+                EndLevelView(
+                    data: EndLevelViewModel.data(for: Level2Content.levelID),
+                    onBack: dismiss.callAsFunction,
+                    onNext: onNextLevel
+                )
+                .padding(.bottom, 24)
             }
         }
         .overlay(alignment: .topLeading) {
@@ -116,8 +126,8 @@ struct Level2FlowView: View {
         }
         .animation(reduceMotion ? nil : .easeInOut, value: viewModel.phase)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
-        .task(id: viewModel.narrationText) {
-            narrator.speak(viewModel.narrationText)
+        .task(id: viewModel.narrationID) {
+            narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
         }
         .onDisappear(perform: narrator.stop)
         .onChange(of: viewModel.arSceneViewModel.surfaceState) { _, _ in
@@ -163,6 +173,6 @@ struct Level2FlowView: View {
     }
 
     private func replayNarration() {
-        narrator.speak(viewModel.narrationText)
+        narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
     }
 }

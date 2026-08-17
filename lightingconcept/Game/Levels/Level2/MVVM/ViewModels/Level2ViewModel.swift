@@ -105,6 +105,41 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         }
     }
 
+    var narrationAudioFileName: String? {
+        switch phase {
+        case .onboarding:
+            currentOnboardingLine.audioFileName
+        case .placingScene:
+            "level-2/13 Tekan sekali di tempat kosong untuk lihat-lihat!.mp3"
+        case .surfaceReady:
+            nil
+        case .shadowExploration:
+            hasCompletedShadowTask ? "level-2/21 Woah terima kasih udah bantu aku ya!.mp3" : nil
+        case .shadowTrivia:
+            currentShadowTriviaLine.audioFileName
+        case .spreadTransition:
+            currentSpreadTransitionLine.audioFileName
+        case .spreadExploration:
+            hasCompletedSpreadTask ? "level-2/12 Sekarang, coba kamu yang main sendiri penyebaran cahayanya ya!.mp3" : "level-2/4 Tempelkan jempol dan telunjuk ke layar ya.mp3"
+        case .spreadTrivia:
+            currentSpreadTriviaLine.audioFileName
+        case .intensityExploration:
+            hasCompletedIntensityTask ? "level-2/18 Hebat! Sekarang kamu sudah bisa mengatur cahaya sendiri!.mp3" : "level-2/16 Naik untuk lebih terang, turun untuk lebih redup.mp3"
+        case .intensityTrivia:
+            currentIntensityTriviaLine.audioFileName
+        case .closing:
+            currentClosingLine.audioFileName
+        case .review:
+            "level-2/24 Good job! Sekarang kamu tahu, lebar dan terang cahaya bisa mengubah bayangan!.mp3"
+        case .completed:
+            "level-2/24 Good job! Sekarang kamu tahu, lebar dan terang cahaya bisa mengubah bayangan!.mp3"
+        }
+    }
+
+    var narrationID: String {
+        "\(phase.rawValue)-\(onboardingIndex)-\(shadowTriviaIndex)-\(spreadTransitionIndex)-\(spreadTriviaIndex)-\(intensityTriviaIndex)-\(closingIndex)-\(hasCompletedShadowTask)-\(hasCompletedSpreadTask)-\(hasCompletedIntensityTask)"
+    }
+
     func advanceOnboarding() {
         guard phase == .onboarding else { return }
         if onboardingIndex == Level2Content.onboardingDialog.count - 1 {

@@ -3,10 +3,15 @@ import Combine
 
 struct Level3FlowView: View {
     @State private var viewModel = Level3ViewModel()
-    @State private var narrator = AppleSpeechNarrator()
+    @State private var narrator = LessonAudioNarrator()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
+    let onNextLevel: (() -> Void)?
+
+    init(onNextLevel: (() -> Void)? = nil) {
+        self.onNextLevel = onNextLevel
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -55,7 +60,9 @@ struct Level3FlowView: View {
         .animation(reduceMotion ? nil : .easeInOut, value: viewModel.phase)
         .animation(.easeInOut(duration: 0.2), value: viewModel.arSceneViewModel.selectedConcept)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
-        .task(id: viewModel.narrationText) { narrator.speak(viewModel.narrationText) }
+        .task(id: viewModel.narrationID) {
+            narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
+        }
         .onDisappear { narrator.stop() }
         .onChange(of: viewModel.arSceneViewModel.surfaceState) { _, _ in
             viewModel.surfaceDidBecomeReady()
@@ -64,7 +71,7 @@ struct Level3FlowView: View {
     }
 
     private func replayNarration() {
-        narrator.speak(viewModel.narrationText)
+        narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
     }
 
     @ViewBuilder private var overlay: some View {
@@ -94,7 +101,12 @@ struct Level3FlowView: View {
         case .review:
             Level3Review(points: Level3Content.reviewPoints, replayNarration: replayNarration, action: viewModel.finishReview)
         case .completed:
-            Level3TaskCard(title: "Level 3 selesai!", progress: 1, total: 1, button: "Selesai", replayNarration: replayNarration, action: dismiss.callAsFunction)
+            EndLevelView(
+                data: EndLevelViewModel.data(for: Level3Content.levelID),
+                onBack: dismiss.callAsFunction,
+                onNext: onNextLevel
+            )
+            .padding(.bottom, 24)
         }
     }
 }

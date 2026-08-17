@@ -80,10 +80,14 @@ struct LevelSelectView: View {
         .ignoresSafeArea()
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: $startLevel1) {
-            Level1FlowView()
+            Level1FlowView {
+                openNextLevel(after: 1)
+            }
         }
         .navigationDestination(isPresented: $startLevel2) {
-            Level2FlowView()
+            Level2FlowView {
+                openNextLevel(after: 2)
+            }
                 .id(level2SessionID)
         }
         .navigationDestination(isPresented: $startLevel3) {
@@ -111,6 +115,27 @@ struct LevelSelectView: View {
         case 3:
             level3SessionID = UUID()
             startLevel3 = true
+        default:
+            break
+        }
+    }
+
+    private func openNextLevel(after completedLevelID: Int) {
+        switch completedLevelID {
+        case 1:
+            startLevel1 = false
+            level2SessionID = UUID()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                startLevel2 = true
+            }
+        case 2:
+            startLevel2 = false
+            level3SessionID = UUID()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                startLevel3 = true
+            }
+        case 3:
+            startLevel3 = false
         default:
             break
         }

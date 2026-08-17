@@ -18,24 +18,24 @@
 //    static let levelTitle = "Posisi Lampu dan Bayangan"
 //
 //    static let onboardingDialog: [DialogLine] = [
-//        DialogLine(characterName: "Kiki", text: "Halo lagi! Sekarang kita main dengan cahaya lampu, yuk 💡"),
-//        DialogLine(characterName: "Kiki", text: "Coba lihat, ada lampu dan sebuah benda di depanmu. Benda itu punya bayangan di tanah."),
-//        DialogLine(characterName: "Kiki", text: "Tekan dan tahan tombol \"Jadi Lampu\", lalu jalan-jalan untuk memindahkan lampunya!"),
-//        DialogLine(characterName: "Kiki", text: "Kalau tombolnya kamu lepas, kamu balik lagi jadi penonton yang lihat scene-nya.")
+//        DialogLine(characterName: "Lumi", text: "Halo lagi! Sekarang kita main dengan cahaya lampu, yuk 💡"),
+//        DialogLine(characterName: "Lumi", text: "Coba lihat, ada lampu dan sebuah benda di depanmu. Benda itu punya bayangan di tanah."),
+//        DialogLine(characterName: "Lumi", text: "Tekan dan tahan tombol \"Jadi Lampu\", lalu jalan-jalan untuk memindahkan lampunya!"),
+//        DialogLine(characterName: "Lumi", text: "Kalau tombolnya kamu lepas, kamu balik lagi jadi penonton yang lihat scene-nya.")
 //    ]
 //
 //    /// Dialog transisi setelah anak sempat memindah-mindah lampu/objek sekali,
 //    /// sebelum masuk ke sesi eksplorasi bebas.
 //    static let transitionDialog: [DialogLine] = [
-//        DialogLine(characterName: "Kiki", text: "Keren! Kamu baru saja memindahkan posisi lampu 🎉"),
-//        DialogLine(characterName: "Kiki", text: "Perhatikan ya — kalau lampu digeser, bayangan di tanah ikut berubah bentuk dan posisinya."),
-//        DialogLine(characterName: "Kiki", text: "Bayangan itu disebut ground projection — bayangan benda yang jatuh ke tanah karena cahaya lampu."),
-//        DialogLine(characterName: "Kiki", text: "Sekarang, coba jelajahi sendiri! Pindah-pindahkan lampu atau bendanya, lalu lihat apa yang terjadi pada bayangannya.")
+//        DialogLine(characterName: "Lumi", text: "Keren! Kamu baru saja memindahkan posisi lampu 🎉"),
+//        DialogLine(characterName: "Lumi", text: "Perhatikan ya — kalau lampu digeser, bayangan di tanah ikut berubah bentuk dan posisinya."),
+//        DialogLine(characterName: "Lumi", text: "Bayangan itu disebut ground projection — bayangan benda yang jatuh ke tanah karena cahaya lampu."),
+//        DialogLine(characterName: "Lumi", text: "Sekarang, coba jelajahi sendiri! Pindah-pindahkan lampu atau bendanya, lalu lihat apa yang terjadi pada bayangannya.")
 //    ]
 //
 //    static let closingDialog: [DialogLine] = [
-//        DialogLine(characterName: "Kiki", text: "Wah, kamu sudah jago mengatur posisi lampu dan benda! 🌟"),
-//        DialogLine(characterName: "Kiki", text: "Sebelum lanjut, yuk kita ingat-ingat lagi apa yang sudah kamu pelajari hari ini.")
+//        DialogLine(characterName: "Lumi", text: "Wah, kamu sudah jago mengatur posisi lampu dan benda! 🌟"),
+//        DialogLine(characterName: "Lumi", text: "Sebelum lanjut, yuk kita ingat-ingat lagi apa yang sudah kamu pelajari hari ini.")
 //    ]
 //
 //    /// Poin-poin ringkasan pembelajaran (ditampilkan di layar review, bukan
