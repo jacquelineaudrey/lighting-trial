@@ -2,6 +2,8 @@ import Combine
 import RealityKit
 import SwiftUI
 
+/// Runtime bridge untuk ARView Level 2. Sistem ECS menangani entity lampu;
+/// SwiftUI hanya mengirim intent melalui ViewModel.
 struct Level2ARContainerView: UIViewRepresentable {
     @ObservedObject var sceneViewModel: ARSceneViewModel
     let telemetryDelegate: any ARSceneTelemetryDelegate
@@ -9,7 +11,7 @@ struct Level2ARContainerView: UIViewRepresentable {
     func makeCoordinator() -> ARSceneCoordinator {
         ARSceneCoordinator(
             viewModel: sceneViewModel,
-            gesturePolicy: .placementOnly,
+            gesturePolicy: .full,
             lessonECSMode: .level2LightControl,
             telemetryDelegate: telemetryDelegate
         )

@@ -1,5 +1,22 @@
 import Foundation
 
+/// State navigation milik SwiftUI/MVVM; tidak memegang entity RealityKit.
+enum Level2Phase: String, Equatable {
+    case onboarding
+    case placingScene
+    case surfaceReady
+    case shadowExploration
+    case shadowTrivia
+    case spreadTransition
+    case spreadExploration
+    case spreadTrivia
+    case intensityExploration
+    case intensityTrivia
+    case closing
+    case review
+    case completed
+}
+
 enum Level2Content {
     static let levelID = 2
     static let levelTitle = "Bayangan dan Cahaya"

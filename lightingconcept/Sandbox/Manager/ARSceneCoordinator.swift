@@ -288,20 +288,32 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             // lighter config and meaningfully reduces thermal load on LiDAR devices.
             configuration.sceneReconstruction = .mesh
             usesSceneReconstruction = true
-            viewModel.isLiDARAvailable = true
-            viewModel.resetLiDARScan()
+            publishLiDARAvailability(true, resetScanProgress: true)
             // Mesh cyan hanya feedback scan untuk user. Occlusion visual tetap memakai
             // sceneUnderstanding bawaan RealityKit, bukan mesh occluder custom.
             lidarMeshOcclusionManager.setVisualizationEnabled(true)
             viewModel.debugLog("LiDAR scene reconstruction enabled; real-world mesh occlusion active")
         } else {
             usesSceneReconstruction = false
-            viewModel.isLiDARAvailable = false
+            publishLiDARAvailability(false, resetScanProgress: false)
             viewModel.debugLog("LiDAR scene reconstruction unavailable; using flat fallback receiver")
         }
 
         let options: ARSession.RunOptions = resetTracking ? [.resetTracking, .removeExistingAnchors] : []
         arView.session.run(configuration, options: options)
+    }
+
+    /// `runSession` dapat dipanggil dari lifecycle `UIViewRepresentable`.
+    /// Tunda perubahan `@Published` satu runloop agar SwiftUI tidak menerima
+    /// publish saat sedang menjalankan `updateUIView`.
+    private func publishLiDARAvailability(_ isAvailable: Bool, resetScanProgress: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.viewModel.isLiDARAvailable = isAvailable
+            if resetScanProgress {
+                self.viewModel.resetLiDARScan()
+            }
+        }
     }
 
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
@@ -324,7 +336,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             return
         }
 
-        if let entity = arView.entity(at: location),
+        if !viewModel.objectDirectManipulationLocked,
+           let entity = arView.entity(at: location),
            selectObject(containing: entity) {
             viewModel.interactionMode = .moveObject
             synchronizeScene()
@@ -412,7 +425,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         let translation = gesture.translation(in: arView)
         gesture.setTranslation(.zero, in: arView)
 
-        let yawDelta = Float(translation.x) * 0.35
+        // RealityKit memakai local -Z sebagai arah maju: yaw positif justru
+        // mengarahkan sorot ke kiri pada layar. Level 2 memilih mapping yang
+        // natural: geser kanan = sorot kanan.
+        let yawSensitivity: Float = viewModel.lightDirectionFollowsGesture ? -0.35 : 0.35
+        let yawDelta = Float(translation.x) * yawSensitivity
         switch viewModel.interactionMode {
         case .moveObject:
             viewModel.updateSelectedObject { object in

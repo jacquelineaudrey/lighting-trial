@@ -61,6 +61,10 @@ final class ARSceneViewModel: ObservableObject {
     /// drag-posisi yang lama tidak berubah.
     @Published var directManipulationRotatesOnly = false
 
+    /// Level tertentu dapat meminta arah sorot mengikuti sapuan jari layar.
+    /// Ini hanya mengubah yaw/pitch, bukan posisi lampu.
+    @Published var lightDirectionFollowsGesture = false
+
     /// Kalau `true` (default), ARKit environment texturing + light estimation
     /// dinyalakan supaya PBR material object menyerap pantulan & warna cahaya
     /// ruangan asli — bagus untuk mode sandbox yang memang soal belajar

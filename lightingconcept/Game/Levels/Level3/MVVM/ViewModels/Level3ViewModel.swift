@@ -1,6 +1,6 @@
 import Foundation
 import Observation
-import RealityKit
+import simd
 
 @MainActor
 @Observable
@@ -27,6 +27,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     private(set) var hasComparedShapes = false
     @ObservationIgnored private var comparedShapes: Set<ComparisonShape> = []
     private(set) var successFeedbackTrigger = 0
+    private(set) var progressCelebration: LessonProgressCelebration?
     
     // --- TAMBAHAN BARU: State untuk mengontrol pop-up marker ---
     private(set) var isShadowInfoOpen = false
@@ -58,6 +59,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         switch phase {
         case .onboarding: currentOnboardingLine.text
         case .placingScene: "Arahkan titik tengah layar ke meja atau lantai, lalu tekan Taruh Benda di Tengah."
+        case .surfaceReady: "Permukaan dan posisi benda sudah siap. Pilih Lanjut untuk mulai belajar, atau Scan Ulang untuk mengatur ulang permukaan."
         case .shadowExploration: hasCompletedShadowTask ? "Bagus! Kamu sudah melihat bayangan dari beberapa sisi." : "Jalan pelan mengelilingi benda dan cari bayangannya dari tiga sisi."
         case .shadowTrivia: currentShadowTriviaLine.text
         case .shadowTypesInteraction: "Tekan Lihat Shadow untuk menampilkan bayangan, lalu perhatikan bagian yang paling gelap dan bagian yang lebih samar."
@@ -79,9 +81,31 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         sceneWorldPosition = worldPosition
         previousCameraPosition = nil
         if phase == .placingScene {
+            phase = .surfaceReady
+        } else if phase == .surfaceReady {
             phase = resumePhaseAfterPlacement ?? .shadowExploration
             resumePhaseAfterPlacement = nil
         }
+    }
+
+    func continueAfterSurfaceCheck() {
+        guard phase == .surfaceReady else { return }
+        if arSceneViewModel.isObjectPlaced {
+            phase = resumePhaseAfterPlacement ?? .shadowExploration
+            resumePhaseAfterPlacement = nil
+        } else {
+            arSceneViewModel.placeSceneAtScreenCenter()
+        }
+    }
+
+    func rescanSurface() {
+        guard phase == .surfaceReady else { return }
+        arSceneViewModel.rescanSurface()
+    }
+
+    func surfaceDidBecomeReady() {
+        guard phase == .placingScene, arSceneViewModel.surfaceState == .found else { return }
+        phase = .surfaceReady
     }
 
     func sceneDidReset() {
@@ -92,7 +116,10 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         shadowVisible = false
         isShadowInfoOpen = false // Reset popup state
         guard phase != .onboarding && phase != .completed else { return }
-        resumePhaseAfterPlacement = phase == .placingScene ? nil : phase
+        // A rescan from the confirmation card happens before the lesson has
+        // begun, so it must return to the first shadow task—not back to the
+        // confirmation card again.
+        resumePhaseAfterPlacement = (phase == .placingScene || phase == .surfaceReady) ? nil : phase
         phase = .placingScene
     }
 
@@ -112,6 +139,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         if visitedShadowSectors.count >= 3 {
             hasCompletedShadowTask = true
             successFeedbackTrigger += 1
+            celebrate(title: "Tiga Bayangan Ditemukan!", detail: "Kamu berhasil mengamati bayangan dari beberapa sisi.")
         }
     }
 
@@ -161,12 +189,25 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
             object.importedModel = nil
         }
         successFeedbackTrigger += 1
+        if hasComparedShapes {
+            celebrate(title: "Bentuk Berhasil Dibandingkan!", detail: "Kubus dan bola menghasilkan bayangan yang berbeda.")
+        }
     }
 
     func finishShapeComparison() {
         guard phase == .shapeComparison, hasComparedShapes else { return }
         phase = .closing
         closingIndex = 0
+    }
+
+    private func celebrate(title: String, detail: String) {
+        let celebration = LessonProgressCelebration(title: title, detail: detail)
+        progressCelebration = celebration
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.8))
+            guard self?.progressCelebration?.id == celebration.id else { return }
+            self?.progressCelebration = nil
+        }
     }
 
     func advanceClosing() {
@@ -188,6 +229,8 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
             phase = .placingScene
         case .placingScene:
             sceneDidPlace(at: sceneWorldPosition ?? .zero)
+        case .surfaceReady:
+            continueAfterSurfaceCheck()
         case .shadowExploration:
             visitedShadowSectors = [0, 2, 4]
             hasCompletedShadowTask = true
@@ -250,6 +293,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.objectDirectManipulationLocked = true
         arSceneViewModel.directManipulationRotatesOnly = true
         arSceneViewModel.interactionMode = .moveLight
+        arSceneViewModel.lightDirectionFollowsGesture = true
 
         let objectCenter = SIMD3<Float>(0, SceneObjectSystem.cubeSize * 0.85 / 2, 0)
         let lightPosition = SIMD3<Float>(-0.24, 0.34, 0.28)

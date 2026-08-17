@@ -1,6 +1,6 @@
 import Foundation
 import Observation
-import RealityKit
+import simd
 
 @MainActor
 @Observable
@@ -29,6 +29,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     private(set) var hasReachedBrightIntensity = false
     private(set) var hasCompletedIntensityTask = false
     private(set) var successFeedbackTrigger = 0
+    private(set) var progressCelebration: LessonProgressCelebration?
 
     private(set) var beamSpreadDegrees: Float = 54
     private(set) var lightIntensity: Float = 3_200
@@ -73,6 +74,8 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
             currentOnboardingLine.text
         case .placingScene:
             "Arahkan titik tengah layar ke meja atau lantai, lalu tekan tombol Taruh Benda di Tengah."
+        case .surfaceReady:
+            "Permukaan dan posisi benda sudah siap. Pilih Lanjut untuk mulai belajar, atau Scan Ulang untuk mengatur ulang permukaan."
         case .shadowExploration:
             hasCompletedShadowTask
                 ? "Hebat! Kamu sudah melihat bayangan dari beberapa sisi. Yuk, cari tahu bagaimana bayangan terbentuk."
@@ -227,8 +230,34 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     func sceneDidPlace(at worldPosition: SIMD3<Float>) {
         sceneWorldPosition = worldPosition
         previousCameraPosition = nil
-        guard phase == .placingScene else { return }
-        phase = .shadowExploration
+        switch phase {
+        case .placingScene:
+            // Placement from an AR tap still receives the same confirmation.
+            phase = .surfaceReady
+        case .surfaceReady:
+            phase = .shadowExploration
+        default:
+            break
+        }
+    }
+
+    func continueAfterSurfaceCheck() {
+        guard phase == .surfaceReady else { return }
+        if arSceneViewModel.isObjectPlaced {
+            phase = .shadowExploration
+        } else {
+            arSceneViewModel.placeSceneAtScreenCenter()
+        }
+    }
+
+    func rescanSurface() {
+        guard phase == .surfaceReady else { return }
+        arSceneViewModel.rescanSurface()
+    }
+
+    func surfaceDidBecomeReady() {
+        guard phase == .placingScene, arSceneViewModel.surfaceState == .found else { return }
+        phase = .surfaceReady
     }
 
     func sceneDidReset() {
@@ -264,6 +293,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         if visitedShadowSectors.count >= 3, shadowTravelDistance >= 0.45 {
             hasCompletedShadowTask = true
             successFeedbackTrigger += 1
+            celebrate(title: "Misi Bayangan Selesai!", detail: "Kamu menemukan bayangan dari tiga sisi.")
         }
     }
 
@@ -292,6 +322,12 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.showGroundProjection = true
         arSceneViewModel.showShadowLabels = false
         arSceneViewModel.showShadowInformation = false
+        // Objek hanya menjadi target pengamatan di Level 2. Setelah diletakkan,
+        // sentuhan/pan tidak boleh menggesernya dari permukaan.
+        arSceneViewModel.objectDirectManipulationLocked = true
+        arSceneViewModel.directManipulationRotatesOnly = true
+        arSceneViewModel.interactionMode = .moveLight
+        arSceneViewModel.lightDirectionFollowsGesture = true
 
         let selectedObject = arSceneViewModel.selectedObject
         let objectCenter = selectedObject.position + SIMD3<Float>(
@@ -364,6 +400,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         guard hasReachedNarrowSpread, hasReachedWideSpread, !hasCompletedSpreadTask else { return }
         hasCompletedSpreadTask = true
         successFeedbackTrigger += 1
+        celebrate(title: "Cahaya Berhasil Diatur!", detail: "Kamu sudah mencoba cahaya sempit dan lebar.")
     }
 
     private func setIntensity(_ requestedValue: Float) {
@@ -385,5 +422,16 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         guard hasReachedDimIntensity, hasReachedBrightIntensity, !hasCompletedIntensityTask else { return }
         hasCompletedIntensityTask = true
         successFeedbackTrigger += 1
+        celebrate(title: "Terang dan Redup Selesai!", detail: "Kamu sudah mencoba dua intensitas cahaya.")
+    }
+
+    private func celebrate(title: String, detail: String) {
+        let celebration = LessonProgressCelebration(title: title, detail: detail)
+        progressCelebration = celebration
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.8))
+            guard self?.progressCelebration?.id == celebration.id else { return }
+            self?.progressCelebration = nil
+        }
     }
 }

@@ -14,6 +14,7 @@ import ARKit
 enum Level1Phase: Equatable {
     case onboarding
     case scanningSurface
+    case surfaceReady
     case exploring
     case quiz
     case returningToStart
@@ -107,7 +108,8 @@ final class Level1ViewModel: ObservableObject {
         
         if let bestPlane = latestHorizontalPlaneAnchor, planeArea(bestPlane) > 0.6 {
             if let start = scanStartTime, Date().timeIntervalSince(start) > 4.0 {
-                placePathIfNeeded()
+                placePathIfNeeded(startExploring: false)
+                phase = .surfaceReady
             }
         }
     }
@@ -227,7 +229,7 @@ final class Level1ViewModel: ObservableObject {
         }
     }
     
-    func placePathIfNeeded() {
+    func placePathIfNeeded(startExploring: Bool = true) {
         guard !hasPlacedPath, let root = rootAnchor else { return }
         hasPlacedPath = true
         
@@ -290,9 +292,32 @@ final class Level1ViewModel: ObservableObject {
             anchorGroup.addChild(highlightEntity)
         }
         
-        phase = .exploring
+        if startExploring {
+            phase = .exploring
+        }
         hasWaypointTarget = true
         syncEntities()
+    }
+
+    func continueAfterSurfaceCheck() {
+        guard phase == .surfaceReady else { return }
+        phase = .exploring
+        syncEntities()
+    }
+
+    func rescanSurface() {
+        guard phase == .surfaceReady || phase == .scanningSurface else { return }
+        pathAnchor?.removeFromParent()
+        pathAnchor = nil
+        hasPlacedPath = false
+        checkpointWorldPositions.removeAll()
+        markerWorldPositions.removeAll()
+        checkpointEntities.removeAll()
+        checkpointHighlightEntities.removeAll()
+        hasWaypointTarget = false
+        latestHorizontalPlaneAnchor = nil
+        scanStartTime = Date()
+        phase = .scanningSurface
     }
 
     // MARK: - Dialog & Logic
@@ -414,11 +439,15 @@ final class Level1ViewModel: ObservableObject {
         // the floor. This stays visible even when the arrow moves aside to
         // avoid the object.
         for (index, highlight) in checkpointHighlightEntities.enumerated() {
-            highlight.isEnabled = index == nextTargetCheckpointIndex
+            // Saat preview setelah scan, semua checkpoint terlihat di bawah
+            // objek agar user bisa mengecek posisi path sebelum memulai.
+            highlight.isEnabled = phase == .surfaceReady || index == nextTargetCheckpointIndex
         }
 
         if let root = directionIndicatorRoot {
-            root.isEnabled = hasWaypointTarget
+            // Arrow baru aktif setelah user menekan Lanjut; pada preview scan
+            // ia sengaja disembunyikan agar tidak mengganggu objek checkpoint.
+            root.isEnabled = hasWaypointTarget && phase != .surfaceReady
         }
     }
 

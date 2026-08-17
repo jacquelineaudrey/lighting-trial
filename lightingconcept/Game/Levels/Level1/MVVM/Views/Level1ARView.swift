@@ -84,11 +84,9 @@ struct Level1ARView: UIViewRepresentable {
             self.viewModel = viewModel
         }
         
-        // If the user satisfies the coaching overlay manually, spawn the path
+        // The overlay only helps find the surface. The learner explicitly
+        // confirms it from the Lanjut / Scan Ulang card before the path appears.
         func coachingOverlayViewDidDeactivate(_ coachingOverlayView: ARCoachingOverlayView) {
-            if viewModel.phase == .scanningSurface {
-                viewModel.placePathIfNeeded()
-            }
         }
         
         func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
@@ -153,5 +151,6 @@ struct Level1ARView: UIViewRepresentable {
                 viewModel.arSceneViewModel.updateLiDARScan(meshCount: meshCount, faceCount: faceCount)
             }
         }
+
     }
 }

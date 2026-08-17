@@ -2,6 +2,7 @@ import Combine
 import RealityKit
 import SwiftUI
 
+/// Runtime bridge untuk ARView Level 3 dan sistem presentasi shadow ECS.
 struct Level3ARContainerView: UIViewRepresentable {
     @ObservedObject var sceneViewModel: ARSceneViewModel
     let telemetryDelegate: any ARSceneTelemetryDelegate
@@ -9,7 +10,7 @@ struct Level3ARContainerView: UIViewRepresentable {
     func makeCoordinator() -> ARSceneCoordinator {
         ARSceneCoordinator(
             viewModel: sceneViewModel,
-            gesturePolicy: .placementOnly,
+            gesturePolicy: .full,
             lessonECSMode: .level3ShadowPresentation,
             telemetryDelegate: telemetryDelegate
         )

@@ -1,5 +1,20 @@
 import Foundation
 
+/// State navigation milik SwiftUI/MVVM; presentasi marker dan shadow tetap
+/// berada di ECS/RealityKit.
+enum Level3Phase: String, Codable, Equatable {
+    case onboarding
+    case placingScene
+    case surfaceReady
+    case shadowExploration
+    case shadowTrivia
+    case shadowTypesInteraction
+    case shapeComparison
+    case closing
+    case review
+    case completed
+}
+
 enum Level3Content {
     static let levelID = 3
     static let levelTitle = "Jenis dan Bentuk Bayangan"

@@ -120,14 +120,14 @@ final class ShadowAnnotationManager {
         position: SIMD3<Float>,
         objectPosition: SIMD3<Float>
     ) {
-        // Float each marker approximately 5 cm away from the object, then
+        // Float each marker approximately 15 cm away from the object, then
         // connect it back with a small dotted leader line. This avoids the
         // marker visually merging into the object's surface.
         let offset = position - objectPosition
         let direction = simd_length(offset) > 0.0001
             ? simd_normalize(offset)
             : SIMD3<Float>(0, 1, 0)
-        let markerPosition = position + direction * 0.05
+        let markerPosition = position + direction * 0.15
         addDottedConnector(from: position, to: markerPosition)
 
         let dot = ModelEntity(

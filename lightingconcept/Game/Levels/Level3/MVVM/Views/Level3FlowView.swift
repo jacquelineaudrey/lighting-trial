@@ -1,6 +1,5 @@
 import SwiftUI
 import Combine
-import RealityKit
 
 struct Level3FlowView: View {
     @State private var viewModel = Level3ViewModel()
@@ -27,6 +26,15 @@ struct Level3FlowView: View {
                     .padding(.top, 12)
             }
         }
+        .overlay(alignment: .top) {
+            if let celebration = viewModel.progressCelebration {
+                LessonProgressCelebrationOverlay(celebration: celebration)
+                    .id(celebration.id)
+                    .transition(.scale(scale: 0.7).combined(with: .opacity))
+                    .padding(.top, 56)
+                    .allowsHitTesting(false)
+            }
+        }
         #if DEBUG
         .overlay(alignment: .topTrailing) {
             if viewModel.phase != .completed {
@@ -49,6 +57,9 @@ struct Level3FlowView: View {
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
         .task(id: viewModel.narrationText) { narrator.speak(viewModel.narrationText) }
         .onDisappear { narrator.stop() }
+        .onChange(of: viewModel.arSceneViewModel.surfaceState) { _, _ in
+            viewModel.surfaceDidBecomeReady()
+        }
         .navigationBarBackButtonHidden(true)
     }
 
@@ -62,6 +73,11 @@ struct Level3FlowView: View {
             Level3Dialog(line: viewModel.currentOnboardingLine, buttonTitle: viewModel.onboardingIndex == Level3Content.onboardingDialog.count - 1 ? "Mulai" : "Lanjut", replayNarration: replayNarration, action: viewModel.advanceOnboarding)
         case .placingScene:
             Level3Placement(sceneViewModel: viewModel.arSceneViewModel, replayNarration: replayNarration, action: viewModel.arSceneViewModel.placeSceneAtScreenCenter)
+        case .surfaceReady:
+            SurfaceReadyOverlay(
+                onContinue: viewModel.continueAfterSurfaceCheck,
+                onRescan: viewModel.rescanSurface
+            )
         case .shadowExploration:
             Level3TaskCard(title: "Cari bayangan", progress: viewModel.shadowProgress, total: 3, button: viewModel.hasCompletedShadowTask ? "Lihat Penjelasan" : nil, replayNarration: replayNarration, action: viewModel.continueFromShadowTask)
         case .shadowTrivia:
@@ -141,15 +157,8 @@ private struct Level3Placement: View {
     @ObservedObject var sceneViewModel: ARSceneViewModel; let replayNarration: () -> Void; let action: () -> Void
     var body: some View {
         VStack(spacing: 12) {
-            Text("Taruh benda untuk mulai").font(.title3).bold()
+            SurfaceScanInstruction(sceneViewModel: sceneViewModel)
             Text(sceneViewModel.surfaceGuidanceText).multilineTextAlignment(.center)
-
-            if sceneViewModel.isLiDARAvailable {
-                LiDARScanProgressCard(viewModel: sceneViewModel)
-            } else if sceneViewModel.surfaceState == .scanning {
-                ProgressView("Scanning surface...")
-                    .font(.subheadline)
-            }
 
             Level2ReplayNarrationButton(action: replayNarration)
 

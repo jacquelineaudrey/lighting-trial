@@ -31,6 +31,11 @@ struct Level2FlowView: View {
                     sceneViewModel: viewModel.arSceneViewModel,
                     replayNarration: replayNarration
                 )
+            case .surfaceReady:
+                SurfaceReadyOverlay(
+                    onContinue: viewModel.continueAfterSurfaceCheck,
+                    onRescan: viewModel.rescanSurface
+                )
             case .shadowExploration:
                 Level2ShadowExplorationOverlay(
                     viewModel: viewModel,
@@ -97,6 +102,15 @@ struct Level2FlowView: View {
                     .padding(.top, 12)
             }
         }
+        .overlay(alignment: .top) {
+            if let celebration = viewModel.progressCelebration {
+                LessonProgressCelebrationOverlay(celebration: celebration)
+                    .id(celebration.id)
+                    .transition(.scale(scale: 0.7).combined(with: .opacity))
+                    .padding(.top, 56)
+                    .allowsHitTesting(false)
+            }
+        }
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
             dismiss()
         }
@@ -106,6 +120,9 @@ struct Level2FlowView: View {
             narrator.speak(viewModel.narrationText)
         }
         .onDisappear(perform: narrator.stop)
+        .onChange(of: viewModel.arSceneViewModel.surfaceState) { _, _ in
+            viewModel.surfaceDidBecomeReady()
+        }
         .navigationBarBackButtonHidden(true)
     }
 

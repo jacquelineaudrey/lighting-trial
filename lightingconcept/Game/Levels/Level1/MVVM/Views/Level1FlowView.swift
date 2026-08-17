@@ -22,6 +22,11 @@ struct Level1FlowView: View {
                 TriviaDialogOverlay(viewModel: viewModel)
             case .scanningSurface:
                 ScanningSurfaceOverlay(viewModel: viewModel)
+            case .surfaceReady:
+                SurfaceReadyOverlay(
+                    onContinue: viewModel.continueAfterSurfaceCheck,
+                    onRescan: viewModel.rescanSurface
+                )
             case .exploring:
                 CheckpointExploreOverlay(viewModel: viewModel)
             case .quiz:
@@ -189,23 +194,7 @@ private struct ScanningSurfaceOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
 
     var body: some View {
-        VStack {
-            Text("📱👇 Arahkan iPad pelan-pelan ke lantai beberapa detik ya!")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .multilineTextAlignment(.center)
-                .padding(14)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
-                .padding(.top, 24)
-
-            // Make sure LiDARScanProgressCard is globally accessible in your project
-            if viewModel.arSceneViewModel.isLiDARAvailable {
-                LiDARScanProgressCard(viewModel: viewModel.arSceneViewModel)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-            }
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
+        SurfaceScanInstruction(sceneViewModel: viewModel.arSceneViewModel)
     }
 }
 
