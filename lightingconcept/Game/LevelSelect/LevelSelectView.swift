@@ -18,6 +18,9 @@ struct LevelSelectView: View {
     @State private var startLevel3 = false
     @State private var level3SessionID = UUID()
 
+    @StateObject private var cardViewModel = LevelCardViewModel()
+    @State private var selectedLevel: Level?
+
     private let levelTitles: [Int: String] = [
         1: Level1Content.levelTitle,
         2: Level2Content.levelTitle,
@@ -28,36 +31,52 @@ struct LevelSelectView: View {
     private let levelsWithContent: Set<Int> = [1, 2, 3]
 
     var body: some View {
-        GeometryReader { proxy in
-            let scale = LevelMapLayout.scale(toFill: proxy.size)
+        ZStack {
+            GeometryReader { proxy in
+                let scale = LevelMapLayout.scale(toFill: proxy.size)
 
-            ZStack(alignment: .topLeading) {
-                Image(.levelIsland)
-                    .resizable()
-                    .frame(width: LevelMapLayout.canvasSize.width,
-                           height: LevelMapLayout.canvasSize.height)
-                    .accessibilityHidden(true)
+                ZStack(alignment: .topLeading) {
+                    Image(.levelIsland)
+                        .resizable()
+                        .frame(width: LevelMapLayout.canvasSize.width,
+                               height: LevelMapLayout.canvasSize.height)
+                        .accessibilityHidden(true)
 
-                ForEach(1...progressStore.totalBelajarLevels, id: \.self) { levelID in
-                    LevelMapButton(
-                        levelID: levelID,
-                        title: levelTitles[levelID] ?? "Segera Hadir",
-                        isUnlocked: levelsWithContent.contains(levelID)
-                            && progressStore.isLevelUnlocked(levelID),
-                        isCompleted: progressStore.isLevelCompleted(levelID),
-                        action: { openLevel(levelID) }
-                    )
-                    .position(LevelMapLayout.position(for: levelID))
+                    ForEach(1...progressStore.totalBelajarLevels, id: \.self) { levelID in
+                        LevelMapButton(
+                            levelID: levelID,
+                            title: levelTitles[levelID] ?? "Segera Hadir",
+                            isUnlocked: levelsWithContent.contains(levelID)
+                                && progressStore.isLevelUnlocked(levelID),
+                            isCompleted: progressStore.isLevelCompleted(levelID),
+                            action: { showCard(for: levelID) }
+                        )
+                        .position(LevelMapLayout.position(for: levelID))
+                    }
+
+                    LevelMapBackButton(action: closeLevelSelect)
+                        .position(LevelMapLayout.backButtonCenter)
                 }
-
-                LevelMapBackButton(action: closeLevelSelect)
-                    .position(LevelMapLayout.backButtonCenter)
+                .frame(width: LevelMapLayout.canvasSize.width,
+                       height: LevelMapLayout.canvasSize.height)
+                .scaleEffect(scale)
+                .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
             }
-            .frame(width: LevelMapLayout.canvasSize.width,
-                   height: LevelMapLayout.canvasSize.height)
-            .scaleEffect(scale)
-            .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+
+            if let selectedLevel {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .onTapGesture { self.selectedLevel = nil }
+
+                LevelCardView(level: selectedLevel) {
+                    let levelID = selectedLevel.id
+                    self.selectedLevel = nil
+                    openLevel(levelID)
+                }
+                .transition(.scale.combined(with: .opacity))
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: selectedLevel != nil)
         .ignoresSafeArea()
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: $startLevel1) {
@@ -75,6 +94,11 @@ struct LevelSelectView: View {
 
     private func closeLevelSelect() {
         dismiss()
+    }
+
+    private func showCard(for levelID: Int) {
+        guard levelsWithContent.contains(levelID) else { return }
+        selectedLevel = cardViewModel.levels.first { $0.id == levelID }
     }
 
     private func openLevel(_ levelID: Int) {
