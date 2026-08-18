@@ -21,9 +21,6 @@ struct LevelSelectView: View {
     @StateObject private var cardViewModel = LevelCardViewModel()
     @State private var selectedLevel: Level?
 
-    @StateObject private var lockAlertViewModel = LockAlertViewModel()
-    @State private var showLevelLockAlert = false
-
     private let levelTitles: [Int: String] = [
         1: Level1Content.levelTitle,
         2: Level2Content.levelTitle,
@@ -69,39 +66,17 @@ struct LevelSelectView: View {
             if let selectedLevel {
                 Color.black.opacity(0.4)
                     .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            self.selectedLevel = nil
-                        }
-                    }
+                    .onTapGesture { self.selectedLevel = nil }
 
                 LevelCardView(level: selectedLevel) {
                     let levelID = selectedLevel.id
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        self.selectedLevel = nil
-                    }
+                    self.selectedLevel = nil
                     openLevel(levelID)
                 }
                 .transition(.scale.combined(with: .opacity))
             }
-
-            if showLevelLockAlert {
-                Color.black.opacity(0.4)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showLevelLockAlert = false
-                        }
-                    }
-
-                LockAlertView(data: lockAlertViewModel.alerts[1]) {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showLevelLockAlert = false
-                    }
-                }
-                .transition(.scale.combined(with: .opacity))
-            }
         }
+        .animation(.easeInOut(duration: 0.2), value: selectedLevel != nil)
         .ignoresSafeArea()
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: $startLevel1) {
@@ -126,16 +101,8 @@ struct LevelSelectView: View {
     }
 
     private func showCard(for levelID: Int) {
-        let isUnlocked = levelsWithContent.contains(levelID) && progressStore.isLevelUnlocked(levelID)
-        guard isUnlocked else {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showLevelLockAlert = true
-            }
-            return
-        }
-        withAnimation(.easeInOut(duration: 0.2)) {
-            selectedLevel = cardViewModel.levels.first { $0.id == levelID }
-        }
+        guard levelsWithContent.contains(levelID) else { return }
+        selectedLevel = cardViewModel.levels.first { $0.id == levelID }
     }
 
     private func openLevel(_ levelID: Int) {

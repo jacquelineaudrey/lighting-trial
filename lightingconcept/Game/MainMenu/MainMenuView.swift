@@ -15,9 +15,6 @@ struct MainMenuView: View {
     @State private var showLevelSelect = false
     @State private var showSandbox = false
 
-    @StateObject private var lockAlertViewModel = LockAlertViewModel()
-    @State private var showSimulationLockAlert = false
-
     var body: some View {
         NavigationStack {
             GeometryReader { proxy in
@@ -64,26 +61,6 @@ struct MainMenuView: View {
             .navigationDestination(isPresented: $showSandbox) {
                 ContentView()
             }
-            .overlay {
-                if showSimulationLockAlert {
-                    ZStack {
-                        Color.black.opacity(0.4)
-                            .ignoresSafeArea()
-                            .onTapGesture {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    showSimulationLockAlert = false
-                                }
-                            }
-
-                        LockAlertView(data: lockAlertViewModel.alerts[0]) {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                showSimulationLockAlert = false
-                            }
-                        }
-                    }
-                    .transition(.opacity.combined(with: .scale))
-                }
-            }
         }
     }
 
@@ -92,12 +69,7 @@ struct MainMenuView: View {
     }
 
     private func openSandbox() {
-        guard progressStore.isSandboxUnlocked else {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showSimulationLockAlert = true
-            }
-            return
-        }
+        guard progressStore.isSandboxUnlocked else { return }
         showSandbox = true
     }
 }

@@ -28,6 +28,7 @@ struct LevelMapButton: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .disabled(!isUnlocked)
             .accessibilityLabel("Level \(levelID), \(title)")
             .accessibilityValue(accessibilityValue)
             .accessibilityHint(accessibilityHint)

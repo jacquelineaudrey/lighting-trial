@@ -13,6 +13,7 @@ struct MainMenuButton: View {
     var body: some View {
         Button(title, action: action)
             .buttonStyle(MainMenuButtonStyle(isLocked: isLocked))
+            .disabled(isLocked)
             .accessibilityLabel(accessibilityLabel)
             .accessibilityHint(accessibilityHint)
     }
