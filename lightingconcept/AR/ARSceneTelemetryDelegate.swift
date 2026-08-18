@@ -7,4 +7,5 @@ protocol ARSceneTelemetryDelegate: AnyObject {
     func sceneDidPlace(at worldPosition: SIMD3<Float>)
     func sceneDidReset()
     func cameraDidUpdate(position: SIMD3<Float>)
+    func lightDidSelect()
 }

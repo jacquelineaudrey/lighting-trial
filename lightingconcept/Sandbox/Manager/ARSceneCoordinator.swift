@@ -332,6 +332,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         if let entity = arView.entity(at: location),
            selectLight(containing: entity) {
             viewModel.interactionMode = .moveLight
+            telemetryDelegate?.lightDidSelect()
             synchronizeScene()
             return
         }

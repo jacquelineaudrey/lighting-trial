@@ -123,6 +123,8 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         phase = .placingScene
     }
 
+    func lightDidSelect() {}
+
     func cameraDidUpdate(position: SIMD3<Float>) {
         guard phase == .shadowExploration, !hasCompletedShadowTask, let center = sceneWorldPosition else { return }
         defer { previousCameraPosition = position }
