@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct Level1FlowView: View {
     @StateObject private var viewModel = Level1ViewModel()
@@ -37,6 +38,8 @@ struct Level1FlowView: View {
                 Level1LightShadowOverlay(viewModel: viewModel)
             case .findingShapes:
                 Level1FindShapeOverlay(viewModel: viewModel)
+            case .returningToFirstObject:
+                EmptyView()
             case .textureTapPrompt:
                 Level1TextureTapPromptOverlay()
             case .textureExploration:
@@ -75,14 +78,15 @@ struct Level1FlowView: View {
                     .padding(.top, 28)
             }
         }
-        .overlay(alignment: .top) {
-            if let celebration = viewModel.checkpointCelebration {
-                ShapeFoundToast(celebration: celebration)
-                    .id(celebration.id)
-                    .transition(.scale(scale: 0.7).combined(with: .opacity))
-                    .padding(.top, 64)
-                    .allowsHitTesting(false)
+        .alert("Scene akan di-freeze", isPresented: $viewModel.showsFreezeSceneConfirmation) {
+            Button("Iya, lanjut") {
+                viewModel.confirmFreezeSceneAndStartDrawing()
             }
+            Button("Sebentar aku arahkan lagi", role: .cancel) {
+                viewModel.cancelFreezeSceneConfirmation()
+            }
+        } message: {
+            Text("Pastikan layarmu menangkap objek.")
         }
         .alert(
             "Foto Gambar",
@@ -99,7 +103,6 @@ struct Level1FlowView: View {
             dismiss()
         }
         .animation(.easeInOut(duration: 0.25), value: viewModel.phase)
-        .animation(.spring(response: 0.35, dampingFraction: 0.65), value: viewModel.checkpointCelebration)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
         .task(id: viewModel.narrationID) {
             // Saat scanning, anak hanya melihat instruksi scan. Lumi dan
@@ -135,43 +138,13 @@ private struct Level1FindShapeOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
 
     var body: some View {
-        VStack {
-            Spacer()
-            HStack {
-                Spacer()
-                if viewModel.hasFoundAllShapes {
-                    Button("Selanjutnya", action: viewModel.continueToTextureLesson)
-                        .font(.headline.bold())
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 14)
-                        .background(.blue, in: Capsule())
-                        .foregroundStyle(.white)
-                        .padding(.trailing, 54)
-                        .padding(.bottom, 46)
-                }
-            }
-        }
+        EmptyView()
     }
 }
 
 private struct Level1TextureTapPromptOverlay: View {
     var body: some View {
-        ZStack {
-            VStack {
-                Spacer()
-                HStack {
-                    Image("Finger")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 74, height: 160)
-                        .opacity(0.9)
-                        .padding(.leading, 118)
-                        .padding(.bottom, 126)
-                    Spacer()
-                }
-            }
-
-        }
+        EmptyView()
     }
 }
 
@@ -180,9 +153,11 @@ private struct Level1TextureOverlay: View {
 
     var body: some View {
         ZStack {
-            VStack {
-                Spacer()
-                Level1ExperimentControls(viewModel: viewModel)
+            if viewModel.showsExperimentControls {
+                VStack {
+                    Spacer()
+                    Level1ExperimentControls(viewModel: viewModel)
+                }
             }
         }
     }
@@ -193,9 +168,11 @@ private struct Level1ShapeChangeOverlay: View {
 
     var body: some View {
         ZStack {
-            VStack {
-                Spacer()
-                Level1ExperimentControls(viewModel: viewModel)
+            if viewModel.showsExperimentControls {
+                VStack {
+                    Spacer()
+                    Level1ExperimentControls(viewModel: viewModel)
+                }
             }
         }
     }
@@ -294,6 +271,15 @@ private struct Level1ExperimentControls: View {
                         .padding(.bottom, 36)
                 }
             }
+
+            if viewModel.showsTextureControlGesture || viewModel.showsShapeControlGesture {
+                TouchGestureImage()
+                    .frame(width: 42, height: 96)
+                    .rotationEffect(.degrees(180))
+                    .padding(.leading, viewModel.showsTextureControlGesture ? 72 : 30)
+                    .padding(.bottom, 24)
+                    .allowsHitTesting(false)
+            }
         }
     }
 
@@ -373,6 +359,29 @@ private struct Level1ExperimentControls: View {
                 .background(isSelected ? Color.blue : Color.white.opacity(0.10), in: Circle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct TouchGestureImage: View {
+    var body: some View {
+        if let image = Self.touchGestureImage {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+        } else {
+            Image(systemName: "hand.tap.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.24), radius: 3, y: 1)
+        }
+    }
+
+    private static var touchGestureImage: UIImage? {
+        ["Levels/level1/touchGesture", "Levels/touchGesture", "touchGesture"]
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
     }
 }
 
