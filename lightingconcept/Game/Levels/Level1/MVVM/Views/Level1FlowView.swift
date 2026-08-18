@@ -80,15 +80,6 @@ struct Level1FlowView: View {
                     .padding(.top, 28)
             }
         }
-        #if DEBUG
-        .overlay(alignment: .topTrailing) {
-            if viewModel.phase != .completed {
-                Level1DebugMenu(viewModel: viewModel)
-                    .padding(.trailing, 16)
-                    .padding(.top, 12)
-            }
-        }
-        #endif
         .alert("Scene akan di-freeze", isPresented: $viewModel.showsFreezeSceneConfirmation) {
             Button("Iya, lanjut") {
                 viewModel.confirmFreezeSceneAndStartDrawing()
@@ -135,34 +126,6 @@ struct Level1FlowView: View {
         .navigationBarBackButtonHidden(true)
     }
 }
-
-#if DEBUG
-private struct Level1DebugMenu: View {
-    @ObservedObject var viewModel: Level1ViewModel
-
-    var body: some View {
-        Menu {
-            Button("Lanjut Phase", action: viewModel.debugAdvanceCurrentPhase)
-            Button("Intro Cahaya", action: viewModel.debugJumpToLightShadowIntro)
-            Button("Adventure Bentuk", action: viewModel.debugJumpToShapeAdventure)
-            Button("Adventure Selesai", action: viewModel.debugCompleteShapeAdventure)
-            Button("Pencet Kubus", action: viewModel.debugJumpToTexturePrompt)
-            Button("Pilih Tekstur", action: viewModel.debugJumpToTextureSelection)
-            Button("Pilih Bentuk", action: viewModel.debugJumpToShapeSelectionReady)
-            Button("Siap Aku Pilih Ini", action: viewModel.debugJumpToDrawingReady)
-            Button("Foto Gambar", action: viewModel.debugJumpToPhotoPrompt)
-            Button("Perbandingan Foto", action: viewModel.debugJumpToPhotoComparison)
-        } label: {
-            Text("DEV")
-                .font(.caption.bold())
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.red, in: Capsule())
-        }
-    }
-}
-#endif
 
 private struct Level1OpeningOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel

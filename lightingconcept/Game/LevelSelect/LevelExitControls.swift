@@ -53,12 +53,28 @@ struct LevelExitConfirmation: ViewModifier {
     let onConfirm: () -> Void
 
     func body(content: Content) -> some View {
-        content.alert("Mau berhenti main dulu? 🎈", isPresented: $isPresented) {
-            Button("Main Terus, Yuk! 😄", role: .cancel) {}
-            Button("Ke Menu Aja! 👋") { onConfirm() }
-        } message: {
-            Text("Asyiknya, kalau nanti main lagi kamu bisa mulai petualangan seru ini dari awal lagi! Yuk jadi juara sekali lagi! 🚀🌟")
-        }
+        content
+            .overlay {
+                if isPresented {
+                    ZStack {
+                        Color.black.opacity(0.4)
+                            .ignoresSafeArea()
+                            .onTapGesture { isPresented = false }
+
+                        ExitLevelDialog(
+                            onStayTapped: {
+                                isPresented = false
+                            },
+                            onExitTapped: {
+                                isPresented = false
+                                onConfirm()
+                            }
+                        )
+                    }
+                    .transition(.opacity.combined(with: .scale))
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: isPresented)
     }
 }
 
