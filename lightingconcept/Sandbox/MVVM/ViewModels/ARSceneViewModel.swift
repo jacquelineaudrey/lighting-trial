@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import SwiftUI
+import RealityKit
 
 final class ARSceneViewModel: ObservableObject {
     @Published var objects: [ObjectConfiguration]
@@ -77,7 +78,8 @@ final class ARSceneViewModel: ObservableObject {
     /// memakai scan sebagai feedback UX saja supaya anak tidak terkunci menunggu
     /// mesh reconstruction yang lambat di iPhone.
     @Published var requiresLiDARScanBeforePlacement = true
-
+    @Published var additionalEntities: [Entity] = []
+    
     init() {
         let initialObject = ObjectConfiguration.defaultObject()
         let initialLight = LightConfiguration.defaultLight()
@@ -87,6 +89,10 @@ final class ARSceneViewModel: ObservableObject {
         selectedLightID = initialLight.id
     }
 
+    func addEntityToScene(_ entity: Entity) {
+        additionalEntities.append(entity)
+    }
+    
     var surfaceGuidanceText: String {
         switch surfaceState {
         case .scanning:
