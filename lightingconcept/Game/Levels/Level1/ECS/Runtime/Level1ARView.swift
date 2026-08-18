@@ -17,6 +17,11 @@ struct Level1ARView: UIViewRepresentable {
     
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
+        arView.automaticallyConfigureSession = false
+        arView.environment.lighting.intensityExponent = 0
+        arView.renderOptions.insert(.disableMotionBlur)
+        arView.renderOptions.insert(.disableDepthOfField)
+        arView.renderOptions.insert(.disablePersonOcclusion)
         
         // 1. Register Native ECS Systems
         PulseAnimationSystem.registerSystem()
@@ -30,6 +35,11 @@ struct Level1ARView: UIViewRepresentable {
         // 3. Configure ARKit to open the Camera and detect planes
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal]
+        config.environmentTexturing = .automatic
+        config.isLightEstimationEnabled = true
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+            config.frameSemantics.insert(.smoothedSceneDepth)
+        }
         arView.environment.sceneUnderstanding.options.insert(.occlusion)
         arView.environment.sceneUnderstanding.options.insert(.collision)
         arView.environment.sceneUnderstanding.options.insert(.receivesLighting)

@@ -109,7 +109,6 @@ final class Level1ViewModel: ObservableObject {
     private var scanStartTime: Date?
 
     private var checkpointEntities: [ModelEntity] = []
-    private var checkpointShadowEntities: [Entity] = []
     private var checkpointLocalPositions: [SIMD3<Float>] = []
     private var markerWorldPositions: [SIMD3<Float>] = []
     private var checkpointHighlightEntities: [Entity] = []
@@ -127,7 +126,7 @@ final class Level1ViewModel: ObservableObject {
     private var guideNeedsPlacement = true
 
     private let hapticGenerator = UINotificationFeedbackGenerator()
-    private let pathRadius: Float = 3.2
+    private let pathRadius: Float = 1.5
     private let checkpointHeight: Float = 0.34
     private let markerRadius: Float = 1.0
 
@@ -307,7 +306,6 @@ final class Level1ViewModel: ObservableObject {
         radarLabelEntity = nil
         hasPlacedScene = false
         checkpointEntities.removeAll()
-        checkpointShadowEntities.removeAll()
         checkpointLocalPositions.removeAll()
         markerWorldPositions.removeAll()
         checkpointHighlightEntities.removeAll()
@@ -792,7 +790,7 @@ final class Level1ViewModel: ObservableObject {
         let scanCameraXZ = latestCameraPositionXZ ?? .zero
         let scanForwardXZ = latestCameraForwardXZ ?? SIMD2<Float>(0, -1)
         let floorY = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
-        let firstCheckpointDistance: Float = 1.25
+        let firstCheckpointDistance: Float = 1.5
         let pathCenterXZ = scanCameraXZ + scanForwardXZ * (pathRadius + firstCheckpointDistance)
         let firstCheckpointDirection = -scanForwardXZ
 
@@ -808,7 +806,7 @@ final class Level1ViewModel: ObservableObject {
             if count == 2 {
                 // Dua target dibuat sebagai jalur lurus di depan pemain agar
                 // waypoint mudah diikuti dan objek kedua tidak muncul terlalu jauh.
-                shapeXZ = scanCameraXZ + scanForwardXZ * (firstCheckpointDistance + Float(index) * 1.40)
+                shapeXZ = scanCameraXZ + scanForwardXZ * (firstCheckpointDistance + Float(index) * 1.5)
             } else {
                 let angleStep = (2 * Float.pi) / Float(count)
                 let baseAngle = atan2(firstCheckpointDirection.y, firstCheckpointDirection.x)
@@ -833,30 +831,22 @@ final class Level1ViewModel: ObservableObject {
             checkpointLightEntities.append(lightEntity)
             anchorGroup.addChild(lightEntity)
 
-            let shadowEntity = makeShadowEntity(
-                for: checkpoint.shape.objectType,
-                objectPosition: localPosition,
-                lightPosition: lightPosition
-            )
-            checkpointShadowEntities.append(shadowEntity)
-            anchorGroup.addChild(shadowEntity)
-
             // Checkpoint floor ring sengaja tidak dibuat: Level 1 sekarang
             // fokus pada cahaya, bayangan, dan objek uji yang sama.
         }
 
         let primaryObjectPosition = checkpointLocalPositions.first ?? .zero
         let primaryLightPosition = checkpointLightEntities.first?.position ?? primaryObjectPosition + lightOffset(for: .cube)
-        // Semua checkpoint selalu membuat entity bayangan. Fallback di sini
-        // hanya untuk menjaga posisi marker tetap aman bila scene dibersihkan.
-        let primaryShadowPosition = checkpointShadowEntities.first?.position ?? primaryObjectPosition
-        // White mark diberi jarak dari target dan terhubung garis putus-putus,
-        // supaya tidak tenggelam ke dalam objek atau bayangan.
+        let primaryShadowPosition = estimatedShadowPosition(
+            objectPosition: primaryObjectPosition,
+            lightPosition: primaryLightPosition,
+            objectType: checkpoints.first?.shape.objectType ?? .cube
+        )
         let objectTargetPosition = primaryObjectPosition + SIMD3<Float>(0, checkpointHeight * 0.62, 0)
         let radarPositions: [Level1RadarTarget: (target: SIMD3<Float>, marker: SIMD3<Float>)] = [
             .light: (
                 primaryLightPosition,
-                primaryLightPosition + diagonalMarkerOffset(direction: SIMD3<Float>(1, 1, 1), distance: 0.30)
+                primaryLightPosition
             ),
             .shadow: (
                 primaryShadowPosition + SIMD3<Float>(0, 0.025, 0),
@@ -870,7 +860,9 @@ final class Level1ViewModel: ObservableObject {
         for (target, positions) in radarPositions {
             let radar = makeRadarEntity(target: target)
             radar.position = positions.marker
-            radar.addChild(makeDashedLeader(toward: positions.target - positions.marker))
+            if target != .light {
+                radar.addChild(makeDashedLeader(toward: positions.target - positions.marker))
+            }
             radarEntities[target] = radar
             radarWorldPositions[target] = SIMD3<Float>(
                 pathCenterXZ.x + positions.marker.x,
@@ -949,10 +941,6 @@ final class Level1ViewModel: ObservableObject {
             }
         }
 
-        for (index, shadow) in checkpointShadowEntities.enumerated() {
-            shadow.isEnabled = showLightAndShadow && (checkpointEntities[safe: index]?.isEnabled == true)
-        }
-
         for (index, light) in checkpointLightEntities.enumerated() {
             light.isEnabled = showLightAndShadow && (checkpointEntities[safe: index]?.isEnabled == true)
         }
@@ -1022,14 +1010,7 @@ final class Level1ViewModel: ObservableObject {
         entity.model = replacement.model
         entity.collision = replacement.collision
         let finalScale = checkpointHeight / SceneObjectSystem.baseDimensions(for: selectedShape.objectType).y
-        if let primaryShadow = checkpointShadowEntities.first {
-            configureShadowEntity(
-                primaryShadow,
-                for: selectedShape.objectType,
-                objectPosition: checkpointLocalPositions.first ?? .zero,
-                lightPosition: checkpointLightEntities.first?.position ?? lightOffset(for: selectedShape.objectType)
-            )
-        }
+        entity.components.set(DynamicLightShadowComponent(castsShadow: true))
         entity.scale = SIMD3<Float>(repeating: finalScale)
     }
 
@@ -1319,6 +1300,25 @@ final class Level1ViewModel: ObservableObject {
         return direction / length * distance
     }
 
+    private func estimatedShadowPosition(
+        objectPosition: SIMD3<Float>,
+        lightPosition: SIMD3<Float>,
+        objectType: LearningObjectType
+    ) -> SIMD3<Float> {
+        let groundDirection = ShadowGeometryCalculator.groundShadowDirection(
+            lightPosition: lightPosition,
+            objectPosition: objectPosition
+        ) ?? SIMD3<Float>(-1, 0, 0)
+        let objectHeight = scaledObjectDimensions(for: objectType).y
+        let lightDirection = simd_normalize(objectPosition - lightPosition)
+        let estimatedLength = ShadowGeometryCalculator.approximateShadowLength(
+            lightDirection: lightDirection,
+            objectHeight: objectHeight
+        ) ?? 0.38
+        let length = clamped(estimatedLength * 0.55, 0.18, 0.58)
+        return objectPosition + groundDirection * length + SIMD3<Float>(0, 0.025, 0)
+    }
+
     private func makeCheckpointHighlightEntity() -> Entity {
         let root = Entity()
         var material = UnlitMaterial(color: UIColor.systemBlue.withAlphaComponent(0.55))
@@ -1437,8 +1437,8 @@ final class Level1ViewModel: ObservableObject {
         light.components.set(component)
         var shadow = SpotLightComponent.Shadow()
         shadow.zNear = .fixed(0.01)
-        shadow.zFar = .fixed(4)
-        shadow.depthBias = 0.03
+        shadow.zFar = .fixed(8)
+        shadow.depthBias = 0.004
         light.components.set(shadow)
         if let angles = SceneLightSystem.aimingAngles(from: position, to: target) {
             light.orientation = SceneLightSystem.orientation(
@@ -1459,107 +1459,6 @@ final class Level1ViewModel: ObservableObject {
         return SIMD3<Float>(0.48, 0.46 + heightAdjustment, -0.42)
     }
 
-
-    private func makeShadowEntity(
-        for objectType: LearningObjectType,
-        objectPosition: SIMD3<Float>,
-        lightPosition: SIMD3<Float>
-    ) -> Entity {
-        let root = Entity()
-        configureShadowEntity(root, for: objectType, objectPosition: objectPosition, lightPosition: lightPosition)
-        return root
-    }
-
-    /// Memakai kalkulator bayangan shared agar arah dan panjangnya konsisten
-    /// dengan level lain.
-    private func configureShadowEntity(
-        _ root: Entity,
-        for objectType: LearningObjectType,
-        objectPosition: SIMD3<Float>,
-        lightPosition: SIMD3<Float>
-    ) {
-        root.children.removeAll()
-        let lightDirection = simd_normalize(objectPosition - lightPosition)
-        let groundDirection = ShadowGeometryCalculator.groundShadowDirection(
-            lightPosition: lightPosition,
-            objectPosition: objectPosition
-        ) ?? SIMD3<Float>(-1, 0, 0)
-        let objectHeight = scaledObjectDimensions(for: objectType).y
-        let topCenter = objectPosition + SIMD3<Float>(0, objectHeight, 0)
-        let projectedTop = ShadowGeometryCalculator.projectPointAlongLightDirection(
-            vertexPosition: topCenter,
-            lightDirection: lightDirection,
-            planeY: objectPosition.y
-        )
-        let projectedLength = projectedTop.map {
-            simd_length(SIMD3<Float>($0.x - objectPosition.x, 0, $0.z - objectPosition.z))
-        }
-        let estimatedLength = ShadowGeometryCalculator.approximateShadowLength(
-            lightDirection: lightDirection,
-            objectHeight: objectHeight
-        )
-        let rawLength = projectedLength ?? estimatedLength ?? 0.38
-        let length = clamped(rawLength * 1.05, 0.40, 1.35)
-        root.position = objectPosition + groundDirection * (length * 0.52) + SIMD3<Float>(0, 0.018, 0)
-        root.orientation = simd_quatf(angle: atan2(groundDirection.z, groundDirection.x), axis: [0, 1, 0])
-
-        let shadowWidth = shadowBaseWidth(for: objectType)
-        let layers: [(lengthMultiplier: Float, widthMultiplier: Float, alpha: Float)] = [
-            (1.00, 1.04, 0.62),
-            (1.16, 1.24, 0.34),
-            (1.36, 1.46, 0.16)
-        ]
-
-        for (index, layer) in layers.enumerated() {
-            var material = UnlitMaterial(color: UIColor.black.withAlphaComponent(CGFloat(layer.alpha)))
-            material.blending = .transparent(opacity: .init(floatLiteral: layer.alpha))
-            let shadow = makeShadowLayer(
-                for: objectType,
-                length: length * layer.lengthMultiplier,
-                width: shadowWidth * layer.widthMultiplier,
-                material: material
-            )
-            shadow.name = "level1-soft-shadow-\(index)"
-            shadow.position.y = Float(index) * 0.002
-            shadow.components.set(DynamicLightShadowComponent(castsShadow: false))
-            root.addChild(shadow)
-        }
-    }
-
-    private func makeShadowLayer(
-        for objectType: LearningObjectType,
-        length: Float,
-        width: Float,
-        material: UnlitMaterial
-    ) -> ModelEntity {
-        switch objectType {
-        case .cube, .cuboid, .squarePyramid, .triangularPyramid:
-            return ModelEntity(
-                mesh: .generateBox(width: max(length, 0.12), height: 0.005, depth: max(width, 0.09)),
-                materials: [material]
-            )
-        case .sphere, .cylinder, .cone, .hemisphere:
-            let radius = max(width * 0.5, 0.04)
-            let entity = ModelEntity(mesh: .generateSphere(radius: radius), materials: [material])
-            entity.scale = SIMD3<Float>(max(length / max(width, 0.001), 0.8), 0.012, 1.0)
-            return entity
-        }
-    }
-
-    private func shadowBaseWidth(for objectType: LearningObjectType) -> Float {
-        let dimensions = scaledObjectDimensions(for: objectType)
-        let footprint = max(dimensions.x, dimensions.z)
-        switch objectType {
-        case .cuboid:
-            return footprint * 1.08
-        case .squarePyramid, .triangularPyramid:
-            return footprint * 0.92
-        case .cone:
-            return footprint * 0.84
-        case .cube, .sphere, .cylinder, .hemisphere:
-            return footprint
-        }
-    }
 
     private func scaledObjectDimensions(for objectType: LearningObjectType) -> SIMD3<Float> {
         let base = SceneObjectSystem.baseDimensions(for: objectType)
