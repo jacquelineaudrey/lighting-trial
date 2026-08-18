@@ -720,8 +720,8 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.selectedObjectType = .cube
         arSceneViewModel.objectScale = 0.85
         arSceneViewModel.requiresLiDARScanBeforePlacement = false
-        arSceneViewModel.usesLiDARSceneReconstruction = false
-        arSceneViewModel.usesRealisticEnvironmentLighting = false
+        arSceneViewModel.usesLiDARSceneReconstruction = true
+        arSceneViewModel.usesRealisticEnvironmentLighting = true
         arSceneViewModel.showLightDirection = true
         arSceneViewModel.showLightRays = false
         arSceneViewModel.showProjectionLines = false

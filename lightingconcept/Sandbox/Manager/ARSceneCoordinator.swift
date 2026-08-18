@@ -642,13 +642,19 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         case .none:
             break
         case .level2LightControl:
-            guard let light = SceneLightSystem.entityWithLightID(viewModel.selectedLightID, in: anchor) else { return }
-            let configuration = viewModel.selectedLight
-            light.components.set(Level2LightControlComponent(
-                intensity: configuration.intensity,
-                outerAngleInDegrees: configuration.effectiveOuterAngleDegrees,
-                isEnabled: configuration.type == .spot
-            ))
+            if let light = SceneLightSystem.entityWithLightID(viewModel.selectedLightID, in: anchor) {
+                let configuration = viewModel.selectedLight
+                light.components.set(Level2LightControlComponent(
+                    intensity: configuration.intensity,
+                    outerAngleInDegrees: configuration.effectiveOuterAngleDegrees,
+                    isEnabled: configuration.type == .spot
+                ))
+            }
+            if let object = SceneObjectSystem.entityWithObjectID(viewModel.selectedObjectID, in: anchor) {
+                object.components.set(Level3ShadowPresentationComponent(
+                    castsShadow: viewModel.showGroundProjection
+                ))
+            }
         case .level3ShadowPresentation:
             guard let object = SceneObjectSystem.entityWithObjectID(viewModel.selectedObjectID, in: anchor) else { return }
             object.components.set(Level3ShadowPresentationComponent(
