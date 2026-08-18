@@ -316,7 +316,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
-    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+    @objc func handleTap(_ gesture: UITapGestureRecognizer) {
         guard let arView else { return }
         let location = gesture.location(in: arView)
 

@@ -1,64 +1,43 @@
 import Foundation
 
-/// State navigation milik SwiftUI/MVVM; tidak memegang entity RealityKit.
-enum Level2Phase: String, Equatable {
-    case onboarding
-    case placingScene
-    case surfaceReady
-    case shadowExploration
-    case shadowTrivia
-    case spreadTransition
-    case spreadExploration
-    case spreadTrivia
-    case intensityExploration
-    case intensityTrivia
-    case closing
-    case review
-    case completed
-}
-
 enum Level2Content {
     static let levelID = 2
     static let levelTitle = "Bayangan dan Cahaya"
 
     static let onboardingDialog: [DialogLine] = [
-        DialogLine(characterName: "Kiki", text: "Halo! Hari ini kita jadi detektif cahaya 🔎💡"),
-        DialogLine(characterName: "Kiki", text: "Kita akan mencari bayangan, melebarkan cahaya, lalu membuatnya terang dan redup."),
-        DialogLine(characterName: "Kiki", text: "Pegang iPad erat dan jalan pelan. Kalau bisa, minta orang dewasa menemani, ya!"),
-        DialogLine(characterName: "Kiki", text: "Ayo cari meja atau lantai yang kosong untuk menaruh benda cahaya kita.")
+        DialogLine(characterName: "Lumi", text: "Hiii, hari ini kita main lagi dengan cahaya yuk!", audioFileName: "level-2/1 Hiii, hari ini kita main lagi dengan cahaya yuk!.mp3"),
+        DialogLine(characterName: "Lumi", text: "Hmmm, gimana ya kalau cahayanya bisa menyebar?", audioFileName: "level-2/2 Hmmm, gimana ya kalau cahayanya bisa menyebar_.mp3")
     ]
 
     static let shadowTrivia: [DialogLine] = [
-        DialogLine(characterName: "Kiki", text: "Cahaya bergerak menuju benda."),
-        DialogLine(characterName: "Kiki", text: "Saat benda menghalangi cahaya, bagian di belakang benda menjadi gelap."),
-        DialogLine(characterName: "Kiki", text: "Bagian gelap itu disebut bayangan. Bayangan muncul di sisi yang menjauhi lampu.")
+        DialogLine(characterName: "Lumi", text: "Tekan sekali lampunya ya untuk mengatur cahaya", audioFileName: "level-2/3 Tekan sekali lampunya ya untuk mengatur cahaya.mp3")
     ]
 
     static let spreadTransition: [DialogLine] = [
-        DialogLine(characterName: "Kiki", text: "Sekarang kita coba mengubah lebar cahaya."),
-        DialogLine(characterName: "Kiki", text: "Siapkan dua ibu jari. Rapatkan untuk membuat cahaya menyempit, lalu jauhkan untuk membuatnya melebar!")
+        DialogLine(characterName: "Lumi", text: "Tempelkan jempol dan telunjuk ke layar ya", audioFileName: "level-2/4 Tempelkan jempol dan telunjuk ke layar ya.mp3"),
+        DialogLine(characterName: "Lumi", text: "Lebarkan jari untuk melebarkan cahaya", audioFileName: "level-2/5 Lebarkan jari untuk melebarkan cahaya.mp3")
     ]
 
     static let spreadTrivia: [DialogLine] = [
-        DialogLine(characterName: "Kiki", text: "Cahaya yang sempit fokus di area kecil."),
-        DialogLine(characterName: "Kiki", text: "Cahaya yang lebar menyinari area yang lebih besar."),
-        DialogLine(characterName: "Kiki", text: "Lebar cahaya juga disebut sebaran cahaya. Ini berbeda dari terang atau redup, lho!")
+        DialogLine(characterName: "Lumi", text: "Ternyata ketika cahaya melebar, bayangan jadi lebih lembut dan pudar ya", audioFileName: "level-2/8 Ternyata ketika cahaya melebar, bayangan jadi lebih lembut dan pudar ya.mp3"),
+        DialogLine(characterName: "Lumi", text: "Ternyata cahaya yang rapat membuat bayangan jadi lebih tajam dan gelap ya", audioFileName: "level-2/11 Ternyata cahaya yang rapat membuat bayangan jadi lebih tajam dan gelap ya.mp3")
     ]
+    
+    // Dialog ini dimainkan saat awal masuk ke intensitas exploration
+    static let intensityExplorationDialog = DialogLine(characterName: "Lumi", text: "Naik untuk lebih terang, turun untuk lebih redup", audioFileName: "level-2/16 Naik untuk lebih terang, turun untuk lebih redup.mp3")
 
     static let intensityTrivia: [DialogLine] = [
-        DialogLine(characterName: "Kiki", text: "Intensitas adalah kuatnya cahaya."),
-        DialogLine(characterName: "Kiki", text: "Cahaya yang kuat terlihat lebih terang."),
-        DialogLine(characterName: "Kiki", text: "Cahaya yang lemah terlihat lebih redup. Lebar cahayanya tidak harus berubah.")
+        DialogLine(characterName: "Lumi", text: "Wah! Cahayanya makin terang, bayangannya makin kelihatan! Tapi, pas cahayanya redup, bayangannya ikut samar!", audioFileName: "level-2/17 Wah! Cahayanya makin terang, bayangannya makin kelihatan! Tapi, pas cahayanya redup, bayangannya ikut samar!.mp3"),
+        DialogLine(characterName: "Lumi", text: "Hebat! Sekarang kamu sudah bisa mengatur cahaya sendiri!", audioFileName: "level-2/18 Hebat! Sekarang kamu sudah bisa mengatur cahaya sendiri!.mp3")
     ]
 
     static let closingDialog: [DialogLine] = [
-        DialogLine(characterName: "Kiki", text: "Hebat! Kamu sudah bisa mengamati bayangan dan mengatur cahaya 🌟"),
-        DialogLine(characterName: "Kiki", text: "Sebelum selesai, yuk kita ingat tiga penemuan penting hari ini!")
+        DialogLine(characterName: "Lumi", text: "Good job! Sekarang kamu tahu, lebar dan terang cahaya bisa mengubah bayangan!", audioFileName: "level-2/24 Good job! Sekarang kamu tahu, lebar dan terang cahaya bisa mengubah bayangan!.mp3")
     ]
 
     static let reviewPoints = [
-        "Benda yang menghalangi cahaya menghasilkan bayangan.",
-        "Sebaran cahaya menentukan area cahaya yang sempit atau lebar.",
-        "Intensitas menentukan cahaya yang terang atau redup."
+        "Cahaya yang rapat membuat bayangan lebih tajam.",
+        "Cahaya yang menyebar membuat bayangan lebih pudar.",
+        "Cahaya terang memperjelas bayangan, sedangkan cahaya redup menyamarkannya."
     ]
 }

@@ -3,7 +3,7 @@ import Combine
 
 struct Level3FlowView: View {
     @State private var viewModel = Level3ViewModel()
-    @State private var narrator = AppleSpeechNarrator()
+    @State private var narrator = LessonAudioNarrator() // Diganti menggunakan audio narration Level 1
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
@@ -12,13 +12,12 @@ struct Level3FlowView: View {
         ZStack(alignment: .bottom) {
             Level3ARContainerView(sceneViewModel: viewModel.arSceneViewModel, telemetryDelegate: viewModel)
                 .ignoresSafeArea()
-
+            
             overlay
         }
-        // ⭐️ FIX: Memanggil wrapper view yang mengobservasi ARSceneViewModel secara langsung
-        .overlay {
-            Level3ConceptOverlayContainer(sceneViewModel: viewModel.arSceneViewModel)
-        }
+//        .overlay {
+//            Level3ConceptOverlayContainer(sceneViewModel: viewModel.arSceneViewModel)
+//        }
         .overlay(alignment: .topLeading) {
             if viewModel.phase != .completed {
                 LevelBackButton { showsExitConfirmation = true }
@@ -35,71 +34,125 @@ struct Level3FlowView: View {
                     .allowsHitTesting(false)
             }
         }
-        #if DEBUG
-        .overlay(alignment: .topTrailing) {
-            if viewModel.phase != .completed {
-                Button("DEV: Lanjut") {
-                    viewModel.debugAdvanceCurrentPhase()
-                }
-                .font(.caption.bold())
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .padding(.trailing, 16)
-                .padding(.top, 12)
-            }
-        }
-        #endif
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
             dismiss()
         }
         .animation(reduceMotion ? nil : .easeInOut, value: viewModel.phase)
         .animation(.easeInOut(duration: 0.2), value: viewModel.arSceneViewModel.selectedConcept)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
-        .task(id: viewModel.narrationText) { narrator.speak(viewModel.narrationText) }
+        .task(id: viewModel.narrationID) {
+            guard viewModel.phase != .placingScene else {
+                narrator.stop()
+                return
+            }
+            narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
+        }
         .onDisappear { narrator.stop() }
         .onChange(of: viewModel.arSceneViewModel.surfaceState) { _, _ in
             viewModel.surfaceDidBecomeReady()
         }
+        .onChange(of: viewModel.arSceneViewModel.selectedConcept) { _, newConcept in
+            viewModel.forceSyncGuideForConcept()
+            
+            if newConcept != nil {
+                // Bayo mulai ngomong sesuai penjelasan marker yang diketuk
+                narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
+            } else {
+                // Jika marker ditutup, hentikan suara dan kembalikan ke narasi fase level
+                narrator.stop()
+                narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
+            }
+        }
         .navigationBarBackButtonHidden(true)
     }
 
-    private func replayNarration() {
-        narrator.speak(viewModel.narrationText)
-    }
-
+    // Overlay mengikuti layout "unblocked AR" mirip Level 1
     @ViewBuilder private var overlay: some View {
-        switch viewModel.phase {
-        case .onboarding:
-            Level3Dialog(line: viewModel.currentOnboardingLine, buttonTitle: viewModel.onboardingIndex == Level3Content.onboardingDialog.count - 1 ? "Mulai" : "Lanjut", replayNarration: replayNarration, action: viewModel.advanceOnboarding)
-        case .placingScene:
-            Level3Placement(sceneViewModel: viewModel.arSceneViewModel, replayNarration: replayNarration, action: viewModel.arSceneViewModel.placeSceneAtScreenCenter)
-        case .surfaceReady:
-            SurfaceReadyOverlay(
-                onContinue: viewModel.continueAfterSurfaceCheck,
-                onRescan: viewModel.rescanSurface
-            )
-        case .shadowExploration:
-            Level3TaskCard(title: "Cari bayangan", progress: viewModel.shadowProgress, total: 3, button: viewModel.hasCompletedShadowTask ? "Lihat Penjelasan" : nil, replayNarration: replayNarration, action: viewModel.continueFromShadowTask)
-        case .shadowTrivia:
-            Level3Dialog(line: viewModel.currentShadowTriviaLine, buttonTitle: viewModel.shadowTriviaIndex == Level3Content.shadowTrivia.count - 1 ? "Lihat Jenis Bayangan" : "Lanjut", replayNarration: replayNarration, action: viewModel.advanceShadowTrivia)
-        case .shadowTypesInteraction:
-            VStack(spacing: 12) {
-                Level3Dialog(line: viewModel.currentShadowTypesLine, buttonTitle: viewModel.shadowTypesIndex == Level3Content.shadowTypesTrivia.count - 1 ? "Bandingkan Bentuk" : "Lanjut", replayNarration: replayNarration, action: viewModel.advanceShadowTypes)
-                Button(viewModel.shadowVisible ? "Sembunyikan Bayangan" : "Tampilkan Bayangan", action: viewModel.toggleShadow).buttonStyle(.borderedProminent)
+            switch viewModel.phase {
+            case .placingScene:
+                VStack(spacing: 12) {
+                    SurfaceScanInstruction(sceneViewModel: viewModel.arSceneViewModel)
+                    Text(viewModel.arSceneViewModel.surfaceState == .found
+                         ? "Tempat ditemukan! Ketuk layar untuk menaruh benda."
+                         : "Arahkan iPad pelan-pelan ke lantai atau meja yaaa!")
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(20)
+                .frame(maxWidth: 620)
+                .background(.thinMaterial, in: .rect(cornerRadius: 24))
+                .padding(16)
+                
+            case .surfaceReady:
+                SurfaceReadyOverlay(
+                    onContinue: viewModel.continueAfterSurfaceCheck,
+                    onRescan: viewModel.rescanSurface
+                )
+                
+            case .shadowExploration:
+                // ⭐️ FIX: Parameter button diganti jadi nil biar nggak ada tombol "Lanjut"
+                Level3TaskCard(title: "Cari bayangan", progress: viewModel.shadowProgress, total: 3, button: nil, replayNarration: { narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName) }, action: {})
+                
+            case .shadowTypesInteraction:
+                VStack {
+                    Spacer()
+                    HStack {
+                        Button(viewModel.shadowVisible ? "Sembunyikan Bayangan" : "Tampilkan Bayangan", action: viewModel.toggleShadow)
+                            .font(.caption.bold())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(Color.orange, in: Capsule())
+                            .padding(.leading, 24)
+                        
+                        Spacer()
+                        // ⭐️ FIX: Tombol Selanjutnya dihapus dari sini!
+                    }
+                    .padding(.bottom, 36)
+                }
+                
+            case .shapeComparison:
+                Level3ShapeComparison(viewModel: viewModel, replayNarration: { narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName) })
+                
+            case .review:
+                Level3Review(points: Level3Content.reviewPoints, replayNarration: { narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName) }, action: viewModel.finishReview)
+                
+            case .completed:
+                EndLevelView(
+                    data: EndLevelViewModel.data(for: Level3Content.levelID),
+                    onBack: dismiss.callAsFunction,
+                )
+                .padding(.bottom, 24)
+                
+            default:
+                EmptyView()
             }
-        case .shapeComparison:
-            Level3ShapeComparison(viewModel: viewModel, replayNarration: replayNarration)
-        case .closing:
-            Level3Dialog(line: viewModel.currentClosingLine, buttonTitle: viewModel.closingIndex == Level3Content.closingDialog.count - 1 ? "Lihat Rangkuman" : "Lanjut", replayNarration: replayNarration, action: viewModel.advanceClosing)
-        case .review:
-            Level3Review(points: Level3Content.reviewPoints, replayNarration: replayNarration, action: viewModel.finishReview)
-        case .completed:
-            Level3TaskCard(title: "Level 3 selesai!", progress: 1, total: 1, button: "Selesai", replayNarration: replayNarration, action: dismiss.callAsFunction)
+        }
+}
+
+private struct Level3NextButtonOverlay: View {
+    let title: String
+    let action: () -> Void
+    
+    var body: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                Button(title, action: action)
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.blue, in: Capsule())
+                    .padding(.trailing, 42)
+                    .padding(.bottom, 36)
+            }
         }
     }
 }
 
-// ⭐️ FIX: Wrapper View untuk memaksa SwiftUI merender ulang saat marker di-tap
+// ⭐️ Wrapper View untuk Marker
 private struct Level3ConceptOverlayContainer: View {
     @ObservedObject var sceneViewModel: ARSceneViewModel
     
@@ -116,52 +169,13 @@ private struct Level3ConceptOverlayContainer: View {
     }
 }
 
-private struct Level3Dialog: View {
-    let line: DialogLine
-    let buttonTitle: String
-    let replayNarration: () -> Void
-    let action: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("🦉")
-                .font(.largeTitle.scaled(by: 1.6))
-                .accessibilityHidden(true)
-
-            Text(line.characterName)
-                .font(.headline)
-                .foregroundStyle(.blue)
-
-            Text(line.text)
-                .font(.title3)
-                .bold()
-                .multilineTextAlignment(.center)
-
-            Level2ReplayNarrationButton(action: replayNarration)
-
-            Button(buttonTitle, action: action)
-                .font(.title3)
-                .bold()
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .frame(maxWidth: .infinity)
-        }
-        .padding(24)
-        .background(.thinMaterial, in: .rect(cornerRadius: 28))
-        .padding(.horizontal, 20)
-        .padding(.bottom, 36)
-    }
-}
-
 private struct Level3Placement: View {
     @ObservedObject var sceneViewModel: ARSceneViewModel; let replayNarration: () -> Void; let action: () -> Void
     var body: some View {
         VStack(spacing: 12) {
             SurfaceScanInstruction(sceneViewModel: sceneViewModel)
             Text(sceneViewModel.surfaceGuidanceText).multilineTextAlignment(.center)
-
             Level2ReplayNarrationButton(action: replayNarration)
-
             Button("Taruh Benda di Tengah", action: action)
                 .buttonStyle(.borderedProminent)
         }
@@ -174,21 +188,57 @@ private struct Level3Placement: View {
 
 private struct Level3TaskCard: View {
     let title: String; let progress: Int; let total: Int; let button: String?; let replayNarration: () -> Void; let action: () -> Void
-    var body: some View { VStack(spacing: 12) { Text(title).font(.title3).bold(); ProgressView(value: Double(progress), total: Double(total)); Level2ReplayNarrationButton(action: replayNarration); if let button { Button(button, action: action).buttonStyle(.borderedProminent) } }.padding(22)
+    var body: some View {
+        VStack(spacing: 12) {
+            Text(title).font(.title3).bold();
+            ProgressView(value: Double(progress), total: Double(total));
+            Level2ReplayNarrationButton(action: replayNarration);
+            if let button { Button(button, action: action).buttonStyle(.borderedProminent) }
+        }
+        .padding(22)
         .background(.thinMaterial, in: .rect(cornerRadius: 28))
         .padding(.horizontal, 20)
-        .padding(.bottom, 36) }
+        .padding(.bottom, 36)
+    }
 }
 
 private struct Level3ShapeComparison: View {
     let viewModel: Level3ViewModel; let replayNarration: () -> Void
-    var body: some View { VStack(spacing: 12) { Text("Bentuk berbeda, bayangan berbeda").font(.title3).bold(); HStack { ForEach(Level3ViewModel.ComparisonShape.allCases) { shape in Button(shape.rawValue) { viewModel.chooseComparison(shape) }.buttonStyle(.borderedProminent) } }; Text("Pilih kedua bentuk, lalu bandingkan bayangannya.").font(.subheadline); Level2ReplayNarrationButton(action: replayNarration); Button("Lanjut", action: viewModel.finishShapeComparison).buttonStyle(.borderedProminent).disabled(!viewModel.hasComparedShapes) }.padding(22)
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("Bentuk berbeda, bayangan berbeda").font(.title3).bold()
+            HStack {
+                ForEach(Level3ViewModel.ComparisonShape.allCases) { shape in
+                    Button(shape.rawValue) { viewModel.chooseComparison(shape) }.buttonStyle(.borderedProminent)
+                }
+            }
+            Text(viewModel.hasComparedShapes
+                 ? "Ketuk layar untuk melanjutkan."
+                 : "Pilih kedua bentuk, lalu bandingkan bayangannya.")
+            .font(.subheadline)
+            
+            Level2ReplayNarrationButton(action: replayNarration)
+            // ⭐️ FIX: Button "Selanjutnya" dihapus dari sini!
+        }
+        .padding(22)
         .background(.thinMaterial, in: .rect(cornerRadius: 28))
         .padding(.horizontal, 20)
-        .padding(.bottom, 36) }
+        .padding(.bottom, 36)
+    }
 }
 
 private struct Level3Review: View {
     let points: [String]; let replayNarration: () -> Void; let action: () -> Void
-    var body: some View { VStack(alignment: .leading, spacing: 12) { Text("Learning Review").font(.title2).bold(); ForEach(points, id: \.self) { Text("• \($0)") }; Level2ReplayNarrationButton(action: replayNarration); Button("Selesai", action: action).buttonStyle(.borderedProminent) }.padding(20).frame(maxWidth: 620).background(.thinMaterial, in: .rect(cornerRadius: 24)).padding(16) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Learning Review").font(.title2).bold();
+            ForEach(points, id: \.self) { Text("• \($0)") };
+            Level2ReplayNarrationButton(action: replayNarration);
+            Button("Selesai", action: action).buttonStyle(.borderedProminent)
+        }
+        .padding(20)
+        .frame(maxWidth: 620)
+        .background(.thinMaterial, in: .rect(cornerRadius: 24))
+        .padding(16)
+    }
 }

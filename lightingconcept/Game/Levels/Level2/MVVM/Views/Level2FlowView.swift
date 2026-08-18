@@ -2,11 +2,17 @@ import SwiftUI
 
 struct Level2FlowView: View {
     @State private var viewModel = Level2ViewModel()
-    @State private var narrator = AppleSpeechNarrator()
+    @State private var narrator = LessonAudioNarrator()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
+    
+    let onNextLevel: (() -> Void)?
 
+    init(onNextLevel: (() -> Void)? = nil) {
+        self.onNextLevel = onNextLevel
+    }
+    
     var body: some View {
         ZStack(alignment: .bottom) {
             Level2ARContainerView(
@@ -18,82 +24,7 @@ struct Level2FlowView: View {
             Level2GestureLayer(viewModel: viewModel)
                 .ignoresSafeArea()
 
-            switch viewModel.phase {
-            case .onboarding:
-                Level2DialogOverlay(
-                    line: viewModel.currentOnboardingLine,
-                    buttonTitle: onboardingButtonTitle,
-                    replayNarration: replayNarration,
-                    action: viewModel.advanceOnboarding
-                )
-            case .placingScene:
-                Level2PlacementOverlay(
-                    sceneViewModel: viewModel.arSceneViewModel,
-                    replayNarration: replayNarration
-                )
-            case .surfaceReady:
-                SurfaceReadyOverlay(
-                    onContinue: viewModel.continueAfterSurfaceCheck,
-                    onRescan: viewModel.rescanSurface
-                )
-            case .shadowExploration:
-                Level2ShadowExplorationOverlay(
-                    viewModel: viewModel,
-                    replayNarration: replayNarration
-                )
-            case .shadowTrivia:
-                Level2DialogOverlay(
-                    line: viewModel.currentShadowTriviaLine,
-                    buttonTitle: shadowTriviaButtonTitle,
-                    replayNarration: replayNarration,
-                    action: viewModel.advanceShadowTrivia
-                )
-            case .spreadTransition:
-                Level2DialogOverlay(
-                    line: viewModel.currentSpreadTransitionLine,
-                    buttonTitle: spreadTransitionButtonTitle,
-                    replayNarration: replayNarration,
-                    action: viewModel.advanceSpreadTransition
-                )
-            case .spreadExploration:
-                Level2SpreadExplorationOverlay(
-                    viewModel: viewModel,
-                    replayNarration: replayNarration
-                )
-            case .spreadTrivia:
-                Level2DialogOverlay(
-                    line: viewModel.currentSpreadTriviaLine,
-                    buttonTitle: spreadTriviaButtonTitle,
-                    replayNarration: replayNarration,
-                    action: viewModel.advanceSpreadTrivia
-                )
-            case .intensityExploration:
-                Level2IntensityExplorationOverlay(
-                    viewModel: viewModel,
-                    replayNarration: replayNarration
-                )
-            case .intensityTrivia:
-                Level2DialogOverlay(
-                    line: viewModel.currentIntensityTriviaLine,
-                    buttonTitle: intensityTriviaButtonTitle,
-                    replayNarration: replayNarration,
-                    action: viewModel.advanceIntensityTrivia
-                )
-            case .closing:
-                Level2DialogOverlay(
-                    line: viewModel.currentClosingLine,
-                    buttonTitle: closingButtonTitle,
-                    replayNarration: replayNarration,
-                    action: viewModel.advanceClosing
-                )
-            case .review:
-                Level2ReviewOverlay(
-                    replayNarration: replayNarration,
-                    onFinish: viewModel.finishReview
-                )
-            case .completed:
-                Level2CompletedOverlay(onFinish: dismiss.callAsFunction)
-            }
+            overlay
         }
         .overlay(alignment: .topLeading) {
             if viewModel.phase != .completed {
@@ -116,8 +47,12 @@ struct Level2FlowView: View {
         }
         .animation(reduceMotion ? nil : .easeInOut, value: viewModel.phase)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
-        .task(id: viewModel.narrationText) {
-            narrator.speak(viewModel.narrationText)
+        .task(id: viewModel.narrationID) {
+            guard viewModel.phase != .placingScene else {
+                narrator.stop()
+                return
+            }
+            narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
         }
         .onDisappear(perform: narrator.stop)
         .onChange(of: viewModel.arSceneViewModel.surfaceState) { _, _ in
@@ -126,43 +61,109 @@ struct Level2FlowView: View {
         .navigationBarBackButtonHidden(true)
     }
 
-    private var onboardingButtonTitle: String {
-        viewModel.onboardingIndex == Level2Content.onboardingDialog.count - 1
-            ? "Cari Tempat!"
-            : "Lanjut"
+    @ViewBuilder private var overlay: some View {
+        switch viewModel.phase {
+        case .onboarding:
+            Level2NextButtonOverlay(title: "Selanjutnya", action: viewModel.advanceOnboarding)
+        case .placingScene:
+            Level2PlacementOverlay(
+                sceneViewModel: viewModel.arSceneViewModel,
+                replayNarration: { narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName) }
+            )
+        case .surfaceReady:
+            SurfaceReadyOverlay(
+                onContinue: viewModel.continueAfterSurfaceCheck,
+                onRescan: viewModel.rescanSurface
+            )
+        case .shadowExploration:
+            Level2TaskCard(
+                title: "Cari Bayangan",
+                progress: viewModel.shadowProgress,
+                total: 3,
+                button: viewModel.hasCompletedShadowTask ? "Selanjutnya" : nil,
+                replayNarration: { narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName) },
+                action: viewModel.continueFromShadowTask
+            )
+        case .shadowTrivia:
+            Level2NextButtonOverlay(title: "Selanjutnya", action: viewModel.advanceShadowTrivia)
+        case .spreadTransition:
+            Level2NextButtonOverlay(title: "Selanjutnya", action: viewModel.advanceSpreadTransition)
+        case .spreadExploration:
+            Level2SpreadExplorationOverlay(
+                viewModel: viewModel,
+                replayNarration: { narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName) }
+            )
+        case .spreadTrivia:
+            Level2NextButtonOverlay(title: "Selanjutnya", action: viewModel.advanceSpreadTrivia)
+        case .intensityExploration:
+            Level2IntensityExplorationOverlay(
+                viewModel: viewModel,
+                replayNarration: { narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName) }
+            )
+        case .intensityTrivia:
+            Level2NextButtonOverlay(title: "Selanjutnya", action: viewModel.advanceIntensityTrivia)
+        case .closing:
+            Level2NextButtonOverlay(title: "Selanjutnya", action: viewModel.advanceClosing)
+        case .review:
+            Level2ReviewOverlay(
+                replayNarration: { narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName) },
+                onFinish: viewModel.finishReview
+            )
+        case .completed:
+            EndLevelView(
+                data: EndLevelViewModel.data(for: Level2Content.levelID),
+                onBack: dismiss.callAsFunction,
+                onNext: onNextLevel
+            )
+            .padding(.bottom, 24)
+        }
     }
+}
 
-    private var shadowTriviaButtonTitle: String {
-        viewModel.shadowTriviaIndex == Level2Content.shadowTrivia.count - 1
-            ? "Coba Lebar Cahaya"
-            : "Lanjut"
+// MARK: - Overlay Unblocked AR Styles
+
+struct Level2NextButtonOverlay: View {
+    let title: String
+    let action: () -> Void
+    
+    var body: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                Button(title, action: action)
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.blue, in: Capsule())
+                    .padding(.trailing, 42)
+                    .padding(.bottom, 36)
+            }
+        }
     }
+}
 
-    private var spreadTransitionButtonTitle: String {
-        viewModel.spreadTransitionIndex == Level2Content.spreadTransition.count - 1
-            ? "Ayo Coba!"
-            : "Lanjut"
-    }
-
-    private var spreadTriviaButtonTitle: String {
-        viewModel.spreadTriviaIndex == Level2Content.spreadTrivia.count - 1
-            ? "Coba Terang dan Redup"
-            : "Lanjut"
-    }
-
-    private var intensityTriviaButtonTitle: String {
-        viewModel.intensityTriviaIndex == Level2Content.intensityTrivia.count - 1
-            ? "Lihat Hasil Belajar"
-            : "Lanjut"
-    }
-
-    private var closingButtonTitle: String {
-        viewModel.closingIndex == Level2Content.closingDialog.count - 1
-            ? "Lihat Rangkuman"
-            : "Lanjut"
-    }
-
-    private func replayNarration() {
-        narrator.speak(viewModel.narrationText)
+struct Level2TaskCard: View {
+    let title: String
+    let progress: Int
+    let total: Int
+    let button: String?
+    let replayNarration: () -> Void
+    let action: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            Text(title).font(.title3).bold()
+            ProgressView(value: Double(progress), total: Double(total))
+            Level2ReplayNarrationButton(action: replayNarration)
+            if let button {
+                Button(button, action: action).buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(22)
+        .background(.thinMaterial, in: .rect(cornerRadius: 28))
+        .padding(.horizontal, 20)
+        .padding(.bottom, 36)
     }
 }

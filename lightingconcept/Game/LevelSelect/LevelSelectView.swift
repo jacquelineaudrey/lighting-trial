@@ -46,8 +46,9 @@ struct LevelSelectView: View {
                         LevelMapButton(
                             levelID: levelID,
                             title: levelTitles[levelID] ?? "Segera Hadir",
-                            isUnlocked: levelsWithContent.contains(levelID)
-                                && progressStore.isLevelUnlocked(levelID),
+                            isUnlocked: true,
+//                            isUnlocked: levelsWithContent.contains(levelID)
+//                                && progressStore.isLevelUnlocked(levelID),
                             isCompleted: progressStore.isLevelCompleted(levelID),
                             action: { showCard(for: levelID) }
                         )

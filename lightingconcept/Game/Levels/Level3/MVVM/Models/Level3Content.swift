@@ -1,45 +1,28 @@
 import Foundation
 
-/// State navigation milik SwiftUI/MVVM; presentasi marker dan shadow tetap
-/// berada di ECS/RealityKit.
-enum Level3Phase: String, Codable, Equatable {
-    case onboarding
-    case placingScene
-    case surfaceReady
-    case shadowExploration
-    case shadowTrivia
-    case shadowTypesInteraction
-    case shapeComparison
-    case closing
-    case review
-    case completed
-}
-
 enum Level3Content {
     static let levelID = 3
     static let levelTitle = "Jenis dan Bentuk Bayangan"
 
     static let onboardingDialog = [
-        DialogLine(characterName: "Kiki", text: "Sekarang kita jadi Detektif Bayangan! 🔎🌑"),
-        DialogLine(characterName: "Kiki", text: "Kita akan melihat bagaimana bentuk benda memengaruhi bentuk bayangannya."),
-        DialogLine(characterName: "Kiki", text: "Jalan pelan di sekitar benda dan amati bayangannya dari beberapa arah."),
-        DialogLine(characterName: "Kiki", text: "Siap? Yuk mulai!")
+        DialogLine(characterName: "Bayo", text: "Hai Penjelajah Kecil! Namaku Bayo", audioFileName: "level-3/marker/1 Hai Penjelajah Kecil! Namaku Bayo.mp3"),
+        DialogLine(characterName: "Bayo", text: "Wah ada banyak titik putih, ayuk kita tekan satu per satu!", audioFileName: "level-3/marker/2 Wah ada banyak titik putih, ayuk kita tekan satu per satu!.mp3")
     ]
 
     static let shadowTrivia = [
-        DialogLine(characterName: "Kiki", text: "Bayangan terbentuk ketika cahaya terhalang oleh benda."),
-        DialogLine(characterName: "Kiki", text: "Bayangan berada di sisi benda yang berlawanan dengan sumber cahaya."),
-        DialogLine(characterName: "Kiki", text: "Saat posisi atau bentuk benda berubah, bentuk dan posisi bayangannya juga bisa berubah.")
+        DialogLine(characterName: "Bayo", text: "Keren! Kamu sudah belajar jenis bayangan!", audioFileName: "level-3/marker/3 Keren! Kamu sudah belajar jenis bayangan!.mp3"),
+        DialogLine(characterName: "Bayo", text: "Sekarang coba kita lihat di bentuk lain ya!", audioFileName: "level-3/marker/4 Sekarang coba kita lihat di bentuk lain ya!.mp3")
     ]
 
     static let shadowTypesTrivia = [
-        DialogLine(characterName: "Kiki", text: "Bayangan bisa punya bagian yang sangat gelap dan bagian yang lebih samar."),
-        DialogLine(characterName: "Kiki", text: "Bagian paling gelap disebut umbra, sedangkan bagian yang lebih samar disebut penumbra.")
+        DialogLine(characterName: "Bayo", text: "Kerenn! Sekarang kamu sudah mengenal berbagai jenis bayangan!", audioFileName: "level-3/marker/5 Kerenn! Sekarang kamu sudah mengenal berbagai jenis bayangan!.mp3"),
+        DialogLine(characterName: "Bayo", text: "Lalu, mengapa bayangan bisa membuat gambar lebih hidup ya?", audioFileName: "level-3/marker/6 Lalu, mengapa bayangan bisa membuat gambar lebih hidup ya_.mp3"),
+        DialogLine(characterName: "Bayo", text: "Karena cahaya dan bayangan menciptakan bagian terang dan gelap untuk menunjukkan bentuk benda", audioFileName: "level-3/marker/7 Karena cahaya dan bayangan menciptakan bagian terang dan gelap untuk menunjukkan bentuk benda.mp3")
     ]
 
     static let closingDialog = [
-        DialogLine(characterName: "Kiki", text: "Hebat! Kamu sudah mengamati bayangan dari banyak sisi."),
-        DialogLine(characterName: "Kiki", text: "Kamu juga sudah melihat bagaimana bentuk benda dan bagian gelap-terang bayangan (umbra & penumbra) saling berhubungan.")
+        DialogLine(characterName: "Bayo", text: "Kerja bagus Penjelajah Kecil! Sekarang kamu sudah tau bedanya kan?", audioFileName: "level-3/marker/8 Kerja bagus Penjelajah Kecil! Sekarang kamu sudah tau bedanya kan_.mp3"),
+        DialogLine(characterName: "Bayo", text: "Nahh, sekarang coba ingat-ingat lagi apa yang udah dipelajari. Kita coba lagi yuk!", audioFileName: "level-3/marker/9 Nahh, sekarang coba ingat-ingat lagi apa yang udah dipelajari. Kita coba lagi yuk!.mp3")
     ]
 
     static let reviewPoints = [
