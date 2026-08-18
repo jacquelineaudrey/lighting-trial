@@ -6,6 +6,11 @@ struct Level2FlowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
+    let onNextLevel: (() -> Void)?
+
+    init(onNextLevel: (() -> Void)? = nil) {
+        self.onNextLevel = onNextLevel
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -92,7 +97,10 @@ struct Level2FlowView: View {
                     onFinish: viewModel.finishReview
                 )
             case .completed:
-                Level2CompletedOverlay(onFinish: dismiss.callAsFunction)
+                Level2CompletedOverlay(
+                    onFinish: dismiss.callAsFunction,
+                    onNext: onNextLevel
+                )
             }
         }
         .overlay(alignment: .topLeading) {
