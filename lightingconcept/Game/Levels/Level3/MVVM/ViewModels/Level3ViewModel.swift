@@ -219,6 +219,8 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         phase = .placingScene
     }
 
+    func lightDidSelect() {}
+
     func advancePhaseOnTap() {
             // Kalau marker lagi kebuka, tap layar kosong HANYA untuk menutup marker
             if arSceneViewModel.selectedConcept != nil {
