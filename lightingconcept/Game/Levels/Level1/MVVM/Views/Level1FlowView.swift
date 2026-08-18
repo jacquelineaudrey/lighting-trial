@@ -50,6 +50,8 @@ struct Level1FlowView: View {
                 Level1DrawingOverlay(viewModel: viewModel)
             case .photoPrompt:
                 Level1PhotoOverlay(viewModel: viewModel)
+            case .photoComparison:
+                Level1PhotoComparisonOverlay(viewModel: viewModel)
             case .completed:
                 EndLevelView(
                     data: EndLevelViewModel.data(for: Level1Content.levelID),
@@ -78,6 +80,15 @@ struct Level1FlowView: View {
                     .padding(.top, 28)
             }
         }
+        #if DEBUG
+        .overlay(alignment: .topTrailing) {
+            if viewModel.phase != .completed {
+                Level1DebugMenu(viewModel: viewModel)
+                    .padding(.trailing, 16)
+                    .padding(.top, 12)
+            }
+        }
+        #endif
         .alert("Scene akan di-freeze", isPresented: $viewModel.showsFreezeSceneConfirmation) {
             Button("Iya, lanjut") {
                 viewModel.confirmFreezeSceneAndStartDrawing()
@@ -102,6 +113,13 @@ struct Level1FlowView: View {
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
             dismiss()
         }
+        .fullScreenCover(isPresented: $viewModel.showsDrawingCamera) {
+            DrawingCameraView(
+                onImagePicked: viewModel.completeUserDrawingPhoto,
+                onCancel: viewModel.cancelDrawingCamera
+            )
+            .ignoresSafeArea()
+        }
         .animation(.easeInOut(duration: 0.25), value: viewModel.phase)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
         .task(id: viewModel.narrationID) {
@@ -117,6 +135,34 @@ struct Level1FlowView: View {
         .navigationBarBackButtonHidden(true)
     }
 }
+
+#if DEBUG
+private struct Level1DebugMenu: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
+    var body: some View {
+        Menu {
+            Button("Lanjut Phase", action: viewModel.debugAdvanceCurrentPhase)
+            Button("Intro Cahaya", action: viewModel.debugJumpToLightShadowIntro)
+            Button("Adventure Bentuk", action: viewModel.debugJumpToShapeAdventure)
+            Button("Adventure Selesai", action: viewModel.debugCompleteShapeAdventure)
+            Button("Pencet Kubus", action: viewModel.debugJumpToTexturePrompt)
+            Button("Pilih Tekstur", action: viewModel.debugJumpToTextureSelection)
+            Button("Pilih Bentuk", action: viewModel.debugJumpToShapeSelectionReady)
+            Button("Siap Aku Pilih Ini", action: viewModel.debugJumpToDrawingReady)
+            Button("Foto Gambar", action: viewModel.debugJumpToPhotoPrompt)
+            Button("Perbandingan Foto", action: viewModel.debugJumpToPhotoComparison)
+        } label: {
+            Text("DEV")
+                .font(.caption.bold())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.red, in: Capsule())
+        }
+    }
+}
+#endif
 
 private struct Level1OpeningOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
@@ -173,8 +219,32 @@ private struct Level1ShapeChangeOverlay: View {
                     Spacer()
                     Level1ExperimentControls(viewModel: viewModel)
                 }
+            } else if viewModel.canConfirmDrawingChoices {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Level1PrimaryActionButton(title: "Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
+                            .padding(.trailing, 42)
+                            .padding(.bottom, 36)
+                    }
+                }
             }
         }
+    }
+}
+
+private struct Level1PrimaryActionButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(title, action: action)
+            .font(.caption.bold())
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color.blue, in: Capsule())
     }
 }
 
@@ -227,6 +297,97 @@ private struct Level1PhotoOverlay: View {
 
 /// Kontrol interaksi mengikuti panel Figma: daftar vertikal di kiri dan
 /// tombol mode kecil di bawahnya agar area AR tetap terbuka.
+private struct Level1PhotoComparisonOverlay: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.35)
+                .ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                HStack(spacing: 20) {
+                    comparisonImage(title: "Contoh", image: viewModel.frozenSceneImage)
+                    comparisonImage(title: "Hasil Gambar Kamu", image: viewModel.userDrawingImage)
+                }
+
+                Button("Selesai", action: viewModel.completeLevelAfterPhotoComparison)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 11)
+                    .background(Color.red, in: Capsule())
+            }
+            .padding(26)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .frame(maxWidth: 1080)
+            .padding(.horizontal, 32)
+        }
+    }
+
+    private func comparisonImage(title: String, image: UIImage?) -> some View {
+        VStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.white)
+
+            Group {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    Color.white.opacity(0.18)
+                }
+            }
+            .frame(width: 480, height: 440)
+            .background(Color.black.opacity(0.18))
+            .clipped()
+        }
+    }
+}
+
+private struct DrawingCameraView: UIViewControllerRepresentable {
+    let onImagePicked: (UIImage) -> Void
+    let onCancel: () -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImagePicked: onImagePicked, onCancel: onCancel)
+    }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let onImagePicked: (UIImage) -> Void
+        let onCancel: () -> Void
+
+        init(onImagePicked: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
+            self.onImagePicked = onImagePicked
+            self.onCancel = onCancel
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            guard let image = info[.originalImage] as? UIImage else {
+                onCancel()
+                return
+            }
+            onImagePicked(image)
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onCancel()
+        }
+    }
+}
+
 private struct Level1ExperimentControls: View {
     @ObservedObject var viewModel: Level1ViewModel
 
@@ -252,21 +413,11 @@ private struct Level1ExperimentControls: View {
                 Spacer()
 
                 if viewModel.canContinueToShapeSelection {
-                    Button("Selanjutnya", action: viewModel.continueToShapeSelection)
-                        .font(.caption.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color.blue, in: Capsule())
+                    Level1PrimaryActionButton(title: "Selanjutnya", action: viewModel.continueToShapeSelection)
                         .padding(.trailing, 42)
                         .padding(.bottom, 36)
                 } else if viewModel.canConfirmDrawingChoices {
-                    Button("Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
-                        .font(.caption.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color.blue, in: Capsule())
+                    Level1PrimaryActionButton(title: "Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
                         .padding(.trailing, 42)
                         .padding(.bottom, 36)
                 }

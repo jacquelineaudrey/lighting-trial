@@ -9,6 +9,7 @@ import ARKit
 import Combine
 import Foundation
 import RealityKit
+import Photos
 import UIKit
 
 enum Level1Phase: Equatable {
@@ -25,6 +26,7 @@ enum Level1Phase: Equatable {
     case drawingReady
     case drawingActive
     case photoPrompt
+    case photoComparison
     case completed
 }
 
@@ -76,10 +78,14 @@ final class Level1ViewModel: ObservableObject {
     @Published private(set) var hasSelectedShape = false
     @Published private(set) var hasOpenedTextureControls = false
     @Published private(set) var hasOpenedShapeControls = false
+    @Published private(set) var hasContinuedToShapeSelection = false
     @Published private(set) var hasChangedShape = false
     @Published private(set) var hidesGuideForDrawing = false
     @Published private(set) var pendingDrawingPhotoCapture = false
     @Published private(set) var isSavingDrawingPhoto = false
+    @Published private(set) var frozenSceneImage: UIImage?
+    @Published private(set) var userDrawingImage: UIImage?
+    @Published var showsDrawingCamera = false
     @Published private(set) var photoSaveMessage: String?
     @Published var showsFreezeSceneConfirmation = false
     @Published private(set) var isSceneFrozen = false
@@ -311,6 +317,10 @@ final class Level1ViewModel: ObservableObject {
         guideRoot?.isEnabled = false
         hasWaypointTarget = false
         recentlyExplainedCheckpointIndex = nil
+        hasContinuedToShapeSelection = false
+        frozenSceneImage = nil
+        userDrawingImage = nil
+        showsDrawingCamera = false
         showsFreezeSceneConfirmation = false
         isSceneFrozen = false
         scanStartTime = Date()
@@ -357,7 +367,7 @@ final class Level1ViewModel: ObservableObject {
     }
 
     var canContinueToShapeSelection: Bool {
-        phase == .textureExploration && hasSelectedTexture
+        phase == .textureExploration && hasSelectedTexture && !hasContinuedToShapeSelection
     }
 
     var canConfirmDrawingChoices: Bool {
@@ -368,6 +378,7 @@ final class Level1ViewModel: ObservableObject {
         guard canContinueToShapeSelection else { return }
         phase = .shapeChange
         activeExperimentPanel = nil
+        hasContinuedToShapeSelection = true
         hasOpenedShapeControls = false
         showsObjectModeBadge = true
         syncEntities()
@@ -394,6 +405,7 @@ final class Level1ViewModel: ObservableObject {
         hasSelectedShape = false
         hasOpenedTextureControls = false
         hasOpenedShapeControls = false
+        hasContinuedToShapeSelection = false
         showsObjectModeBadge = false
         hasWaypointTarget = false
         syncEntities()
@@ -482,18 +494,229 @@ final class Level1ViewModel: ObservableObject {
         pendingDrawingPhotoCapture.toggle()
     }
 
-    func completeDrawingPhotoSave(success: Bool, message: String?) {
+    func completeFrozenSceneSnapshot(success: Bool, image: UIImage?, message: String?) {
         isSavingDrawingPhoto = false
-        photoSaveMessage = message
-        if success {
-            phase = .completed
-            progressStore.markLevelCompleted(Level1Content.levelID)
+        guard success, let image else {
+            photoSaveMessage = message
+            syncEntities()
+            return
         }
+
+        frozenSceneImage = image
+        showsDrawingCamera = true
+        syncEntities()
+    }
+
+    func cancelDrawingCamera() {
+        showsDrawingCamera = false
+    }
+
+    func completeUserDrawingPhoto(_ image: UIImage) {
+        showsDrawingCamera = false
+        isSavingDrawingPhoto = true
+        saveImageToPhotoLibrary(image) { [weak self] success, message in
+            guard let self else { return }
+            self.isSavingDrawingPhoto = false
+            guard success else {
+                self.photoSaveMessage = message
+                return
+            }
+
+            self.userDrawingImage = image
+            self.phase = .photoComparison
+            self.triggerSuccessFeedback()
+            self.syncEntities()
+        }
+    }
+
+    func completeLevelAfterPhotoComparison() {
+        guard phase == .photoComparison else { return }
+        phase = .completed
+        progressStore.markLevelCompleted(Level1Content.levelID)
+        triggerSuccessFeedback()
         syncEntities()
     }
 
     func clearPhotoSaveMessage() {
         photoSaveMessage = nil
+    }
+
+    #if DEBUG
+    func debugAdvanceCurrentPhase() {
+        switch phase {
+        case .scanningSurface, .surfaceReady:
+            debugJumpToLightShadowIntro()
+        case .onboarding:
+            onboardingIndex = max(0, onboardingDialog.count - 1)
+            phase = .lightShadowIntro
+            lightShadowIndex = 0
+        case .lightShadowIntro:
+            debugJumpToShapeAdventure()
+        case .findingShapes:
+            debugCompleteShapeAdventure()
+        case .returningToFirstObject:
+            debugJumpToTexturePrompt()
+        case .textureTapPrompt:
+            objectTappedForTexture()
+        case .textureExploration:
+            debugJumpToShapeSelectionReady()
+        case .shapeChange:
+            debugJumpToDrawingReady()
+        case .drawingPrompt:
+            phase = .drawingReady
+            syncEntities()
+        case .drawingReady, .drawingActive:
+            finishDrawing()
+        case .photoPrompt:
+            debugJumpToPhotoComparison()
+        case .photoComparison:
+            completeLevelAfterPhotoComparison()
+        case .completed:
+            break
+        }
+        successFeedbackTrigger += 1
+    }
+
+    func debugJumpToLightShadowIntro() {
+        debugEnsureScenePlaced()
+        onboardingIndex = max(0, onboardingDialog.count - 1)
+        lightShadowIndex = 0
+        selectedRadarTarget = nil
+        phase = .lightShadowIntro
+        hasWaypointTarget = false
+        syncEntities()
+    }
+
+    func debugJumpToShapeAdventure() {
+        debugEnsureScenePlaced()
+        phase = .findingShapes
+        currentCheckpointIndex = nextTargetCheckpointIndex ?? 0
+        recentlyExplainedCheckpointIndex = nil
+        hasWaypointTarget = true
+        syncEntities()
+    }
+
+    func debugCompleteShapeAdventure() {
+        debugEnsureScenePlaced()
+        visitedCheckpoints = Set(checkpoints.indices)
+        recentlyExplainedCheckpointIndex = nil
+        currentCheckpointIndex = 0
+        phase = .returningToFirstObject
+        hasWaypointTarget = true
+        syncEntities()
+    }
+
+    func debugJumpToTexturePrompt() {
+        debugEnsureScenePlaced()
+        visitedCheckpoints = Set(checkpoints.indices)
+        recentlyExplainedCheckpointIndex = nil
+        phase = .textureTapPrompt
+        currentCheckpointIndex = 0
+        hasWaypointTarget = false
+        showsObjectModeBadge = false
+        activeExperimentPanel = nil
+        syncEntities()
+    }
+
+    func debugJumpToTextureSelection() {
+        debugJumpToTexturePrompt()
+        objectTappedForTexture()
+    }
+
+    func debugJumpToShapeSelectionReady() {
+        debugEnsureScenePlaced()
+        visitedCheckpoints = Set(checkpoints.indices)
+        phase = .shapeChange
+        currentCheckpointIndex = 0
+        currentTextureIndex = min(1, max(0, textureStops.count - 1))
+        hasSelectedTexture = true
+        hasSelectedShape = false
+        hasOpenedTextureControls = true
+        hasOpenedShapeControls = false
+        hasContinuedToShapeSelection = true
+        showsObjectModeBadge = true
+        activeExperimentPanel = nil
+        applyCurrentTextureToPrimaryObject()
+        syncEntities()
+    }
+
+    func debugJumpToDrawingReady() {
+        debugEnsureScenePlaced()
+        visitedCheckpoints = Set(checkpoints.indices)
+        phase = .shapeChange
+        currentCheckpointIndex = 0
+        currentTextureIndex = min(1, max(0, textureStops.count - 1))
+        selectedShapeIndex = min(1, max(0, shapeOptions.count - 1))
+        hasSelectedTexture = true
+        hasSelectedShape = true
+        hasOpenedTextureControls = true
+        hasOpenedShapeControls = true
+        hasContinuedToShapeSelection = true
+        showsObjectModeBadge = true
+        activeExperimentPanel = nil
+        applyCurrentTextureToPrimaryObject()
+        applyCurrentShapeToPrimaryObject()
+        syncEntities()
+    }
+
+    func debugJumpToPhotoPrompt() {
+        debugEnsureScenePlaced()
+        isSceneFrozen = true
+        hidesGuideForDrawing = false
+        showsObjectModeBadge = false
+        activeExperimentPanel = nil
+        phase = .photoPrompt
+        syncEntities()
+    }
+
+    func debugJumpToPhotoComparison() {
+        debugEnsureScenePlaced()
+        isSceneFrozen = true
+        frozenSceneImage = frozenSceneImage ?? debugPlaceholderImage(title: "Contoh")
+        userDrawingImage = userDrawingImage ?? debugPlaceholderImage(title: "Hasil")
+        showsDrawingCamera = false
+        phase = .photoComparison
+        syncEntities()
+    }
+
+    private func debugEnsureScenePlaced() {
+        placeSceneIfNeeded()
+        if checkpointEntities.isEmpty {
+            phase = .scanningSurface
+        }
+    }
+
+    private func debugPlaceholderImage(title: String) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 360, height: 260))
+        return renderer.image { context in
+            UIColor(white: 0.92, alpha: 1).setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 360, height: 260))
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 28),
+                .foregroundColor: UIColor.darkGray
+            ]
+            title.draw(at: CGPoint(x: 28, y: 108), withAttributes: attributes)
+        }
+    }
+    #endif
+
+    private func saveImageToPhotoLibrary(_ image: UIImage, completion: @escaping (Bool, String?) -> Void) {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            switch status {
+            case .authorized, .limited:
+                PHPhotoLibrary.shared().performChanges {
+                    PHAssetChangeRequest.creationRequestForAsset(from: image)
+                } completionHandler: { success, error in
+                    Task { @MainActor in
+                        completion(success, success ? nil : "Foto belum tersimpan. \(error?.localizedDescription ?? "")")
+                    }
+                }
+            default:
+                Task { @MainActor in
+                    completion(false, "Izinkan akses Photos untuk menyimpan foto.")
+                }
+            }
+        }
     }
 
     var currentDialogLine: DialogLine { onboardingDialog[onboardingIndex] }
@@ -543,16 +766,18 @@ final class Level1ViewModel: ObservableObject {
             hasSelectedTexture ? currentTexture.description : "Kamu bisa ganti tekstur yang kamu suka, lho."
         case .shapeChange:
             hasSelectedShape
-                ? "Kalau sudah, tekan tombol ini ya!"
+                ? "Yuk, arahkan kameramu ke bendanya dulu sebelum mulai menggambar!"
                 : "Kamu bisa ganti bentuk yang kamu suka, lho."
         case .drawingPrompt:
-            "Sekarang, mari kita gambar di kertas ya!"
+            "Simsalabim! Gambarnya kita bikin diam ya, biar gampang digambar!"
         case .drawingReady, .drawingActive:
             "Kalau sudah, tekan tombol ini ya!"
         case .photoPrompt:
             "Yeay, gambarmu sudah jadi! Sekarang, yuk foto gambarmu!"
-        case .completed:
+        case .photoComparison:
             "Keren! Gambarmu sudah tersimpan."
+        case .completed:
+            "Level 1 selesai. Kamu hebat! Sekarang kamu bisa ke level berikutnya!"
         }
     }
 
@@ -578,16 +803,18 @@ final class Level1ViewModel: ObservableObject {
                 : "level-1/19 Kamu bisa ganti bentuk dan tekstur yang kamu suka lho.mp3"
         case .shapeChange:
             hasSelectedShape
-                ? "level-1/20 Kalau sudah tekan tombol ini ya.mp3"
+                ? "level-1/27 Yuk, arahkan kameramu ke bendanya dulu sebelum mulai menggambar!.mp3"
                 : "level-1/15 Wah ada banyak bentuk Kamu bisa ganti bentuk yang lain lho.mp3"
         case .drawingPrompt:
-            "level-1/18 Sekarang kita coba menggambar yaa.mp3"
+            "level-1/28 Simsalabim! Gambarnya kita bikin diam ya, biar gampang digambar!.mp3"
         case .drawingReady, .drawingActive:
             "level-1/22 Kalau sudah tekan tombol ini ya.mp3"
         case .photoPrompt:
             "level-1/23 Yeay gambarmu sudah jadi Sekarang yuk foto gambarmu.mp3"
-        case .completed:
+        case .photoComparison:
             "level-1/24 Keren Gambarmu sudah tersimpan.mp3"
+        case .completed:
+            "level-1/29 Level 1 selesai. Kamu hebat! Sekarang kamu bisa ke level berikutnya!.mp3"
         }
     }
 
@@ -874,7 +1101,7 @@ final class Level1ViewModel: ObservableObject {
                 entity.isEnabled = visitedCheckpoints.contains(index) || index == nextTargetCheckpointIndex
             case .returningToFirstObject:
                 entity.isEnabled = index == 0
-            case .textureTapPrompt, .textureExploration, .shapeChange, .drawingPrompt, .drawingReady, .drawingActive, .photoPrompt, .completed:
+            case .textureTapPrompt, .textureExploration, .shapeChange, .drawingPrompt, .drawingReady, .drawingActive, .photoPrompt, .photoComparison, .completed:
                 entity.isEnabled = index == 0
             default:
                 entity.isEnabled = false
@@ -1180,7 +1407,7 @@ final class Level1ViewModel: ObservableObject {
             return .lumiIdle
         case .drawingReady, .photoPrompt:
             return .lumiQuestion
-        case .drawingActive, .scanningSurface, .completed:
+        case .drawingActive, .scanningSurface, .photoComparison, .completed:
             return .lumiIdle
         }
     }
@@ -1416,11 +1643,22 @@ final class Level1ViewModel: ObservableObject {
             lightPosition: lightPosition,
             objectPosition: objectPosition
         ) ?? SIMD3<Float>(-1, 0, 0)
-        let rawLength = ShadowGeometryCalculator.approximateShadowLength(
+        let objectHeight = scaledObjectDimensions(for: objectType).y
+        let topCenter = objectPosition + SIMD3<Float>(0, objectHeight, 0)
+        let projectedTop = ShadowGeometryCalculator.projectPointAlongLightDirection(
+            vertexPosition: topCenter,
             lightDirection: lightDirection,
-            objectHeight: checkpointHeight
-        ) ?? 0.38
-        let length = clamped(rawLength * 1.18, 0.44, 1.10)
+            planeY: objectPosition.y
+        )
+        let projectedLength = projectedTop.map {
+            simd_length(SIMD3<Float>($0.x - objectPosition.x, 0, $0.z - objectPosition.z))
+        }
+        let estimatedLength = ShadowGeometryCalculator.approximateShadowLength(
+            lightDirection: lightDirection,
+            objectHeight: objectHeight
+        )
+        let rawLength = projectedLength ?? estimatedLength ?? 0.38
+        let length = clamped(rawLength * 1.05, 0.40, 1.35)
         root.position = objectPosition + groundDirection * (length * 0.52) + SIMD3<Float>(0, 0.018, 0)
         root.orientation = simd_quatf(angle: atan2(groundDirection.z, groundDirection.x), axis: [0, 1, 0])
 
@@ -1468,16 +1706,24 @@ final class Level1ViewModel: ObservableObject {
     }
 
     private func shadowBaseWidth(for objectType: LearningObjectType) -> Float {
+        let dimensions = scaledObjectDimensions(for: objectType)
+        let footprint = max(dimensions.x, dimensions.z)
         switch objectType {
-        case .cube:
-            checkpointHeight * 0.72
         case .cuboid:
-            checkpointHeight * 0.92
+            return footprint * 1.08
         case .squarePyramid, .triangularPyramid:
-            checkpointHeight * 0.78
-        case .sphere, .cylinder, .cone, .hemisphere:
-            checkpointHeight * 0.70
+            return footprint * 0.92
+        case .cone:
+            return footprint * 0.84
+        case .cube, .sphere, .cylinder, .hemisphere:
+            return footprint
         }
+    }
+
+    private func scaledObjectDimensions(for objectType: LearningObjectType) -> SIMD3<Float> {
+        let base = SceneObjectSystem.baseDimensions(for: objectType)
+        let scale = checkpointHeight / base.y
+        return base * scale
     }
 }
 

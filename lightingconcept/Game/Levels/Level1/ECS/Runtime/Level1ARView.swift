@@ -118,7 +118,7 @@ struct Level1ARView: UIViewRepresentable {
 
         func captureAndSaveSnapshot() {
             guard let arView else {
-                viewModel.completeDrawingPhotoSave(success: false, message: "Kamera AR belum siap.")
+                viewModel.completeFrozenSceneSnapshot(success: false, image: nil, message: "Kamera AR belum siap.")
                 return
             }
 
@@ -126,7 +126,7 @@ struct Level1ARView: UIViewRepresentable {
                 Task { @MainActor in
                     guard let self else { return }
                     guard let image else {
-                        self.viewModel.completeDrawingPhotoSave(success: false, message: "Foto AR gagal dibuat.")
+                        self.viewModel.completeFrozenSceneSnapshot(success: false, image: nil, message: "Foto AR gagal dibuat.")
                         return
                     }
                     self.saveImageToPhotoLibrary(image)
@@ -143,16 +143,18 @@ struct Level1ARView: UIViewRepresentable {
                         PHAssetChangeRequest.creationRequestForAsset(from: image)
                     } completionHandler: { success, error in
                         Task { @MainActor in
-                            self.viewModel.completeDrawingPhotoSave(
+                            self.viewModel.completeFrozenSceneSnapshot(
                                 success: success,
-                                message: success ? "Keren! Gambarmu sudah tersimpan." : "Foto belum tersimpan. \(error?.localizedDescription ?? "")"
+                                image: success ? image : nil,
+                                message: success ? nil : "Foto belum tersimpan. \(error?.localizedDescription ?? "")"
                             )
                         }
                     }
                 default:
                     Task { @MainActor in
-                        self.viewModel.completeDrawingPhotoSave(
+                        self.viewModel.completeFrozenSceneSnapshot(
                             success: false,
+                            image: nil,
                             message: "Izinkan akses Photos untuk menyimpan foto."
                         )
                     }
