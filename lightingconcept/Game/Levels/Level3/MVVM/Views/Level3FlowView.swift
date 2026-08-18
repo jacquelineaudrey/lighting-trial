@@ -47,7 +47,11 @@ struct Level3FlowView: View {
             }
             narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
         }
-        .onDisappear { narrator.stop() }
+        .onAppear(perform: BackgroundMusicPlayer.shared.useGameplayVolume)
+        .onDisappear {
+            narrator.stop()
+            BackgroundMusicPlayer.shared.useMenuVolume()
+        }
         .onChange(of: viewModel.arSceneViewModel.surfaceState) { _, _ in
             viewModel.surfaceDidBecomeReady()
         }
