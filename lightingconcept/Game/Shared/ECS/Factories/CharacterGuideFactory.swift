@@ -27,6 +27,7 @@ enum CharacterGuideFactory {
         character.name = "Guide Character — \(asset.rawValue)"
         character.components.set(BillboardComponent())
         character.components.set(DynamicLightShadowComponent(castsShadow: false))
+        disableInteraction(on: character)
         return character
     }
 
@@ -71,7 +72,16 @@ enum CharacterGuideFactory {
         label.position = SIMD3<Float>(-mesh.bounds.center.x, -mesh.bounds.center.y, 0.002)
         label.components.set(DynamicLightShadowComponent(castsShadow: false))
         cloud.addChild(label)
+        disableInteraction(on: cloud)
         return cloud
+    }
+
+    private static func disableInteraction(on entity: Entity) {
+        entity.components.remove(CollisionComponent.self)
+        entity.components.remove(InputTargetComponent.self)
+        for child in entity.children {
+            disableInteraction(on: child)
+        }
     }
 
     private static func texture(for asset: CharacterGuideAsset) -> TextureResource? {
