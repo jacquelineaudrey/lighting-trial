@@ -75,6 +75,24 @@ struct LevelSelectView: View {
                 }
                 .transition(.scale.combined(with: .opacity))
             }
+
+            #if DEBUG
+            VStack {
+                HStack {
+                    Spacer()
+                    Button("Debug Lv 2", systemImage: "wrench.and.screwdriver.fill") {
+                        selectedLevel = nil
+                        openLevel(2)
+                    }
+                    .font(.headline.bold())
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .padding(.top, 22)
+                    .padding(.trailing, 22)
+                }
+                Spacer()
+            }
+            #endif
         }
         .animation(.easeInOut(duration: 0.2), value: selectedLevel != nil)
         .ignoresSafeArea()

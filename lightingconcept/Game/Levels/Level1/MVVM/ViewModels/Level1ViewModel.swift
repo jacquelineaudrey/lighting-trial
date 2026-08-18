@@ -17,6 +17,7 @@ enum Level1Phase: Equatable {
     case surfaceReady
     case lightShadowIntro
     case findingShapes
+    case returningToFirstObject
     case textureTapPrompt
     case textureExploration
     case shapeChange
@@ -54,14 +55,9 @@ struct CheckpointCelebration: Identifiable, Equatable {
 @MainActor
 final class Level1ViewModel: ObservableObject {
 
-    // Objek muncul bertahap: kubus adalah tujuan pertama, lalu bola baru
-    // ditampilkan ketika pemain sudah mencapai kubus.
-    let checkpoints = [
-        Checkpoint(id: "cp-0", order: 0, shape: Level1Content.kubus),
-        Checkpoint(id: "cp-1", order: 1, shape: Level1Content.bola)
-    ]
+    let checkpoints = Level1Content.checkpoints
     let textureStops = Level1Content.kubus.textures
-    let shapeOptions = [Level1Content.kubus, Level1Content.bola]
+    let shapeOptions = Level1Content.checkpoints.map(\.shape)
     let onboardingDialog = Level1Content.onboardingDialog
 
     @Published private(set) var phase: Level1Phase = .scanningSurface
@@ -78,11 +74,15 @@ final class Level1ViewModel: ObservableObject {
     @Published private(set) var activeExperimentPanel: Level1ExperimentPanel?
     @Published private(set) var hasSelectedTexture = false
     @Published private(set) var hasSelectedShape = false
+    @Published private(set) var hasOpenedTextureControls = false
+    @Published private(set) var hasOpenedShapeControls = false
     @Published private(set) var hasChangedShape = false
     @Published private(set) var hidesGuideForDrawing = false
     @Published private(set) var pendingDrawingPhotoCapture = false
     @Published private(set) var isSavingDrawingPhoto = false
     @Published private(set) var photoSaveMessage: String?
+    @Published var showsFreezeSceneConfirmation = false
+    @Published private(set) var isSceneFrozen = false
     @Published private(set) var successFeedbackTrigger = 0
 
     private var visitedCheckpoints: Set<Int> = []
@@ -111,6 +111,7 @@ final class Level1ViewModel: ObservableObject {
     private var directionIndicatorLabel: ModelEntity?
     private var lastIndicatorDistanceText: String?
     private var lastArrivedIndex: Int?
+    private var recentlyExplainedCheckpointIndex: Int?
     private let shadowReceiverManager = ShadowReceiverManager()
     private var guideRoot: Entity?
     private var guideCharacter: Entity?
@@ -201,6 +202,8 @@ final class Level1ViewModel: ObservableObject {
     }
 
     func updateCameraPose(position: SIMD3<Float>, forward: SIMD3<Float>) {
+        guard !isSceneFrozen else { return }
+
         latestCameraPositionXZ = SIMD2<Float>(position.x, position.z)
         let horizontalForward = SIMD2<Float>(forward.x, forward.z)
         let length = simd_length(horizontalForward)
@@ -211,7 +214,7 @@ final class Level1ViewModel: ObservableObject {
 
     func processSceneUpdate(cameraTransform: simd_float4x4) {
         let isFindingFirstObject = phase == .onboarding && onboardingIndex == 2
-        guard phase == .findingShapes || isFindingFirstObject else { return }
+        guard phase == .findingShapes || phase == .returningToFirstObject || isFindingFirstObject else { return }
         let cameraPosition = SIMD3<Float>(
             cameraTransform.columns.3.x,
             cameraTransform.columns.3.y,
@@ -226,6 +229,8 @@ final class Level1ViewModel: ObservableObject {
             tapRadarTarget(target)
         } else if phase == .textureTapPrompt, entityBelongsToLearningObject(entity) {
             objectTappedForTexture()
+        } else if (phase == .textureExploration || phase == .shapeChange), entityBelongsToLearningObject(entity) {
+            objectTappedDuringExperiment()
         } else {
             closeExperimentPanel()
             advanceNarrativeFromWorldTap()
@@ -241,8 +246,16 @@ final class Level1ViewModel: ObservableObject {
             advanceDialog()
         case .lightShadowIntro where currentLightShadowInstruction.radarTarget == nil:
             continueLightShadowIntro()
-        case .findingShapes where hasFoundAllShapes:
-            continueToTextureLesson()
+        case .findingShapes where recentlyExplainedCheckpointIndex != nil:
+            recentlyExplainedCheckpointIndex = nil
+            if hasFoundAllShapes {
+                phase = .returningToFirstObject
+                currentCheckpointIndex = 0
+                hasWaypointTarget = true
+            } else {
+                hasWaypointTarget = true
+            }
+            syncEntities()
         case .drawingPrompt:
             phase = .drawingReady
             syncEntities()
@@ -297,6 +310,9 @@ final class Level1ViewModel: ObservableObject {
         guideNeedsPlacement = true
         guideRoot?.isEnabled = false
         hasWaypointTarget = false
+        recentlyExplainedCheckpointIndex = nil
+        showsFreezeSceneConfirmation = false
+        isSceneFrozen = false
         scanStartTime = Date()
         phase = .scanningSurface
     }
@@ -320,6 +336,7 @@ final class Level1ViewModel: ObservableObject {
         guard phase == .textureExploration || phase == .shapeChange else { return }
         phase = .textureExploration
         activeExperimentPanel = .texture
+        hasOpenedTextureControls = true
         showsObjectModeBadge = true
         syncEntities()
     }
@@ -328,6 +345,7 @@ final class Level1ViewModel: ObservableObject {
         guard phase == .textureExploration || phase == .shapeChange else { return }
         phase = .shapeChange
         activeExperimentPanel = .shape
+        hasOpenedShapeControls = true
         showsObjectModeBadge = true
         syncEntities()
     }
@@ -348,7 +366,11 @@ final class Level1ViewModel: ObservableObject {
 
     func continueToShapeSelection() {
         guard canContinueToShapeSelection else { return }
-        showShapeControls()
+        phase = .shapeChange
+        activeExperimentPanel = nil
+        hasOpenedShapeControls = false
+        showsObjectModeBadge = true
+        syncEntities()
     }
 
     func tapRadarTarget(_ target: Level1RadarTarget) {
@@ -362,7 +384,7 @@ final class Level1ViewModel: ObservableObject {
     }
 
     func continueToTextureLesson() {
-        guard phase == .findingShapes, hasFoundAllShapes else { return }
+        guard (phase == .findingShapes || phase == .returningToFirstObject), hasFoundAllShapes else { return }
         phase = .textureTapPrompt
         currentCheckpointIndex = 0
         currentTextureIndex = 0
@@ -370,15 +392,24 @@ final class Level1ViewModel: ObservableObject {
         activeExperimentPanel = nil
         hasSelectedTexture = false
         hasSelectedShape = false
+        hasOpenedTextureControls = false
+        hasOpenedShapeControls = false
         showsObjectModeBadge = false
         hasWaypointTarget = false
+        syncEntities()
+    }
+
+    func objectTappedDuringExperiment() {
+        guard phase == .textureExploration || phase == .shapeChange else { return }
+        showsObjectModeBadge = true
         syncEntities()
     }
 
     func objectTappedForTexture() {
         guard phase == .textureTapPrompt else { return }
         showsObjectModeBadge = true
-        activeExperimentPanel = .texture
+        activeExperimentPanel = nil
+        hasOpenedTextureControls = false
         phase = .textureExploration
         triggerSuccessFeedback()
         syncEntities()
@@ -414,9 +445,24 @@ final class Level1ViewModel: ObservableObject {
 
     func confirmDrawingChoices() {
         guard (phase == .textureExploration || phase == .shapeChange), canConfirmDrawingChoices else { return }
+        showsFreezeSceneConfirmation = true
+    }
+
+    func cancelFreezeSceneConfirmation() {
+        showsFreezeSceneConfirmation = false
+    }
+
+    func confirmFreezeSceneAndStartDrawing() {
+        guard (phase == .textureExploration || phase == .shapeChange), canConfirmDrawingChoices else {
+            showsFreezeSceneConfirmation = false
+            return
+        }
+
+        showsFreezeSceneConfirmation = false
         activeExperimentPanel = nil
         showsObjectModeBadge = false
         hidesGuideForDrawing = false
+        isSceneFrozen = true
         phase = .drawingPrompt
         triggerSuccessFeedback()
         syncEntities()
@@ -458,11 +504,22 @@ final class Level1ViewModel: ObservableObject {
     var selectedShape: GameShape { shapeOptions[selectedShapeIndex] }
     var hasFoundAllShapes: Bool { checkpoints.indices.allSatisfy { visitedCheckpoints.contains($0) } }
     var hasExploredAllTextures: Bool { textureStops.indices.allSatisfy { visitedTextures.contains($0) } }
+    var showsExperimentControls: Bool {
+        (phase == .textureExploration || phase == .shapeChange)
+            && (showsObjectModeBadge || activeExperimentPanel != nil)
+    }
+    var showsTextureControlGesture: Bool { phase == .textureExploration && !hasOpenedTextureControls }
+    var showsShapeControlGesture: Bool { phase == .shapeChange && !hasOpenedShapeControls }
+
     var nextTargetCheckpointIndex: Int? {
         if phase == .onboarding, onboardingIndex == 2, !visitedCheckpoints.contains(0) {
             return 0
         }
+        if phase == .returningToFirstObject {
+            return 0
+        }
         guard phase == .findingShapes else { return nil }
+        if recentlyExplainedCheckpointIndex != nil { return nil }
         return checkpoints.indices.first { !visitedCheckpoints.contains($0) }
     }
 
@@ -477,7 +534,9 @@ final class Level1ViewModel: ObservableObject {
         case .lightShadowIntro:
             currentLightShadowInstruction.text
         case .findingShapes:
-            hasFoundAllShapes ? "Wah, semua bentuk sudah kamu temukan!" : "Selain kotak, coba temukan bentuk yang lain di sekitarmu!"
+            findingShapeNarrationText
+        case .returningToFirstObject:
+            "Ayo kembali ke kubus pertama!"
         case .textureTapPrompt:
             "Coba tekan sekali kotaknya! Kita lihat tekstur yang lain ya!"
         case .textureExploration:
@@ -508,7 +567,9 @@ final class Level1ViewModel: ObservableObject {
         case .lightShadowIntro:
             currentLightShadowInstruction.audioFileName
         case .findingShapes:
-            hasFoundAllShapes ? nil : "level-1/12 Selain kotak coba temukan bentuk yang lain di sekitarmu.mp3"
+            findingShapeNarrationAudioFileName
+        case .returningToFirstObject:
+            "level-1/26 Sekarang, yuk kita balik lagi ke bentuk kubus! Masih ingat kan bentuknya?.mp3"
         case .textureTapPrompt:
             "level-1/14 Coba tekan sekali kotaknya Kita lihat tekstur yang lain yaa.mp3"
         case .textureExploration:
@@ -530,6 +591,108 @@ final class Level1ViewModel: ObservableObject {
         }
     }
 
+    private var findingShapeNarrationText: String {
+        if let foundIndex = recentlyExplainedCheckpointIndex, checkpoints.indices.contains(foundIndex) {
+            return explanationText(for: checkpoints[foundIndex].shape)
+        }
+
+        if hasFoundAllShapes {
+            return "Wah, semua bentuk sudah kamu temukan!"
+        }
+
+        guard let targetIndex = nextTargetCheckpointIndex else {
+            return "Selain kotak, coba temukan bentuk yang lain di sekitarmu!"
+        }
+        return searchPromptText(for: checkpoints[targetIndex].shape)
+    }
+
+    private var findingShapeNarrationAudioFileName: String? {
+        if let foundIndex = recentlyExplainedCheckpointIndex, checkpoints.indices.contains(foundIndex) {
+            return explanationAudioFileName(for: checkpoints[foundIndex].shape)
+        }
+
+        if hasFoundAllShapes {
+            return "level-1/25 Wah, semua bentuk sudah kamu temukan!.mp3"
+        }
+
+        guard let targetIndex = nextTargetCheckpointIndex else {
+            return "level-1/12 Selain kotak coba temukan bentuk yang lain di sekitarmu.mp3"
+        }
+        return searchPromptAudioFileName(for: checkpoints[targetIndex].shape)
+    }
+
+    private func searchPromptText(for shape: GameShape) -> String {
+        switch shape.id {
+        case "balok":
+            return "Yuk, cari bentuk balok di sekitarmu!"
+        case "bola":
+            return "Coba cari bentuk bola yang bulat sempurna di sekitarmu!"
+        case "piramida":
+            return "Coba cari bentuk piramida! Runcing ke atas seperti tenda, kan?"
+        case "kerucut":
+            return "Coba cari kerucut! Bawahnya bulat, tapi atasnya lancip!"
+        case "tabung":
+            return "Coba cari bentuk tabung! Seperti celengan yang memanjang ke atas!"
+        default:
+            return "Coba cari objek berbentuk kotak di sekitarmu!"
+        }
+    }
+
+    private func searchPromptAudioFileName(for shape: GameShape) -> String? {
+        switch shape.id {
+        case "balok":
+            return "level-1/bentuk/[balok] Yuk, cari bentuk balok di sekitarmu!.mp3"
+        case "bola":
+            return "level-1/bentuk/[bola] Coba cari bentuk bola yang bulat sempurna di sekitarmu!.mp3"
+        case "piramida":
+            return "level-1/bentuk/[piramida] Coba cari bentuk piramida! Runcing ke atas seperti tenda, kan_.mp3"
+        case "kerucut":
+            return "level-1/bentuk/[Kerucut] Coba cari kerucut! Bawahnya bulat, tapi atasnya lancip!.mp3"
+        case "tabung":
+            return "level-1/bentuk/[tabung] Coba cari bentuk tabung! Seperti celengan yang memanjang ke atas!.mp3"
+        default:
+            return "level-1/3 coba cari objek berbentuk kotak di sekitarmu.mp3"
+        }
+    }
+
+    private func explanationText(for shape: GameShape) -> String {
+        switch shape.id {
+        case "kubus":
+            return "Ini Kubus! Semua sisinya sama besar, lho!"
+        case "balok":
+            return "Ini Balok! Sisi yang berhadapan sama bentuk dan ukurannya."
+        case "bola":
+            return "Ini Bola! Bentuknya bulat sempurna tanpa titik sudut."
+        case "piramida":
+            return "Ini Piramida! Bawahnya datar dan puncaknya runcing."
+        case "kerucut":
+            return "Ini Kerucut! Alasnya lingkaran dan atasnya lancip."
+        case "tabung":
+            return "Ini Tabung! Alas dan tutupnya berbentuk lingkaran."
+        default:
+            return "Ini \(shape.displayName)!"
+        }
+    }
+
+    private func explanationAudioFileName(for shape: GameShape) -> String? {
+        switch shape.id {
+        case "kubus":
+            return "level-1/marker/objek/[kubus] Ini Kubus Semua sisinya sama besar lho.mp3"
+        case "balok":
+            return "level-1/marker/objek/[balok] Ini Balok! Sisi yang saling berhadapan, bentuk dan ukurannya sama persis, lho!.mp3"
+        case "bola":
+            return "level-1/marker/objek/[bola] Ini Bola! Bentuknya bulat sempurna dan tidak punya titik sudut sama sekali, lho!.mp3"
+        case "piramida":
+            return "level-1/marker/objek/[piramida] Ini Piramida! Bawahnya datar dan punya titik puncak yang runcing di atas, lho!.mp3"
+        case "kerucut":
+            return "level-1/marker/objek/[kerucut] Ini Kerucut! Alasnya berbentuk lingkaran dan atasnya lancip seperti topi ulang tahun, lho!.mp3"
+        case "tabung":
+            return "level-1/marker/objek/[tabung] Ini Tabung! Alas dan tutupnya berbentuk lingkaran yang ukurannya sama besar, lho!.mp3"
+        default:
+            return nil
+        }
+    }
+
     var narrationID: String {
         let phaseID: String
         switch phase {
@@ -548,7 +711,9 @@ final class Level1ViewModel: ObservableObject {
         default:
             choiceID = "none"
         }
-        return "\(phaseID)-\(onboardingIndex)-\(lightShadowIndex)-\(currentCheckpointIndex)-\(hasFoundAllShapes)-\(hasSelectedTexture)-\(hasSelectedShape)-\(choiceID)"
+
+        let discoveryID = "found-\(visitedCheckpoints.count)-explaining-\(recentlyExplainedCheckpointIndex ?? -1)-target-\(nextTargetCheckpointIndex ?? -1)"
+        return "\(phaseID)-\(onboardingIndex)-\(lightShadowIndex)-\(currentCheckpointIndex)-\(hasFoundAllShapes)-\(hasSelectedTexture)-\(hasSelectedShape)-\(choiceID)-\(discoveryID)"
     }
 
     private func placeSceneIfNeeded() {
@@ -669,6 +834,14 @@ final class Level1ViewModel: ObservableObject {
     }
 
     private func arrive(atCheckpointIndex index: Int) {
+        if phase == .returningToFirstObject, index == 0 {
+            currentCheckpointIndex = 0
+            hasWaypointTarget = false
+            triggerSuccessFeedback()
+            continueToTextureLesson()
+            return
+        }
+
         guard checkpoints.indices.contains(index), !visitedCheckpoints.contains(index) else { return }
         currentCheckpointIndex = index
         visitedCheckpoints.insert(index)
@@ -681,7 +854,8 @@ final class Level1ViewModel: ObservableObject {
             syncEntities()
             return
         }
-        showCelebration(for: index)
+        recentlyExplainedCheckpointIndex = index
+        hasWaypointTarget = false
         syncEntities()
     }
 
@@ -697,9 +871,9 @@ final class Level1ViewModel: ObservableObject {
             case .surfaceReady, .lightShadowIntro:
                 entity.isEnabled = index == 0
             case .findingShapes:
-                // Hanya target berikutnya yang dimunculkan. Checkpoint yang
-                // sudah selesai disembunyikan bersama lampu dan bayangannya.
-                entity.isEnabled = index == nextTargetCheckpointIndex
+                entity.isEnabled = visitedCheckpoints.contains(index) || index == nextTargetCheckpointIndex
+            case .returningToFirstObject:
+                entity.isEnabled = index == 0
             case .textureTapPrompt, .textureExploration, .shapeChange, .drawingPrompt, .drawingReady, .drawingActive, .photoPrompt, .completed:
                 entity.isEnabled = index == 0
             default:
@@ -993,6 +1167,8 @@ final class Level1ViewModel: ObservableObject {
         case .lightShadowIntro:
             return currentLightShadowInstruction.radarTarget == nil ? .lumiPointWink : .lumiPoint
         case .findingShapes:
+            return recentlyExplainedCheckpointIndex == nil ? .lumiQuestion : .lumiPointWink
+        case .returningToFirstObject:
             return .lumiQuestion
         case .textureTapPrompt:
             return .lumiPoint
@@ -1024,7 +1200,7 @@ final class Level1ViewModel: ObservableObject {
     }
 
     private var defaultGuideCloudPosition: SIMD3<Float> {
-        SIMD3<Float>(0.22, 0.14, 0)
+        return SIMD3<Float>(0.22, 0.14, 0)
     }
 
     private func guideSpeechLayout(for text: String) -> (text: String, width: Float, height: Float) {
@@ -1086,33 +1262,42 @@ final class Level1ViewModel: ObservableObject {
     }
 
     private func makeRadarEntity(target: Level1RadarTarget) -> Entity {
+        let root = makeWhiteMarkEntity(name: "level1-radar-\(target.rawValue)", receivesInput: true)
+        root.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.04)]))
+        root.components.set(InputTargetComponent())
+        return root
+    }
+
+    private func makeWhiteMarkEntity(name: String, receivesInput: Bool) -> Entity {
         let root = Entity()
-        root.name = "level1-radar-\(target.rawValue)"
+        root.name = name
 
         let dot = ModelEntity(
             mesh: .generateSphere(radius: 0.007),
             materials: [UnlitMaterial(color: .white)]
         )
-        dot.name = "level1-radar-\(target.rawValue)-center"
+        dot.name = "\(name)-center"
         dot.components.set(DynamicLightShadowComponent(castsShadow: false))
-        dot.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.018)]))
-        dot.components.set(InputTargetComponent())
+        if receivesInput {
+            dot.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.018)]))
+            dot.components.set(InputTargetComponent())
+        }
         root.addChild(dot)
 
         let ring = ModelEntity(
             mesh: .generatePlane(width: 0.022, height: 0.022),
             materials: [Self.radarRingMaterial(alpha: 1.0)]
         )
-        ring.name = "level1-radar-\(target.rawValue)-ring"
+        ring.name = "\(name)-ring"
         ring.components.set(BillboardComponent())
         ring.components.set(DynamicLightShadowComponent(castsShadow: false))
-        ring.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.04)]))
-        ring.components.set(InputTargetComponent())
         ring.components.set(PulseAnimationComponent(baseScale: 1, speed: 3.8, amplitude: 0.45, isActiveTarget: true))
+        if receivesInput {
+            ring.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.04)]))
+            ring.components.set(InputTargetComponent())
+        }
         root.addChild(ring)
 
-        root.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.04)]))
-        root.components.set(InputTargetComponent())
         return root
     }
 
@@ -1177,10 +1362,10 @@ final class Level1ViewModel: ObservableObject {
         let light = Entity()
         var component = SpotLightComponent()
         component.color = .yellow
-        component.intensity = 3_400
-        component.attenuationRadius = 3.2
-        component.innerAngleInDegrees = 14
-        component.outerAngleInDegrees = 34
+        component.intensity = 3_800
+        component.attenuationRadius = 3.8
+        component.innerAngleInDegrees = 16
+        component.outerAngleInDegrees = 38
         light.components.set(component)
         var shadow = SpotLightComponent.Shadow()
         shadow.zNear = .fixed(0.01)
@@ -1203,7 +1388,7 @@ final class Level1ViewModel: ObservableObject {
 
     private func lightOffset(for objectType: LearningObjectType) -> SIMD3<Float> {
         let heightAdjustment: Float = objectType == .sphere ? 0.04 : 0
-        return SIMD3<Float>(0.28, 0.42 + heightAdjustment, -0.24)
+        return SIMD3<Float>(0.48, 0.46 + heightAdjustment, -0.42)
     }
 
 
@@ -1217,9 +1402,8 @@ final class Level1ViewModel: ObservableObject {
         return root
     }
 
-    /// Mengikuti rumus yang dipakai Level 2: arah bayangan adalah proyeksi
-    /// horizontal arah datang cahaya dan panjangnya berasal dari segitiga
-    /// sebangun terhadap tinggi objek.
+    /// Memakai kalkulator bayangan shared agar arah dan panjangnya konsisten
+    /// dengan level lain.
     private func configureShadowEntity(
         _ root: Entity,
         for objectType: LearningObjectType,
@@ -1228,21 +1412,23 @@ final class Level1ViewModel: ObservableObject {
     ) {
         root.children.removeAll()
         let lightDirection = simd_normalize(objectPosition - lightPosition)
-        let groundDirection = ShadowGeometryCalculator.groundShadowDirection(lightDirection: lightDirection)
-            ?? SIMD3<Float>(-1, 0, 0)
+        let groundDirection = ShadowGeometryCalculator.groundShadowDirection(
+            lightPosition: lightPosition,
+            objectPosition: objectPosition
+        ) ?? SIMD3<Float>(-1, 0, 0)
         let rawLength = ShadowGeometryCalculator.approximateShadowLength(
             lightDirection: lightDirection,
             objectHeight: checkpointHeight
         ) ?? 0.38
-        let length = clamped(rawLength, 0.34, 0.92)
-        root.position = objectPosition + groundDirection * (length * 0.50) + SIMD3<Float>(0, 0.018, 0)
+        let length = clamped(rawLength * 1.18, 0.44, 1.10)
+        root.position = objectPosition + groundDirection * (length * 0.52) + SIMD3<Float>(0, 0.018, 0)
         root.orientation = simd_quatf(angle: atan2(groundDirection.z, groundDirection.x), axis: [0, 1, 0])
 
         let shadowWidth = shadowBaseWidth(for: objectType)
         let layers: [(lengthMultiplier: Float, widthMultiplier: Float, alpha: Float)] = [
-            (1.00, 1.08, 0.52),
-            (1.18, 1.32, 0.26),
-            (1.38, 1.56, 0.12)
+            (1.00, 1.04, 0.62),
+            (1.16, 1.24, 0.34),
+            (1.36, 1.46, 0.16)
         ]
 
         for (index, layer) in layers.enumerated() {

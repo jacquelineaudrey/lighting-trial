@@ -30,6 +30,9 @@ struct Level1ARView: UIViewRepresentable {
         // 3. Configure ARKit to open the Camera and detect planes
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal]
+        arView.environment.sceneUnderstanding.options.insert(.occlusion)
+        arView.environment.sceneUnderstanding.options.insert(.collision)
+        arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
         
         let supportsLiDAR = ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh)
         if supportsLiDAR {
@@ -70,6 +73,11 @@ struct Level1ARView: UIViewRepresentable {
     func updateUIView(_ uiView: ARView, context: Context) {
         viewModel.syncEntities()
 
+        if viewModel.isSceneFrozen && !context.coordinator.hasFrozenScene {
+            context.coordinator.hasFrozenScene = true
+            uiView.session.pause()
+        }
+
         if context.coordinator.lastCaptureFlag != viewModel.pendingDrawingPhotoCapture {
             context.coordinator.lastCaptureFlag = viewModel.pendingDrawingPhotoCapture
             context.coordinator.captureAndSaveSnapshot()
@@ -91,6 +99,7 @@ struct Level1ARView: UIViewRepresentable {
         let viewModel: Level1ViewModel
         var subscription: AnyCancellable?
         var lastCaptureFlag = false
+        var hasFrozenScene = false
         weak var arView: ARView?
         
         weak var coachingOverlay: ARCoachingOverlayView? {
