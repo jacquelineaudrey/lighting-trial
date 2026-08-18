@@ -29,6 +29,7 @@ struct SceneOverlayUpdateSignature: Equatable {
     var showProjectionLines: Bool
     var showGroundProjection: Bool
     var showShadowLabels: Bool
+    var hiddenShadowConcepts: Set<ShadowConcept>
 }
 
 /// Signature untuk panel shadow info. Dipisah dari overlay karena update panel teks

@@ -67,21 +67,15 @@ struct MainMenuView: View {
             .overlay {
                 if showSimulationLockAlert {
                     ZStack {
-                        Color.black.opacity(0.4)
-                            .ignoresSafeArea()
-                            .onTapGesture {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    showSimulationLockAlert = false
-                                }
-                            }
+                        InstantDimmingBackdrop {
+                            showSimulationLockAlert = false
+                        }
 
                         LockAlertView(data: lockAlertViewModel.alerts[0]) {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                showSimulationLockAlert = false
-                            }
+                            showSimulationLockAlert = false
                         }
+                        .transition(.scale.combined(with: .opacity))
                     }
-                    .transition(.opacity.combined(with: .scale))
                 }
             }
         }
@@ -99,6 +93,19 @@ struct MainMenuView: View {
             return
         }
         showSandbox = true
+    }
+}
+
+private struct InstantDimmingBackdrop: View {
+    let action: () -> Void
+
+    var body: some View {
+        Color.black.opacity(0.4)
+            .ignoresSafeArea()
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+            .onTapGesture(perform: action)
     }
 }
 

@@ -1,14 +1,11 @@
-import Combine
 import RealityKit
 import SwiftUI
-import ARKit
 
 struct Level3ARContainerView: UIViewRepresentable {
     @ObservedObject var sceneViewModel: ARSceneViewModel
     let telemetryDelegate: any ARSceneTelemetryDelegate
 
     func makeCoordinator() -> ARSceneCoordinator {
-        // ⭐️ Gunakan ARSceneCoordinator bawaan project-mu yang asli
         ARSceneCoordinator(
             viewModel: sceneViewModel,
             gesturePolicy: .full,
@@ -19,43 +16,29 @@ struct Level3ARContainerView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
-        
-        // ⭐️ Panggil fungsi configure asli dari ARSceneCoordinator bawaan
         context.coordinator.configure(arView: arView)
-        
-        // Buat penampung anchor entitas tambahan (Bayo dkk)
-        let additionalAnchor = AnchorEntity(world: .zero)
-        additionalAnchor.name = "AdditionalEntitiesAnchor"
-        arView.scene.addAnchor(additionalAnchor)
-        
-        // Konfigurasi session AR untuk mendeteksi lantai (seperti Level 1)
-        let config = ARWorldTrackingConfiguration()
-        config.planeDetection = [.horizontal]
-        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
-        
-        // Pasang Tap Gesture standar untuk mendeteksi klik marker atau layar kosong
-        let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
-        arView.addGestureRecognizer(tapRecognizer)
-        
+
+        // Bayo dipasang di anchor DUNIA (bukan kamera). Dengan begitu posisi
+        // world-nya bisa di-update tiap frame oleh Level3ViewModel untuk
+        // "terbang" mengejar pemain dengan gerak halus, sama seperti Lumi di
+        // Level 1. Kalau dulu memakai AnchorEntity(.camera), Bayo akan menempel
+        // kaku di layar tanpa efek melayang.
+        let guideAnchor = AnchorEntity(world: .zero)
+        guideAnchor.name = "Level3WorldGuideAnchor"
+        arView.scene.addAnchor(guideAnchor)
+
         return arView
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {
-        guard let additionalAnchor = uiView.scene.findEntity(named: "AdditionalEntitiesAnchor") as? AnchorEntity else { return }
+        context.coordinator.requestSceneSynchronization()
+
+        guard let guideAnchor = uiView.scene.findEntity(named: "Level3WorldGuideAnchor") as? AnchorEntity else { return }
 
         for entity in sceneViewModel.additionalEntities {
             if entity.parent == nil {
-                additionalAnchor.addChild(entity)
+                guideAnchor.addChild(entity)
             }
         }
-    }
-}
-
-// Ekstensi helper untuk menangkap tap di Coordinator bawaan
-private class CoordinatorExtension {
-    @objc static func handleTap(_ recognizer: UITapGestureRecognizer) {
-        guard let arView = recognizer.view as? ARView else { return }
-        let location = recognizer.location(in: arView)
-        _ = arView.entity(at: location)
     }
 }
