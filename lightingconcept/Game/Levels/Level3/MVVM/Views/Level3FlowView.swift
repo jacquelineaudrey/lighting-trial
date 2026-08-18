@@ -56,7 +56,11 @@ struct Level3FlowView: View {
         .animation(.easeInOut(duration: 0.2), value: viewModel.arSceneViewModel.selectedConcept)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
         .task(id: viewModel.narrationText) { narrator.speak(viewModel.narrationText) }
-        .onDisappear { narrator.stop() }
+        .onAppear(perform: BackgroundMusicPlayer.shared.useGameplayVolume)
+        .onDisappear {
+            narrator.stop()
+            BackgroundMusicPlayer.shared.useMenuVolume()
+        }
         .onChange(of: viewModel.arSceneViewModel.surfaceState) { _, _ in
             viewModel.surfaceDidBecomeReady()
         }

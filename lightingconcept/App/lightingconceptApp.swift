@@ -10,6 +10,8 @@ import RealityKit
 
 @main
 struct lightingconceptApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+
     init() {
         LidarPhysicsSystem.registerSystem()
         ECSRegistration.registerAll()
@@ -20,6 +22,21 @@ struct lightingconceptApp: App {
     var body: some SwiftUI.Scene {
         WindowGroup {
             MainMenuView()
+                .onAppear(perform: BackgroundMusicPlayer.shared.play)
+                .onChange(of: scenePhase) { _, newPhase in
+                    handleScenePhase(newPhase)
+                }
+        }
+    }
+
+    private func handleScenePhase(_ scenePhase: ScenePhase) {
+        switch scenePhase {
+        case .active:
+            BackgroundMusicPlayer.shared.play()
+        case .inactive, .background:
+            BackgroundMusicPlayer.shared.pause()
+        @unknown default:
+            break
         }
     }
 }
