@@ -10,7 +10,7 @@ struct Level3FlowView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Level3ARContainerView(sceneViewModel: viewModel.arSceneViewModel, telemetryDelegate: viewModel)
+            Level3ARContainerView(viewModel: viewModel)
                 .ignoresSafeArea()
             
             overlay
@@ -32,24 +32,33 @@ struct Level3FlowView: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            if viewModel.phase == .review {
-                ZStack(alignment: .topTrailing) {
-                    Level3InfoMenu(
-                        isOpen: viewModel.isShadowInfoOpen,
-                        onInfoTap: viewModel.handleInfoButtonTap,
-                        onTypesTap: viewModel.handleShadowTypesMenuTap
-                    )
+            HStack(alignment: .top, spacing: 10) {
+                if viewModel.phase == .review {
+                    ZStack(alignment: .topTrailing) {
+                        Level3InfoMenu(
+                            isOpen: viewModel.isShadowInfoOpen,
+                            areMarkersVisible: viewModel.areReviewMarkersVisible,
+                            onInfoTap: viewModel.handleInfoButtonTap,
+                            onTypesTap: viewModel.handleShadowTypesMenuTap
+                        )
 
-                    if viewModel.shouldShowInfoGesture {
-                        Level3InfoGestureImage()
-                            .frame(width: 82, height: 82)
-                            .offset(infoGestureOffset)
-                            .allowsHitTesting(false)
+                        if viewModel.shouldShowInfoGesture {
+                            Level3InfoGestureImage()
+                                .frame(width: 82, height: 82)
+                                .offset(infoGestureOffset)
+                                .allowsHitTesting(false)
+                        }
                     }
                 }
-                .padding(.trailing, 18)
-                .padding(.top, 12)
+
+                #if DEBUG
+                if viewModel.phase != .completed {
+                    Level3DevFlowMenu(viewModel: viewModel)
+                }
+                #endif
             }
+            .padding(.trailing, 18)
+            .padding(.top, 12)
         }
         .overlay {
             if viewModel.showsFreezeSceneConfirmation {
@@ -84,12 +93,16 @@ struct Level3FlowView: View {
         .animation(.easeInOut(duration: 0.2), value: viewModel.arSceneViewModel.selectedConcept)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
         .task(id: viewModel.narrationID) {
+            guard viewModel.shouldSpeakNarration else {
+                narrator.stop()
+                return
+            }
             viewModel.narrationWillStart()
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
             narrator.speak(
                 viewModel.narrationText,
-                audioFileName: viewModel.narrationAudioFileName,
+                audioFileNames: viewModel.narrationAudioFileNames,
                 onCompletion: viewModel.narrationDidFinish
             )
         }
@@ -109,7 +122,7 @@ struct Level3FlowView: View {
             viewModel.narrationWillStart()
             narrator.speak(
                 viewModel.narrationText,
-                audioFileName: viewModel.narrationAudioFileName,
+                audioFileNames: viewModel.narrationAudioFileNames,
                 onCompletion: viewModel.narrationDidFinish
             )
         }
@@ -173,7 +186,11 @@ struct Level3FlowView: View {
             }
 
         case .drawingPrompt:
-            Level3DialogTapCatcher(action: viewModel.requestFreezeSceneForDrawing)
+            Level3NextButton(
+                title: "Selanjutnya",
+                isDisabled: !viewModel.canAdvanceCurrentDialog,
+                action: viewModel.requestFreezeSceneForDrawing
+            )
 
         case .drawingReady:
             Level3FrozenDrawingOverlay(
@@ -210,10 +227,14 @@ struct Level3FlowView: View {
     }
 
     private func replayNarration() {
+        guard viewModel.shouldSpeakNarration else {
+            narrator.stop()
+            return
+        }
         viewModel.narrationWillStart()
         narrator.speak(
             viewModel.narrationText,
-            audioFileName: viewModel.narrationAudioFileName,
+            audioFileNames: viewModel.narrationAudioFileNames,
             onCompletion: viewModel.narrationDidFinish
         )
     }
@@ -231,6 +252,7 @@ private struct Level3DialogTapCatcher: View {
 
 private struct Level3InfoMenu: View {
     let isOpen: Bool
+    let areMarkersVisible: Bool
     let onInfoTap: () -> Void
     let onTypesTap: () -> Void
 
@@ -248,7 +270,7 @@ private struct Level3InfoMenu: View {
             if isOpen {
                 VStack(alignment: .leading, spacing: 0) {
                     Button(action: onTypesTap) {
-                        Text("Jenis Bayangan")
+                        Text(areMarkersVisible ? "Tutup Mark" : "Buka Mark")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.black.opacity(0.82))
                             .lineLimit(1)
@@ -261,7 +283,7 @@ private struct Level3InfoMenu: View {
                     Divider()
                         .padding(.horizontal, 14)
 
-                    Text("Garis Bayangan")
+                    Text("Jenis Bayangan")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.black.opacity(0.32))
                         .lineLimit(1)
@@ -279,6 +301,29 @@ private struct Level3InfoMenu: View {
         }
     }
 }
+
+#if DEBUG
+private struct Level3DevFlowMenu: View {
+    let viewModel: Level3ViewModel
+
+    var body: some View {
+        Menu {
+            ForEach(Level3DevFlow.allCases) { flow in
+                Button(flow.rawValue) {
+                    viewModel.jumpToDevFlow(flow)
+                }
+            }
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 38, height: 38)
+                .background(Color.black.opacity(0.44), in: Circle())
+        }
+        .accessibilityLabel("Debug flow")
+    }
+}
+#endif
 
 private struct Level3InfoGestureImage: View {
     var body: some View {
@@ -557,6 +602,7 @@ private struct Level3DrawingCameraView: UIViewControllerRepresentable {
 
 private struct Level3NextButton: View {
     let title: String
+    var isDisabled = false
     let action: () -> Void
 
     var body: some View {
@@ -567,8 +613,9 @@ private struct Level3NextButton: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .background(Color.blue, in: Capsule())
+                .background(isDisabled ? Color.gray : Color.blue, in: Capsule())
                 .buttonStyle(.plain)
+                .disabled(isDisabled)
         }
         .padding(.trailing, 24)
         .padding(.bottom, 34)
