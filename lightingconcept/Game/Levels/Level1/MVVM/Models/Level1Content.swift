@@ -133,16 +133,24 @@ enum Level1Content {
         quizSymbolName: "triangle.fill", textures: textures()
     )
 
-    /// Urutan jalur jalan kaki. `Level1ARCoordinator` menempatkan checkpoint
-    /// di dunia nyata mengikuti urutan array ini.
-    static let checkpoints: [Checkpoint] = [
-        Checkpoint(id: "cp-0", order: 0, shape: kubus),
-        Checkpoint(id: "cp-1", order: 1, shape: balok),
-        Checkpoint(id: "cp-2", order: 2, shape: bola),
-        Checkpoint(id: "cp-3", order: 3, shape: piramida),
-        Checkpoint(id: "cp-4", order: 4, shape: kerucut),
-        Checkpoint(id: "cp-5", order: 5, shape: tabung)
+    /// Katalog lengkap tetap dipakai pada flow ganti bentuk.
+    static let allShapes: [GameShape] = [
+        kubus,
+        balok,
+        bola,
+        piramida,
+        kerucut,
+        tabung
     ]
+
+    /// Saat berkeliling anak hanya diperkenalkan pada tiga bentuk utama.
+    private static let explorationShapes: [GameShape] = [kubus, bola, kerucut]
+
+    /// Urutan jalur jalan kaki. Posisi setiap checkpoint ditentukan dari ruang
+    /// kosong hasil scan, sehingga urutannya tidak menyiratkan pola melingkar.
+    static let checkpoints: [Checkpoint] = explorationShapes.enumerated().map { index, shape in
+        Checkpoint(id: "cp-\(index)", order: index, shape: shape)
+    }
 
     static let onboardingDialog: [DialogLine] = [
         DialogLine(characterName: "Lumi", text: "Hai, Penjelajah Kecil! Namaku Lumi.", audioFileName: "level-1/1 Hai Penjelajah Kecil namaku Lumy.mp3"),

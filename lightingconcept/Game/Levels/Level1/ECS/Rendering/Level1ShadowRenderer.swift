@@ -40,16 +40,24 @@ enum Level1ShadowRenderer {
             return
         }
 
-        let opacityScale: Float = texture.shadowBehavior == .cutout ? 0.72 : 1
+        let isCutout = texture.shadowBehavior == .cutout
         let layers: [(expansion: Float, opacity: Float, height: Float)] = [
-            (0.030, 0.10 * opacityScale, surfaceOffset),
-            (0.014, 0.18 * opacityScale, surfaceOffset + 0.001),
-            (0, 0.36 * opacityScale, surfaceOffset + 0.002)
+            (0.030, isCutout ? 0.05 : 0.10, surfaceOffset),
+            (0.014, isCutout ? 0.08 : 0.18, surfaceOffset + 0.001),
+            (0, isCutout ? 0.34 : 0.36, surfaceOffset + 0.002)
         ]
 
         for (index, layer) in layers.enumerated() {
             let points = expanded(hull, by: layer.expansion)
-            guard let mesh = makeMesh(points: points, height: layer.height) else { continue }
+            let mesh: MeshResource?
+            if isCutout, index == layers.indices.last {
+                // Lapisan inti benar-benar tidak memiliki geometri pada area
+                // lubang. Menurunkan opacity saja masih menghasilkan siluet utuh.
+                mesh = makePerforatedMesh(points: points, height: layer.height)
+            } else {
+                mesh = makeMesh(points: points, height: layer.height)
+            }
+            guard let mesh else { continue }
 
             let shadowLayer = ModelEntity(
                 mesh: mesh,
@@ -295,6 +303,102 @@ enum Level1ShadowRenderer {
         descriptor.positions = MeshBuffers.Positions(positions)
         descriptor.primitives = .triangles(indices)
         return try? MeshResource.generate(from: [descriptor])
+    }
+
+    private static func makePerforatedMesh(
+        points: [SIMD2<Float>],
+        height: Float
+    ) -> MeshResource? {
+        guard points.count >= 3,
+              let minimumX = points.map(\.x).min(),
+              let maximumX = points.map(\.x).max(),
+              let minimumZ = points.map(\.y).min(),
+              let maximumZ = points.map(\.y).max() else { return nil }
+
+        let width = maximumX - minimumX
+        let depth = maximumZ - minimumZ
+        let shortestSide = min(width, depth)
+        guard shortestSide > 0.001 else { return nil }
+
+        // Pola aset prosedural memiliki kira-kira lima lubang pada sisi
+        // terpendek. Grid yang rapat menjaga kontur lubang tetap terbaca.
+        let repeatSize = shortestSide / 5.25
+        let targetCellSize = repeatSize / 10
+        let columnCount = min(max(Int(ceil(width / targetCellSize)), 30), 96)
+        let rowCount = min(max(Int(ceil(depth / targetCellSize)), 30), 96)
+        let cellWidth = width / Float(columnCount)
+        let cellDepth = depth / Float(rowCount)
+
+        var positions: [SIMD3<Float>] = []
+        var indices: [UInt32] = []
+        positions.reserveCapacity(columnCount * rowCount * 4)
+        indices.reserveCapacity(columnCount * rowCount * 6)
+
+        for row in 0..<rowCount {
+            for column in 0..<columnCount {
+                let x0 = minimumX + Float(column) * cellWidth
+                let x1 = x0 + cellWidth
+                let z0 = minimumZ + Float(row) * cellDepth
+                let z1 = z0 + cellDepth
+                let center = SIMD2<Float>((x0 + x1) / 2, (z0 + z1) / 2)
+
+                guard pointIsInsidePolygon(center, polygon: points),
+                      !isInsideCutoutHole(center, origin: SIMD2<Float>(minimumX, minimumZ), repeatSize: repeatSize) else {
+                    continue
+                }
+
+                let start = UInt32(positions.count)
+                positions.append(contentsOf: [
+                    SIMD3<Float>(x0, height, z0),
+                    SIMD3<Float>(x1, height, z0),
+                    SIMD3<Float>(x1, height, z1),
+                    SIMD3<Float>(x0, height, z1)
+                ])
+                indices.append(contentsOf: [
+                    start, start + 2, start + 1,
+                    start, start + 3, start + 2
+                ])
+            }
+        }
+
+        guard !indices.isEmpty else { return nil }
+        var descriptor = MeshDescriptor(name: "Level 1 perforated projected shadow")
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.primitives = .triangles(indices)
+        return try? MeshResource.generate(from: [descriptor])
+    }
+
+    private static func isInsideCutoutHole(
+        _ point: SIMD2<Float>,
+        origin: SIMD2<Float>,
+        repeatSize: Float
+    ) -> Bool {
+        let patternPosition = (point - origin) / repeatSize
+        let fractionalX = patternPosition.x - floor(patternPosition.x)
+        let fractionalZ = patternPosition.y - floor(patternPosition.y)
+        let offset = SIMD2<Float>(fractionalX - 0.58, fractionalZ - 0.58)
+        return simd_length_squared(offset) <= 0.21 * 0.21
+    }
+
+    private static func pointIsInsidePolygon(
+        _ point: SIMD2<Float>,
+        polygon: [SIMD2<Float>]
+    ) -> Bool {
+        var isInside = false
+        var previousIndex = polygon.count - 1
+
+        for currentIndex in polygon.indices {
+            let current = polygon[currentIndex]
+            let previous = polygon[previousIndex]
+            let crossesRay = (current.y > point.y) != (previous.y > point.y)
+                && point.x < (previous.x - current.x) * (point.y - current.y)
+                    / (previous.y - current.y) + current.x
+            if crossesRay {
+                isInside.toggle()
+            }
+            previousIndex = currentIndex
+        }
+        return isInside
     }
 
     private static func shadowMaterial(opacity: Float) -> UnlitMaterial {

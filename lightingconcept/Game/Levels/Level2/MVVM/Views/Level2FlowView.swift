@@ -6,9 +6,14 @@ struct Level2FlowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
+    let onReturnToLevelMenu: (() -> Void)?
     let onNextLevel: (() -> Void)?
 
-    init(onNextLevel: (() -> Void)? = nil) {
+    init(
+        onReturnToLevelMenu: (() -> Void)? = nil,
+        onNextLevel: (() -> Void)? = nil
+    ) {
+        self.onReturnToLevelMenu = onReturnToLevelMenu
         self.onNextLevel = onNextLevel
     }
 
@@ -91,8 +96,9 @@ struct Level2FlowView: View {
                 ZStack {
                     EndLevelView(
                         data: EndLevelViewModel.data(for: Level2Content.levelID),
-                        onBack: dismiss.callAsFunction,
-                        onNext: onNextLevel
+                        onBack: returnToLevelMenu,
+                        onNext: onNextLevel,
+                        backTitle: "Kembali ke Menu"
                     )
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -108,10 +114,15 @@ struct Level2FlowView: View {
                 .transition(.opacity)
             }
         }
-        .overlay(alignment: .topLeading) {
+        .overlay(alignment: .topTrailing) {
             if viewModel.phase != .completed {
-                LevelBackButton { showsExitConfirmation = true }
-                    .padding(.leading, 16)
+                LevelActionButton(
+                    title: "Kembali ke Menu",
+                    systemImage: "house.fill",
+                    role: .menu,
+                    action: { showsExitConfirmation = true }
+                )
+                    .padding(.trailing, 16)
                     .padding(.top, 12)
             }
         }
@@ -132,13 +143,13 @@ struct Level2FlowView: View {
             }
         }
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
-            dismiss()
+            returnToLevelMenu()
         }
         .animation(reduceMotion ? nil : .easeInOut, value: viewModel.phase)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: viewModel.topModeTitle)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
         .task(id: viewModel.narrationID) {
-            try? await Task.sleep(nanoseconds: 150_000_000)
+            try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
             narrator.speak(
                 viewModel.narrationText,
@@ -173,5 +184,10 @@ struct Level2FlowView: View {
             viewModel.narrationText,
             audioFileNames: viewModel.narrationAudioFileNames
         )
+    }
+
+    private func returnToLevelMenu() {
+        onReturnToLevelMenu?()
+        dismiss()
     }
 }

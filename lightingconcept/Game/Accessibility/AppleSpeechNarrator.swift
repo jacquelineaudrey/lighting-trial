@@ -4,17 +4,36 @@ import UIKit
 /// Narasi memakai voice bawaan Apple. Ketika VoiceOver aktif, teks dikirim
 /// sebagai announcement supaya dua suara sistem tidak berbicara bersamaan.
 @MainActor
-final class AppleSpeechNarrator {
+final class AppleSpeechNarrator: NSObject, AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
+    private var completion: (() -> Void)?
+    private var activeAnnouncement: String?
 
-    func speak(_ text: String) {
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(announcementDidFinish(_:)),
+            name: UIAccessibility.announcementDidFinishNotification,
+            object: nil
+        )
+    }
+
+    func speak(_ text: String, onCompletion: (() -> Void)? = nil) {
         stop()
         configureAudioSession()
 
         let spokenText = sanitizedSpeechText(from: text)
-        guard !spokenText.isEmpty else { return }
+        guard !spokenText.isEmpty else {
+            onCompletion?()
+            return
+        }
+
+        completion = onCompletion
 
         if UIAccessibility.isVoiceOverRunning {
+            activeAnnouncement = spokenText
             UIAccessibility.post(notification: .announcement, argument: spokenText)
             return
         }
@@ -26,6 +45,24 @@ final class AppleSpeechNarrator {
         utterance.volume = 1
         utterance.prefersAssistiveTechnologySettings = true
         synthesizer.speak(utterance)
+    }
+
+    @objc private func announcementDidFinish(_ notification: Notification) {
+        guard let activeAnnouncement else { return }
+        if let announcedText = notification.userInfo?[UIAccessibility.announcementStringValueUserInfoKey] as? String,
+           announcedText != activeAnnouncement {
+            return
+        }
+        finishSpeaking()
+    }
+
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didFinish utterance: AVSpeechUtterance
+    ) {
+        Task { @MainActor [weak self] in
+            self?.finishSpeaking()
+        }
     }
 
     private func sanitizedSpeechText(from text: String) -> String {
@@ -50,7 +87,17 @@ final class AppleSpeechNarrator {
     }
 
     func stop() {
-        guard synthesizer.isSpeaking else { return }
-        synthesizer.stopSpeaking(at: .immediate)
+        completion = nil
+        activeAnnouncement = nil
+        if synthesizer.isSpeaking {
+            synthesizer.stopSpeaking(at: .immediate)
+        }
+    }
+
+    private func finishSpeaking() {
+        activeAnnouncement = nil
+        let currentCompletion = completion
+        completion = nil
+        currentCompletion?()
     }
 }

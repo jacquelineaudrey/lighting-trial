@@ -46,6 +46,8 @@ struct LevelSelectView: View {
                         .accessibilityHidden(true)
 
                     ForEach(1...progressStore.totalBelajarLevels, id: \.self) { levelID in
+                        let isLevelOpen = isUnlocked(levelID) || progressStore.isLevelCompleted(levelID)
+
                         LevelMapButton(
                             levelID: levelID,
                             title: levelTitles[levelID] ?? "Segera Hadir",
@@ -53,7 +55,7 @@ struct LevelSelectView: View {
                             isCompleted: progressStore.isLevelCompleted(levelID),
                             action: { showCard(for: levelID) }
                         )
-                        .position(LevelMapLayout.position(for: levelID))
+                        .position(LevelMapLayout.position(for: levelID, isOpen: isLevelOpen))
                     }
 
                     LevelMapBackButton(action: closeLevelSelect)
@@ -68,7 +70,7 @@ struct LevelSelectView: View {
             if let selectedLevel {
                 LevelSelectDimmingBackdrop(action: dismissSelectedLevel)
 
-                LevelCardView(level: selectedLevel) {
+                LevelCardView(level: selectedLevel, onBack: dismissSelectedLevel) {
                     let levelID = selectedLevel.id
                     dismissSelectedLevel()
                     openLevel(levelID)
@@ -88,18 +90,20 @@ struct LevelSelectView: View {
         .ignoresSafeArea()
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: $startLevel1) {
-            Level1FlowView {
-                openNextLevel(after: 1)
-            }
+            Level1FlowView(
+                onReturnToLevelMenu: { restoreLevelCard(for: 1) },
+                onNextLevel: { openNextLevel(after: 1) }
+            )
         }
         .navigationDestination(isPresented: $startLevel2) {
-            Level2FlowView {
-                openNextLevel(after: 2)
-            }
+            Level2FlowView(
+                onReturnToLevelMenu: { restoreLevelCard(for: 2) },
+                onNextLevel: { openNextLevel(after: 2) }
+            )
                 .id(level2SessionID)
         }
         .navigationDestination(isPresented: $startLevel3) {
-            Level3FlowView()
+            Level3FlowView(onReturnToLevelMenu: { restoreLevelCard(for: 3) })
                 .id(level3SessionID)
         }
     }
@@ -136,6 +140,10 @@ struct LevelSelectView: View {
         withAnimation(.easeInOut(duration: 0.2)) {
             selectedLevel = cardViewModel.levels.first { $0.id == levelID }
         }
+    }
+
+    private func restoreLevelCard(for levelID: Int) {
+        selectedLevel = cardViewModel.levels.first { $0.id == levelID }
     }
 
     private func openLevel(_ levelID: Int) {

@@ -126,18 +126,34 @@ final class ARSceneViewModel: ObservableObject {
     }
 
     func updateLiDARScan(meshCount: Int, faceCount: Int) {
-        isLiDARAvailable = true
-        lidarScannedMeshCount = meshCount
-        lidarScannedFaceCount = faceCount
         let meshProgress = min(Float(meshCount) / 6, 1)
         let faceProgress = min(Float(faceCount) / 1500, 1)
-        lidarScanProgress = min(meshProgress * 0.45 + faceProgress * 0.55, 1)
+        let newProgress = min(meshProgress * 0.45 + faceProgress * 0.55, 1)
+
+        if !isLiDARAvailable {
+            isLiDARAvailable = true
+        }
+        if lidarScannedMeshCount != meshCount {
+            lidarScannedMeshCount = meshCount
+        }
+        if lidarScannedFaceCount != faceCount {
+            lidarScannedFaceCount = faceCount
+        }
+        if abs(lidarScanProgress - newProgress) >= 0.005 {
+            lidarScanProgress = newProgress
+        }
     }
 
     func resetLiDARScan() {
-        lidarScanProgress = 0
-        lidarScannedMeshCount = 0
-        lidarScannedFaceCount = 0
+        if lidarScanProgress != 0 {
+            lidarScanProgress = 0
+        }
+        if lidarScannedMeshCount != 0 {
+            lidarScannedMeshCount = 0
+        }
+        if lidarScannedFaceCount != 0 {
+            lidarScannedFaceCount = 0
+        }
     }
 
     var selectedLight: LightConfiguration {
