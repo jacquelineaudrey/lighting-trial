@@ -39,15 +39,20 @@ final class WaypointSystem: System {
                   let targetPosition = indicator.targetPosition,
                   entity.isEnabled else { continue }
 
-            let forwardBackward = sin(time * indicator.moveSpeed) * indicator.moveAmplitude
+            // 1. Animasi naik-turun (floating) saja pada posisi dasarnya
             let verticalFloat = sin(time * indicator.floatSpeed) * indicator.floatAmplitude
 
-            let position = cameraPosition
-                + normalizedForward * (indicator.forwardOffset + forwardBackward)
-                + SIMD3<Float>(0, indicator.heightOffset + verticalFloat, 0)
+            // 2. Gunakan targetPosition / anchor posisi asli (bukan cameraPosition)
+            let basePosition = indicator.targetPosition ?? entity.position(relativeTo: nil)
+            let currentPosition = SIMD3<Float>(basePosition.x, basePosition.y + verticalFloat, basePosition.z)
 
-            let targetXZ = SIMD3<Float>(targetPosition.x, position.y, targetPosition.z)
-            entity.look(at: targetXZ, from: position, relativeTo: nil)
+            // 3. Update posisi di world space tanpa mengaitkannya ke kamera
+            entity.setPosition(currentPosition, relativeTo: nil)
+
+            // 4. Jika indikator adalah panah penunjuk, arahkan ke target;
+            // jika indikator adalah objek tujuan itu sendiri, hadapkan ke arah kamera
+            let cameraXZ = SIMD3<Float>(cameraPosition.x, currentPosition.y, cameraPosition.z)
+            entity.look(at: cameraXZ, from: currentPosition, relativeTo: nil)
         }
     }
 }

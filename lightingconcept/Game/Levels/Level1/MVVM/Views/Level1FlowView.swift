@@ -41,7 +41,7 @@ struct Level1FlowView: View {
             case .returningToFirstObject:
                 EmptyView()
             case .textureTapPrompt:
-                Level1TextureTapPromptOverlay()
+                Level1TextureTapPromptOverlay(viewModel: viewModel)
             case .textureExploration:
                 Level1TextureOverlay(viewModel: viewModel)
             case .shapeChange:
@@ -50,6 +50,8 @@ struct Level1FlowView: View {
                 Level1DrawingOverlay(viewModel: viewModel)
             case .photoPrompt:
                 Level1PhotoOverlay(viewModel: viewModel)
+            case .photoComparison:
+                Level1PhotoSavedOverlay(viewModel: viewModel)
             case .completed:
                 EndLevelView(
                     data: EndLevelViewModel.data(for: Level1Content.levelID),
@@ -57,6 +59,14 @@ struct Level1FlowView: View {
                     onNext: onNextLevel
                 )
                 .padding(.bottom, 24)
+            }
+
+            if viewModel.showsGuideOverlay {
+                Level1GuideOverlay(viewModel: viewModel)
+            }
+
+            if viewModel.showsPhotoComparisonPanel {
+                Level1PhotoComparisonOverlay(viewModel: viewModel)
             }
         }
         .overlay(alignment: .topLeading) {
@@ -66,6 +76,13 @@ struct Level1FlowView: View {
                     .padding(.top, 12)
             }
         }
+        #if DEBUG
+        .overlay(alignment: .topTrailing) {
+            Level1DevFlowMenu(viewModel: viewModel)
+                .padding(.trailing, 16)
+                .padding(.top, 12)
+        }
+        #endif
         .overlay(alignment: .top) {
             if viewModel.showsObjectModeBadge {
                 Text("Kamu jadi objek!")
@@ -78,29 +95,33 @@ struct Level1FlowView: View {
                     .padding(.top, 28)
             }
         }
-        .alert("Scene akan di-freeze", isPresented: $viewModel.showsFreezeSceneConfirmation) {
-            Button("Iya, lanjut") {
-                viewModel.confirmFreezeSceneAndStartDrawing()
-            }
-            Button("Sebentar aku arahkan lagi", role: .cancel) {
-                viewModel.cancelFreezeSceneConfirmation()
-            }
-        } message: {
-            Text("Pastikan layarmu menangkap objek.")
-        }
-        .alert(
-            "Foto Gambar",
-            isPresented: Binding(
-                get: { viewModel.photoSaveMessage != nil },
-                set: { _ in viewModel.clearPhotoSaveMessage() }
-            )
-        ) {
-            Button("OK", role: .cancel) { viewModel.clearPhotoSaveMessage() }
-        } message: {
-            Text(viewModel.photoSaveMessage ?? "")
-        }
+        .gameDialog(
+            isPresented: viewModel.showsFreezeSceneConfirmation,
+            title: viewModel.isPreparingFrozenScene ? "Menyiapkan scene" : "Scene akan di-freeze",
+            message: "Pastikan layarmu menangkap objek.",
+            primaryTitle: "Iya, lanjut",
+            secondaryTitle: "Sebentar aku arahkan lagi",
+            isLoading: viewModel.isPreparingFrozenScene,
+            loadingMessage: "Sebentar ya, gambarnya sedang disiapkan.",
+            primaryAction: viewModel.confirmFreezeSceneAndStartDrawing,
+            secondaryAction: viewModel.cancelFreezeSceneConfirmation
+        )
+        .gameDialog(
+            isPresented: viewModel.photoSaveMessage != nil,
+            title: "Foto Gambar",
+            message: viewModel.photoSaveMessage ?? "",
+            primaryTitle: "OK",
+            primaryAction: viewModel.clearPhotoSaveMessage
+        )
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
             dismiss()
+        }
+        .fullScreenCover(isPresented: $viewModel.showsDrawingCamera) {
+            DrawingCameraView(
+                onImagePicked: viewModel.completeUserDrawingPhoto,
+                onCancel: viewModel.cancelDrawingCamera
+            )
+            .ignoresSafeArea()
         }
         .animation(.easeInOut(duration: 0.25), value: viewModel.phase)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
@@ -121,6 +142,88 @@ struct Level1FlowView: View {
         .navigationBarBackButtonHidden(true)
     }
 }
+
+private struct Level1GuideOverlay: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
+    var body: some View {
+        GeometryReader { proxy in
+            guideContent
+                .position(overlayPosition(in: proxy.size))
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    private var guideContent: some View {
+        HStack(alignment: .bottom, spacing: 12) {
+            SpeechBubble(text: viewModel.narrationText, tail: .bottomTrailing)
+                .frame(maxWidth: 420)
+                .fixedSize(horizontal: false, vertical: true)
+
+            guideImage
+                .frame(width: 104, height: 144)
+        }
+    }
+
+    private func overlayPosition(in size: CGSize) -> CGPoint {
+        if let arPosition = viewModel.guideOverlayScreenPosition {
+            let x = min(max(arPosition.x, 280), size.width - 120)
+            let y = min(max(arPosition.y, 150), size.height - bottomPadding)
+            return CGPoint(x: x, y: y)
+        }
+
+        return CGPoint(x: size.width - 280, y: size.height - bottomPadding)
+    }
+
+    private var guideImage: some View {
+        Group {
+            if let image = UIImage(named: viewModel.guideOverlayAssetName) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: "sparkles")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.white)
+            }
+        }
+        .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+    }
+
+    private var bottomPadding: CGFloat {
+        switch viewModel.phase {
+        case .textureExploration, .shapeChange, .drawingReady, .photoPrompt:
+            132
+        default:
+            32
+        }
+    }
+}
+
+#if DEBUG
+private struct Level1DevFlowMenu: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
+    var body: some View {
+        Menu {
+            ForEach(Level1DevFlow.allCases) { flow in
+                Button(flow.rawValue) {
+                    viewModel.jumpToDevFlow(flow)
+                }
+            }
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 42, height: 42)
+                .background(Color.black.opacity(0.44), in: Circle())
+        }
+        .accessibilityLabel("Debug flow")
+    }
+}
+#endif
 
 private struct Level1OpeningOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
@@ -147,8 +250,27 @@ private struct Level1FindShapeOverlay: View {
 }
 
 private struct Level1TextureTapPromptOverlay: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
     var body: some View {
-        EmptyView()
+        GeometryReader { proxy in
+            TouchGestureImage()
+                .frame(width: 82, height: 164)
+                .rotationEffect(.degrees(210))
+                .position(handPosition(in: proxy.size))
+                .allowsHitTesting(false)
+        }
+        .transition(.opacity)
+    }
+
+    private func handPosition(in size: CGSize) -> CGPoint {
+        let objectPosition = viewModel.textureTapObjectScreenPosition
+            ?? CGPoint(x: size.width * 0.5, y: size.height * 0.56)
+
+        return CGPoint(
+            x: min(max(objectPosition.x - 58, 70), size.width - 70),
+            y: min(max(objectPosition.y + 62, 120), size.height - 90)
+        )
     }
 }
 
@@ -177,8 +299,32 @@ private struct Level1ShapeChangeOverlay: View {
                     Spacer()
                     Level1ExperimentControls(viewModel: viewModel)
                 }
+            } else if viewModel.canConfirmDrawingChoices {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Level1PrimaryActionButton(title: "Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
+                            .padding(.trailing, 42)
+                            .padding(.bottom, 36)
+                    }
+                }
             }
         }
+    }
+}
+
+struct Level1PrimaryActionButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(title, action: action)
+            .font(.system(size: 15, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+            .background(Color.blue, in: Capsule())
     }
 }
 
@@ -186,22 +332,57 @@ private struct Level1DrawingOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
 
     var body: some View {
-        VStack {
-            Spacer()
-            HStack(alignment: .bottom, spacing: 10) {
+        if viewModel.phase == .drawingReady || viewModel.phase == .drawingActive {
+            VStack {
                 Spacer()
-                if viewModel.phase == .drawingReady || viewModel.phase == .drawingActive {
-                    Button("Aku Selesai Gambar", action: viewModel.finishDrawing)
-                        .font(.caption.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color.blue, in: Capsule())
-                        .padding(.trailing, 42)
-                        .padding(.bottom, 32)
+                HStack(alignment: .bottom, spacing: 14) {
+                    Spacer()
+
+                    VStack(alignment: .trailing, spacing: 10) {
+                        DrawingInstructionBubble(text: "Kalau sudah, tekan tombol ini ya!")
+                            .frame(width: 310)
+
+                        HStack(alignment: .bottom, spacing: 14) {
+                            Level1OverlayGuideCharacter(assetName: viewModel.guideOverlayAssetName)
+                                .frame(width: 128, height: 150)
+
+                            Button("Aku Selesai Gambar", action: viewModel.finishDrawing)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 10)
+                                .background(Color.blue, in: Capsule())
+                                .padding(.bottom, 18)
+                        }
+                    }
+                    .padding(.trailing, 42)
+                    .padding(.bottom, 22)
                 }
             }
+            .allowsHitTesting(true)
         }
+    }
+}
+
+private struct DrawingInstructionBubble: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 20, weight: .medium))
+            .foregroundStyle(.black)
+            .multilineTextAlignment(.leading)
+            .lineLimit(3)
+            .minimumScaleFactor(0.86)
+            .padding(.horizontal, 28)
+            .padding(.top, 22)
+            .padding(.bottom, 40)
+            .background {
+                SpeechBubbleShape(tail: .bottomTrailing)
+                    .fill(.white.opacity(0.88))
+                    .stroke(.white, lineWidth: 1.5)
+            }
+            .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
     }
 }
 
@@ -216,10 +397,10 @@ private struct Level1PhotoOverlay: View {
                 Button(viewModel.isSavingDrawingPhoto ? "Menyimpan..." : "Foto Gambarku") {
                     viewModel.captureDrawingPhoto()
                 }
-                .font(.caption.bold())
+                .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
                 .background(Color.blue, in: Capsule())
                 .disabled(viewModel.isSavingDrawingPhoto)
                 .padding(.trailing, 42)
@@ -229,163 +410,132 @@ private struct Level1PhotoOverlay: View {
     }
 }
 
-/// Kontrol interaksi mengikuti panel Figma: daftar vertikal di kiri dan
-/// tombol mode kecil di bawahnya agar area AR tetap terbuka.
-private struct Level1ExperimentControls: View {
+private struct Level1PhotoSavedOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            Color.clear
-                .contentShape(.rect)
-                .onTapGesture(perform: viewModel.closeExperimentPanel)
-
-            HStack(alignment: .bottom) {
-                VStack(alignment: .leading, spacing: 8) {
-                    if viewModel.activeExperimentPanel == .texture {
-                        texturePicker
-                    } else if viewModel.activeExperimentPanel == .shape {
-                        shapePicker
-                    }
-
-                    modeButtons
-                }
-                .padding(.leading, 26)
-                .padding(.bottom, 28)
-
+        VStack {
+            Spacer()
+            HStack {
                 Spacer()
-
-                if viewModel.canContinueToShapeSelection {
-                    Button("Selanjutnya", action: viewModel.continueToShapeSelection)
-                        .font(.caption.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color.blue, in: Capsule())
-                        .padding(.trailing, 42)
-                        .padding(.bottom, 36)
-                } else if viewModel.canConfirmDrawingChoices {
-                    Button("Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
-                        .font(.caption.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color.blue, in: Capsule())
-                        .padding(.trailing, 42)
-                        .padding(.bottom, 36)
-                }
-            }
-
-            if viewModel.showsTextureControlGesture || viewModel.showsShapeControlGesture {
-                TouchGestureImage()
-                    .frame(width: 42, height: 96)
-                    .rotationEffect(.degrees(180))
-                    .padding(.leading, viewModel.showsTextureControlGesture ? 72 : 30)
-                    .padding(.bottom, 24)
-                    .allowsHitTesting(false)
+                Level1PrimaryActionButton(title: "Lihat Gambar", action: viewModel.showPhotoComparisonPanel)
+                    .padding(.trailing, 42)
+                    .padding(.bottom, 36)
             }
         }
-    }
-
-    private var texturePicker: some View {
-        VStack(spacing: 10) {
-            ForEach(Array(viewModel.textureStops.enumerated()), id: \.element.id) { index, texture in
-                Button { viewModel.selectTexture(at: index) } label: {
-                    HStack(spacing: 12) {
-                        Text(texture.name)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                            .frame(width: 78, alignment: .leading)
-
-                        TextureSwatch(texture: texture.material, isSelected: index == viewModel.currentTextureIndex)
-                    }
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 14)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.white.opacity(0.28), lineWidth: 1)
-        )
-    }
-
-    private var shapePicker: some View {
-        VStack(spacing: 10) {
-            ForEach(Array(viewModel.shapeOptions.enumerated()), id: \.element.id) { index, shape in
-                Button { viewModel.selectShape(at: index) } label: {
-                    HStack(spacing: 12) {
-                        Text(shape.displayName)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                            .frame(width: 78, alignment: .leading)
-
-                        ShapeSwatch(shape: shape, isSelected: index == viewModel.selectedShapeIndex)
-                    }
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 14)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.white.opacity(0.28), lineWidth: 1)
-        )
-    }
-
-    private var modeButtons: some View {
-        HStack(spacing: 8) {
-            modeButton(icon: "cube.transparent.fill", isSelected: viewModel.activeExperimentPanel == .shape) {
-                viewModel.showShapeControls()
-            }
-            modeButton(icon: "square.fill", isSelected: viewModel.activeExperimentPanel == .texture) {
-                viewModel.showTextureControls()
-            }
-        }
-        .padding(6)
-        .background(.ultraThinMaterial, in: Capsule())
-    }
-
-    private func modeButton(icon: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(isSelected ? .white : .white.opacity(0.86))
-                .frame(width: 34, height: 34)
-                .background(isSelected ? Color.blue : Color.white.opacity(0.10), in: Circle())
-        }
-        .buttonStyle(.plain)
     }
 }
 
-private struct TouchGestureImage: View {
+/// Kontrol interaksi mengikuti panel Figma: daftar vertikal di kiri dan
+/// tombol mode kecil di bawahnya agar area AR tetap terbuka.
+private struct Level1PhotoComparisonOverlay: View {
+    @ObservedObject var viewModel: Level1ViewModel
+
     var body: some View {
-        if let image = Self.touchGestureImage {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-        } else {
-            Image(systemName: "hand.tap.fill")
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.24), radius: 3, y: 1)
+        ZStack {
+            Color.black.opacity(0.35)
+                .ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                HStack(spacing: 20) {
+                    comparisonImage(title: "Contoh", image: viewModel.frozenSceneImage)
+                    comparisonImage(title: "Hasil Gambar Kamu", image: viewModel.userDrawingImage)
+                }
+
+                Button("Selesai", action: viewModel.completeLevelAfterPhotoComparison)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 11)
+                    .background(Color.red, in: Capsule())
+            }
+            .padding(26)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .frame(maxWidth: 1080)
+            .padding(.horizontal, 32)
         }
     }
 
-    private static var touchGestureImage: UIImage? {
-        ["Levels/level1/touchGesture", "Levels/touchGesture", "touchGesture"]
-            .lazy
-            .compactMap { UIImage(named: $0) }
-            .first
+    private func comparisonImage(title: String, image: UIImage?) -> some View {
+        VStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.white)
+
+            Group {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Color.white.opacity(0.18)
+                }
+            }
+            .frame(width: 480, height: 440)
+            .background(Color.black.opacity(0.18))
+            .clipped()
+        }
+    }
+}
+
+private struct Level1OverlayGuideCharacter: View {
+    let assetName: String
+
+    var body: some View {
+        Group {
+            if let image = UIImage(named: assetName) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: "sparkles")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.white)
+            }
+        }
+        .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+    }
+}
+
+private struct DrawingCameraView: UIViewControllerRepresentable {
+    let onImagePicked: (UIImage) -> Void
+    let onCancel: () -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImagePicked: onImagePicked, onCancel: onCancel)
+    }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let onImagePicked: (UIImage) -> Void
+        let onCancel: () -> Void
+
+        init(onImagePicked: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
+            self.onImagePicked = onImagePicked
+            self.onCancel = onCancel
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            guard let image = info[.originalImage] as? UIImage else {
+                onCancel()
+                return
+            }
+            onImagePicked(image)
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onCancel()
+        }
     }
 }
 
@@ -400,19 +550,18 @@ private struct SpeechBubble: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 22, weight: .medium))
-            .foregroundStyle(.black)
-            .multilineTextAlignment(.leading)
+            .font(.system(size: 20, weight: .medium))
+            .foregroundStyle(Color(UIColor.darkGray))
+            .multilineTextAlignment(.center)
             .lineLimit(4)
             .minimumScaleFactor(0.82)
-            .padding(.horizontal, 28)
-            .padding(.vertical, 22)
+            .padding(.horizontal, 30)
+            .padding(.vertical, 24)
             .background {
-                SpeechBubbleShape(tail: tail)
-                    .fill(.white.opacity(0.82))
-                    .stroke(.white, lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(.white.opacity(0.95))
             }
-            .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+            .shadow(color: .black.opacity(0.10), radius: 8, y: 3)
     }
 }
 
@@ -440,47 +589,6 @@ private struct SpeechBubbleShape: Shape {
 
         path.closeSubpath()
         return path
-    }
-}
-
-private struct TextureSwatch: View {
-    let texture: MaterialTexture
-    let isSelected: Bool
-
-    var body: some View {
-        Circle()
-            .fill(texture.fallbackColor.swiftUIColor)
-            .frame(width: 30, height: 30)
-            .overlay {
-                Image(systemName: texture.previewSystemImage)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.82))
-            }
-            .overlay {
-                Circle()
-                    .stroke(isSelected ? Color.blue : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
-            }
-            .shadow(color: .black.opacity(0.16), radius: 2, y: 1)
-    }
-}
-
-private struct ShapeSwatch: View {
-    let shape: GameShape
-    let isSelected: Bool
-
-    var body: some View {
-        Circle()
-            .fill(.white.opacity(isSelected ? 0.95 : 0.22))
-            .frame(width: 30, height: 30)
-            .overlay {
-                Image(systemName: shape.quizSymbolName)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(isSelected ? Color.blue : Color.white.opacity(0.9))
-            }
-            .overlay {
-                Circle()
-                    .stroke(isSelected ? Color.blue : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
-            }
     }
 }
 

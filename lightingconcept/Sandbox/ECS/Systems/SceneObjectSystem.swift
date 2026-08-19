@@ -562,10 +562,18 @@ extension SceneObjectSystem {
                 UIColor(white: 0.35, alpha: 0.10).setFill()
                 context.fill(rect)
             case "cutout":
-                UIColor(red: 0.52, green: 0.42, blue: 0.18, alpha: 0.6).setFill()
+                context.cgContext.setBlendMode(.clear)
                 for y in stride(from: 18, to: size, by: 48) {
                     for x in stride(from: 18, to: size, by: 48) {
                         context.cgContext.fillEllipse(in: CGRect(x: x, y: y, width: 20, height: 20))
+                    }
+                }
+                context.cgContext.setBlendMode(.normal)
+                UIColor(red: 0.52, green: 0.42, blue: 0.18, alpha: 0.35).setStroke()
+                context.cgContext.setLineWidth(2)
+                for y in stride(from: 18, to: size, by: 48) {
+                    for x in stride(from: 18, to: size, by: 48) {
+                        context.cgContext.strokeEllipse(in: CGRect(x: x, y: y, width: 20, height: 20))
                     }
                 }
             default:

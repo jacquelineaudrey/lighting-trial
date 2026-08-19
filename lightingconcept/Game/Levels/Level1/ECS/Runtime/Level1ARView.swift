@@ -17,6 +17,11 @@ struct Level1ARView: UIViewRepresentable {
     
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
+        arView.automaticallyConfigureSession = false
+        arView.environment.lighting.intensityExponent = 0
+        arView.renderOptions.insert(.disableMotionBlur)
+        arView.renderOptions.insert(.disableDepthOfField)
+        arView.renderOptions.insert(.disablePersonOcclusion)
         
         // 1. Register Native ECS Systems
         PulseAnimationSystem.registerSystem()
@@ -30,6 +35,11 @@ struct Level1ARView: UIViewRepresentable {
         // 3. Configure ARKit to open the Camera and detect planes
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal]
+        config.environmentTexturing = .automatic
+        config.isLightEstimationEnabled = true
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+            config.frameSemantics.insert(.smoothedSceneDepth)
+        }
         arView.environment.sceneUnderstanding.options.insert(.occlusion)
         arView.environment.sceneUnderstanding.options.insert(.collision)
         arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
@@ -61,6 +71,18 @@ struct Level1ARView: UIViewRepresentable {
         context.coordinator.subscription = AnyCancellable(arView.scene.subscribe(to: SceneEvents.Update.self) { event in
             guard let cameraTransform = arView.session.currentFrame?.camera.transform else { return }
             viewModel.processSceneUpdate(cameraTransform: cameraTransform)
+            if let guideWorldPosition = viewModel.guideOverlayWorldPosition,
+               let projectedPosition = arView.project(guideWorldPosition) {
+                viewModel.updateGuideOverlayScreenPosition(projectedPosition)
+            } else {
+                viewModel.updateGuideOverlayScreenPosition(nil)
+            }
+            if let objectWorldPosition = viewModel.textureTapObjectWorldPosition,
+               let projectedObjectPosition = arView.project(objectWorldPosition) {
+                viewModel.updateTextureTapObjectScreenPosition(projectedObjectPosition)
+            } else {
+                viewModel.updateTextureTapObjectScreenPosition(nil)
+            }
         })
 
         let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
@@ -118,7 +140,7 @@ struct Level1ARView: UIViewRepresentable {
 
         func captureAndSaveSnapshot() {
             guard let arView else {
-                viewModel.completeDrawingPhotoSave(success: false, message: "Kamera AR belum siap.")
+                viewModel.completeFrozenSceneSnapshot(success: false, image: nil, message: "Kamera AR belum siap.")
                 return
             }
 
@@ -126,7 +148,7 @@ struct Level1ARView: UIViewRepresentable {
                 Task { @MainActor in
                     guard let self else { return }
                     guard let image else {
-                        self.viewModel.completeDrawingPhotoSave(success: false, message: "Foto AR gagal dibuat.")
+                        self.viewModel.completeFrozenSceneSnapshot(success: false, image: nil, message: "Foto AR gagal dibuat.")
                         return
                     }
                     self.saveImageToPhotoLibrary(image)
@@ -143,16 +165,18 @@ struct Level1ARView: UIViewRepresentable {
                         PHAssetChangeRequest.creationRequestForAsset(from: image)
                     } completionHandler: { success, error in
                         Task { @MainActor in
-                            self.viewModel.completeDrawingPhotoSave(
+                            self.viewModel.completeFrozenSceneSnapshot(
                                 success: success,
-                                message: success ? "Keren! Gambarmu sudah tersimpan." : "Foto belum tersimpan. \(error?.localizedDescription ?? "")"
+                                image: success ? image : nil,
+                                message: success ? nil : "Foto belum tersimpan. \(error?.localizedDescription ?? "")"
                             )
                         }
                     }
                 default:
                     Task { @MainActor in
-                        self.viewModel.completeDrawingPhotoSave(
+                        self.viewModel.completeFrozenSceneSnapshot(
                             success: false,
+                            image: nil,
                             message: "Izinkan akses Photos untuk menyimpan foto."
                         )
                     }
