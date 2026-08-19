@@ -35,6 +35,20 @@ enum Level1ExperimentPanel: Equatable {
     case shape
 }
 
+enum Level1DevFlow: String, CaseIterable, Identifiable {
+    case onboarding = "Onboarding"
+    case lightShadowIntro = "Cahaya & Bayangan"
+    case findingShapes = "Cari Bentuk"
+    case textureTapPrompt = "Tap Tekstur"
+    case textureExploration = "Eksplor Tekstur"
+    case shapeChange = "Ganti Bentuk"
+    case drawingPrompt = "Mulai Gambar"
+    case photoPrompt = "Foto Gambar"
+    case completed = "Selesai"
+
+    var id: String { rawValue }
+}
+
 enum Level1RadarTarget: String, CaseIterable, Equatable {
     case light
     case shadow
@@ -85,11 +99,15 @@ final class Level1ViewModel: ObservableObject {
     @Published private(set) var isSavingDrawingPhoto = false
     @Published private(set) var frozenSceneImage: UIImage?
     @Published private(set) var userDrawingImage: UIImage?
+    @Published private(set) var showsPhotoComparisonPanel = false
     @Published var showsDrawingCamera = false
     @Published private(set) var photoSaveMessage: String?
     @Published var showsFreezeSceneConfirmation = false
+    @Published private(set) var isPreparingFrozenScene = false
     @Published private(set) var isSceneFrozen = false
     @Published private(set) var successFeedbackTrigger = 0
+    @Published private(set) var guideOverlayScreenPosition: CGPoint?
+    @Published private(set) var textureTapObjectScreenPosition: CGPoint?
 
     private var visitedCheckpoints: Set<Int> = []
     private var visitedTextures: Set<Int> = [0]
@@ -112,6 +130,7 @@ final class Level1ViewModel: ObservableObject {
     private var checkpointLocalPositions: [SIMD3<Float>] = []
     private var markerWorldPositions: [SIMD3<Float>] = []
     private var checkpointHighlightEntities: [Entity] = []
+    private var checkpointShadowEntities: [Entity] = []
     private var directionIndicatorRoot: ModelEntity?
     private var directionIndicatorLabel: ModelEntity?
     private var lastIndicatorDistanceText: String?
@@ -126,9 +145,10 @@ final class Level1ViewModel: ObservableObject {
     private var guideNeedsPlacement = true
 
     private let hapticGenerator = UINotificationFeedbackGenerator()
-    private let pathRadius: Float = 1.5
+    private let checkpointSpacing: Float = 1.2
+    private let firstCheckpointDistance: Float = 0.8
     private let checkpointHeight: Float = 0.34
-    private let markerRadius: Float = 1.0
+    private let markerRadius: Float = 0.5
 
     private static var cachedRadarRingTexture: TextureResource?
 
@@ -215,6 +235,29 @@ final class Level1ViewModel: ObservableObject {
         guard length > 0.0001 else { return }
         latestCameraForwardXZ = horizontalForward / length
         updateGuidePosition(cameraPosition: position, horizontalForward: horizontalForward / length)
+    }
+
+    var guideOverlayWorldPosition: SIMD3<Float>? {
+        guard showsGuideOverlay, !guideNeedsPlacement, let guide = guideRoot else { return nil }
+        return guide.position(relativeTo: nil)
+    }
+
+    func updateGuideOverlayScreenPosition(_ position: CGPoint?) {
+        guideOverlayScreenPosition = position
+    }
+
+    var textureTapObjectWorldPosition: SIMD3<Float>? {
+        guard phase == .textureTapPrompt,
+              let pathAnchor,
+              let objectPosition = checkpointLocalPositions.first else { return nil }
+
+        return pathAnchor.position(relativeTo: nil)
+            + objectPosition
+            + SIMD3<Float>(0, checkpointHeight * 0.65, 0)
+    }
+
+    func updateTextureTapObjectScreenPosition(_ position: CGPoint?) {
+        textureTapObjectScreenPosition = position
     }
 
     func processSceneUpdate(cameraTransform: simd_float4x4) {
@@ -309,6 +352,7 @@ final class Level1ViewModel: ObservableObject {
         checkpointLocalPositions.removeAll()
         markerWorldPositions.removeAll()
         checkpointHighlightEntities.removeAll()
+        checkpointShadowEntities.removeAll()
         shadowReceiverManager.reset()
         latestHorizontalPlaneAnchor = nil
         guideNeedsPlacement = true
@@ -318,8 +362,10 @@ final class Level1ViewModel: ObservableObject {
         hasContinuedToShapeSelection = false
         frozenSceneImage = nil
         userDrawingImage = nil
+        showsPhotoComparisonPanel = false
         showsDrawingCamera = false
         showsFreezeSceneConfirmation = false
+        isPreparingFrozenScene = false
         isSceneFrozen = false
         scanStartTime = Date()
         phase = .scanningSurface
@@ -459,19 +505,36 @@ final class Level1ViewModel: ObservableObject {
     }
 
     func cancelFreezeSceneConfirmation() {
+        guard !isPreparingFrozenScene else { return }
         showsFreezeSceneConfirmation = false
     }
 
     func confirmFreezeSceneAndStartDrawing() {
         guard (phase == .textureExploration || phase == .shapeChange), canConfirmDrawingChoices else {
             showsFreezeSceneConfirmation = false
+            isPreparingFrozenScene = false
+            return
+        }
+
+        isPreparingFrozenScene = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(650))
+            self?.freezeSceneAndStartDrawing()
+        }
+    }
+
+    private func freezeSceneAndStartDrawing() {
+        guard (phase == .textureExploration || phase == .shapeChange), canConfirmDrawingChoices else {
+            showsFreezeSceneConfirmation = false
+            isPreparingFrozenScene = false
             return
         }
 
         showsFreezeSceneConfirmation = false
+        isPreparingFrozenScene = false
         activeExperimentPanel = nil
         showsObjectModeBadge = false
-        hidesGuideForDrawing = false
+        hidesGuideForDrawing = true
         isSceneFrozen = true
         phase = .drawingPrompt
         triggerSuccessFeedback()
@@ -521,14 +584,22 @@ final class Level1ViewModel: ObservableObject {
             }
 
             self.userDrawingImage = image
+            self.hidesGuideForDrawing = false
+            self.showsPhotoComparisonPanel = false
             self.phase = .photoComparison
             self.triggerSuccessFeedback()
             self.syncEntities()
         }
     }
 
+    func showPhotoComparisonPanel() {
+        guard phase == .photoComparison else { return }
+        showsPhotoComparisonPanel = true
+    }
+
     func completeLevelAfterPhotoComparison() {
         guard phase == .photoComparison else { return }
+        showsPhotoComparisonPanel = false
         phase = .completed
         progressStore.markLevelCompleted(Level1Content.levelID)
         triggerSuccessFeedback()
@@ -538,6 +609,80 @@ final class Level1ViewModel: ObservableObject {
     func clearPhotoSaveMessage() {
         photoSaveMessage = nil
     }
+
+    #if DEBUG
+    func jumpToDevFlow(_ flow: Level1DevFlow) {
+        if !hasPlacedScene {
+            placeSceneIfNeeded()
+        }
+
+        selectedRadarTarget = nil
+        activeExperimentPanel = nil
+        showsObjectModeBadge = false
+        hasWaypointTarget = false
+        recentlyExplainedCheckpointIndex = nil
+        isSceneFrozen = false
+        showsFreezeSceneConfirmation = false
+        isPreparingFrozenScene = false
+        showsDrawingCamera = false
+        showsPhotoComparisonPanel = false
+        guideNeedsPlacement = true
+
+        switch flow {
+        case .onboarding:
+            phase = .onboarding
+            onboardingIndex = 0
+            visitedCheckpoints.removeAll()
+        case .lightShadowIntro:
+            phase = .lightShadowIntro
+            lightShadowIndex = 0
+            visitedCheckpoints = [0]
+        case .findingShapes:
+            phase = .findingShapes
+            visitedCheckpoints = [0]
+            currentCheckpointIndex = 1
+            hasWaypointTarget = true
+        case .textureTapPrompt:
+            phase = .textureTapPrompt
+            currentCheckpointIndex = 0
+            visitedCheckpoints = Set(checkpoints.indices)
+        case .textureExploration:
+            phase = .textureExploration
+            currentCheckpointIndex = 0
+            currentTextureIndex = 0
+            visitedCheckpoints = Set(checkpoints.indices)
+            hasSelectedTexture = false
+            hasOpenedTextureControls = false
+            showsObjectModeBadge = true
+        case .shapeChange:
+            phase = .shapeChange
+            currentCheckpointIndex = 0
+            currentTextureIndex = min(1, textureStops.count - 1)
+            selectedShapeIndex = 0
+            visitedCheckpoints = Set(checkpoints.indices)
+            hasSelectedTexture = true
+            hasSelectedShape = false
+            hasOpenedShapeControls = false
+            showsObjectModeBadge = true
+            applyCurrentTextureToPrimaryObject()
+        case .drawingPrompt:
+            phase = .drawingPrompt
+            visitedCheckpoints = Set(checkpoints.indices)
+            hasSelectedTexture = true
+            hasSelectedShape = true
+        case .photoPrompt:
+            phase = .photoPrompt
+            visitedCheckpoints = Set(checkpoints.indices)
+            hasSelectedTexture = true
+            hasSelectedShape = true
+        case .completed:
+            phase = .completed
+            visitedCheckpoints = Set(checkpoints.indices)
+        }
+
+        syncEntities()
+    }
+    #endif
 
     private func saveImageToPhotoLibrary(_ image: UIImage, completion: @escaping (Bool, String?) -> Void) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
@@ -790,9 +935,10 @@ final class Level1ViewModel: ObservableObject {
         let scanCameraXZ = latestCameraPositionXZ ?? .zero
         let scanForwardXZ = latestCameraForwardXZ ?? SIMD2<Float>(0, -1)
         let floorY = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
-        let firstCheckpointDistance: Float = 1.5
-        let pathCenterXZ = scanCameraXZ + scanForwardXZ * (pathRadius + firstCheckpointDistance)
+        let firstCheckpointXZ = firstCheckpointPlacementXZ(cameraXZ: scanCameraXZ, forwardXZ: scanForwardXZ)
         let firstCheckpointDirection = -scanForwardXZ
+        let explorationRadius = explorationPathRadius(for: count)
+        let pathCenterXZ = firstCheckpointXZ - firstCheckpointDirection * explorationRadius
 
         var matrix = matrix_identity_float4x4
         matrix.columns.3 = SIMD4<Float>(pathCenterXZ.x, floorY, pathCenterXZ.y, 1)
@@ -806,12 +952,12 @@ final class Level1ViewModel: ObservableObject {
             if count == 2 {
                 // Dua target dibuat sebagai jalur lurus di depan pemain agar
                 // waypoint mudah diikuti dan objek kedua tidak muncul terlalu jauh.
-                shapeXZ = scanCameraXZ + scanForwardXZ * (firstCheckpointDistance + Float(index) * 1.5)
+                shapeXZ = scanCameraXZ + scanForwardXZ * (firstCheckpointDistance + Float(index) * checkpointSpacing)
             } else {
                 let angleStep = (2 * Float.pi) / Float(count)
                 let baseAngle = atan2(firstCheckpointDirection.y, firstCheckpointDirection.x)
                 let angle = baseAngle + angleStep * Float(index)
-                shapeXZ = pathCenterXZ + SIMD2<Float>(cos(angle), sin(angle)) * pathRadius
+                shapeXZ = pathCenterXZ + SIMD2<Float>(cos(angle), sin(angle)) * explorationRadius
             }
             let worldPosition = SIMD3<Float>(shapeXZ.x, floorY + 0.005, shapeXZ.y)
             markerWorldPositions.append(worldPosition)
@@ -831,8 +977,22 @@ final class Level1ViewModel: ObservableObject {
             checkpointLightEntities.append(lightEntity)
             anchorGroup.addChild(lightEntity)
 
+            let shadowEntity = Level1ShadowRenderer.makeEntity(
+                name: "Level 1 projected shadow — \(checkpoint.shape.id)"
+            )
+            Level1ShadowRenderer.update(
+                shadowEntity,
+                objectType: checkpoint.shape.objectType,
+                objectPosition: localPosition,
+                objectDimensions: scaledObjectDimensions(for: checkpoint.shape.objectType),
+                lightPosition: lightPosition,
+                texture: checkpoint.shape.textures[0].material
+            )
+            checkpointShadowEntities.append(shadowEntity)
+            anchorGroup.addChild(shadowEntity)
+
             // Checkpoint floor ring sengaja tidak dibuat: Level 1 sekarang
-            // fokus pada cahaya, bayangan, dan objek uji yang sama.
+            // fokus pada cahaya, bayangan berbasis geometri, dan objek uji yang sama.
         }
 
         let primaryObjectPosition = checkpointLocalPositions.first ?? .zero
@@ -873,6 +1033,23 @@ final class Level1ViewModel: ObservableObject {
         }
 
         syncEntities()
+    }
+
+    private func explorationPathRadius(for checkpointCount: Int) -> Float {
+        guard checkpointCount > 2 else { return checkpointSpacing }
+        let halfAngle = Float.pi / Float(checkpointCount)
+        return checkpointSpacing / (2 * sin(halfAngle))
+    }
+
+    private func firstCheckpointPlacementXZ(cameraXZ: SIMD2<Float>, forwardXZ: SIMD2<Float>) -> SIMD2<Float> {
+        guard let planeAnchor = latestHorizontalPlaneAnchor else {
+            return cameraXZ + forwardXZ * firstCheckpointDistance
+        }
+
+        let center = planeAnchor.center
+        let localCenter = SIMD4<Float>(center.x, 0, center.z, 1)
+        let worldCenter = planeAnchor.transform * localCenter
+        return SIMD2<Float>(worldCenter.x, worldCenter.z)
     }
 
     private func checkProximity(cameraPosition: SIMD3<Float>) {
@@ -945,6 +1122,10 @@ final class Level1ViewModel: ObservableObject {
             light.isEnabled = showLightAndShadow && (checkpointEntities[safe: index]?.isEnabled == true)
         }
 
+        for (index, shadow) in checkpointShadowEntities.enumerated() {
+            shadow.isEnabled = showLightAndShadow && (checkpointEntities[safe: index]?.isEnabled == true)
+        }
+
         for (index, highlight) in checkpointHighlightEntities.enumerated() {
             highlight.isEnabled = phase == .findingShapes && index == nextTargetCheckpointIndex
         }
@@ -1002,6 +1183,7 @@ final class Level1ViewModel: ObservableObject {
         var material = SceneObjectSystem.makeMaterial(for: currentTexture.material)
         material.faceCulling = .none
         entity.model?.materials = [material]
+        refreshPrimaryShadowVisual()
     }
 
     private func applyCurrentShapeToPrimaryObject() {
@@ -1012,6 +1194,22 @@ final class Level1ViewModel: ObservableObject {
         let finalScale = checkpointHeight / SceneObjectSystem.baseDimensions(for: selectedShape.objectType).y
         entity.components.set(DynamicLightShadowComponent(castsShadow: true))
         entity.scale = SIMD3<Float>(repeating: finalScale)
+        refreshPrimaryShadowVisual()
+    }
+
+    private func refreshPrimaryShadowVisual() {
+        guard let shadow = checkpointShadowEntities.first,
+              let objectPosition = checkpointLocalPositions.first,
+              let lightPosition = checkpointLightEntities.first?.position else { return }
+
+        Level1ShadowRenderer.update(
+            shadow,
+            objectType: selectedShape.objectType,
+            objectPosition: objectPosition,
+            objectDimensions: scaledObjectDimensions(for: selectedShape.objectType),
+            lightPosition: lightPosition,
+            texture: currentTexture.material
+        )
     }
 
     private func hideGuideAfterDrawingInstruction() {
@@ -1116,6 +1314,7 @@ final class Level1ViewModel: ObservableObject {
         var material = SceneObjectSystem.makeMaterial(for: checkpoint.shape.textures[0].material)
         material.faceCulling = .none
         entity.model?.materials = [material]
+        entity.components.set(DynamicLightShadowComponent(castsShadow: true))
         return entity
     }
 
@@ -1190,7 +1389,16 @@ final class Level1ViewModel: ObservableObject {
     }
 
     private var shouldShowGuide: Bool {
-        phase != .scanningSurface && phase != .drawingActive && phase != .completed
+        false
+    }
+
+    var showsGuideOverlay: Bool {
+        guard !hidesGuideForDrawing else { return false }
+        return phase != .scanningSurface && phase != .drawingActive && phase != .completed
+    }
+
+    var guideOverlayAssetName: String {
+        currentGuideAsset.rawValue
     }
 
     private var activeGuideRadarTarget: Level1RadarTarget? {
@@ -1228,7 +1436,7 @@ final class Level1ViewModel: ObservableObject {
         case .drawingPrompt:
             return .lumiIdle
         case .drawingReady, .photoPrompt:
-            return .lumiQuestion
+            return .lumiPointWink
         case .drawingActive, .scanningSurface, .photoComparison, .completed:
             return .lumiIdle
         }
@@ -1315,6 +1523,8 @@ final class Level1ViewModel: ObservableObject {
             lightDirection: lightDirection,
             objectHeight: objectHeight
         ) ?? 0.38
+        // Posisi ini hanya untuk white marker edukasi. Siluet bayangan dibuat
+        // terpisah oleh Level1ShadowRenderer dari proyeksi geometri objek.
         let length = clamped(estimatedLength * 0.55, 0.18, 0.58)
         return objectPosition + groundDirection * length + SIMD3<Float>(0, 0.025, 0)
     }
@@ -1430,10 +1640,10 @@ final class Level1ViewModel: ObservableObject {
         let light = Entity()
         var component = SpotLightComponent()
         component.color = .yellow
-        component.intensity = 3_800
-        component.attenuationRadius = 3.8
+        component.intensity = 4_200
+        component.attenuationRadius = 5.5
         component.innerAngleInDegrees = 16
-        component.outerAngleInDegrees = 38
+        component.outerAngleInDegrees = 46
         light.components.set(component)
         var shadow = SpotLightComponent.Shadow()
         shadow.zNear = .fixed(0.01)

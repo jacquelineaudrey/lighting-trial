@@ -71,6 +71,18 @@ struct Level1ARView: UIViewRepresentable {
         context.coordinator.subscription = AnyCancellable(arView.scene.subscribe(to: SceneEvents.Update.self) { event in
             guard let cameraTransform = arView.session.currentFrame?.camera.transform else { return }
             viewModel.processSceneUpdate(cameraTransform: cameraTransform)
+            if let guideWorldPosition = viewModel.guideOverlayWorldPosition,
+               let projectedPosition = arView.project(guideWorldPosition) {
+                viewModel.updateGuideOverlayScreenPosition(projectedPosition)
+            } else {
+                viewModel.updateGuideOverlayScreenPosition(nil)
+            }
+            if let objectWorldPosition = viewModel.textureTapObjectWorldPosition,
+               let projectedObjectPosition = arView.project(objectWorldPosition) {
+                viewModel.updateTextureTapObjectScreenPosition(projectedObjectPosition)
+            } else {
+                viewModel.updateTextureTapObjectScreenPosition(nil)
+            }
         })
 
         let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))

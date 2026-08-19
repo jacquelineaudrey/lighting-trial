@@ -93,10 +93,10 @@ struct Level3FlowView: View {
                 onCompletion: viewModel.narrationDidFinish
             )
         }
-        .onAppear(perform: BackgroundMusicPlayer.shared.useGameplayVolume)
+        .onAppear(perform: BackgroundMusicPlayer.shared.playGameplayMusic)
         .onDisappear {
             narrator.stop()
-            BackgroundMusicPlayer.shared.useMenuVolume()
+            BackgroundMusicPlayer.shared.playMenuMusic()
         }
         .onChange(of: viewModel.arSceneViewModel.surfaceState) { _, _ in
             viewModel.surfaceDidBecomeReady()

@@ -49,6 +49,8 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: viewModel.selectedConcept)
+        .onAppear(perform: BackgroundMusicPlayer.shared.playGameplayMusic)
+        .onDisappear(perform: BackgroundMusicPlayer.shared.playMenuMusic)
     }
 
     private var sceneCanvas: some View {
