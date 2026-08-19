@@ -12,6 +12,12 @@ final class ShadowAnnotationManager {
     private var lastMarkerSignature: MarkerSignature?
     private static var cachedRingTexture: TextureResource?
 
+    // Marker yang sedang dipilih pemain. Marker ini diberi warna MERAH (dot &
+    // ring), sisanya tetap putih — meniru perilaku white mark di Level 1 yang
+    // berubah merah saat ditekan.
+    private(set) var selectedConcept: ShadowConcept?
+    private var dotsByConcept: [ShadowConcept: ModelEntity] = [:]
+
     private let dotRadius: Float = 0.004
     private let tapTargetRadius: Float = 0.01
     private let ringDiameter: Float = 0.01
@@ -19,10 +25,12 @@ final class ShadowAnnotationManager {
     private let pulseEndScale: Float = 2.6
     private let pulseDuration: TimeInterval = 1.3
     private let markerColor: UIColor = .white
+    private let selectedColor: UIColor = .systemRed
 
     private struct PulseRing {
         let entity: ModelEntity
         let startTime: Date
+        let concept: ShadowConcept
     }
 
     private struct MarkerSignature: Equatable {
@@ -31,6 +39,7 @@ final class ShadowAnnotationManager {
         let objectPosition: SIMD3<Float>
         let objectHeight: Float
         let worldLightDirection: SIMD3<Float>
+        let hiddenConcepts: Set<ShadowConcept>
     }
 
     func attach(to anchor: AnchorEntity) {
@@ -48,10 +57,21 @@ final class ShadowAnnotationManager {
     private func clearRenderedMarkers() {
         dots.forEach { $0.removeFromParent() }
         dots.removeAll()
+        dotsByConcept.removeAll()
         connectorDashes.forEach { $0.removeFromParent() }
         connectorDashes.removeAll()
         pulseRings.forEach { $0.entity.removeFromParent() }
         pulseRings.removeAll()
+    }
+
+    /// Tandai marker terpilih menjadi merah (dot langsung; ring menyusul lewat
+    /// `advancePulses`). Kirim `nil` untuk mengembalikan semua ke putih.
+    func setSelected(_ concept: ShadowConcept?) {
+        selectedConcept = concept
+        for (markerConcept, dot) in dotsByConcept {
+            let color = markerConcept == concept ? selectedColor : markerColor
+            dot.model?.materials = [UnlitMaterial(color: color)]
+        }
     }
 
     func update(
@@ -63,14 +83,16 @@ final class ShadowAnnotationManager {
         // (`ARSceneCoordinator.updateEducationalOverlays`) sudah mengubahnya
         // lewat anchor transform sebelum diteruskan ke sini — lihat catatan
         // di `shadowOffset(worldLightDirection:...)`.
-        worldLightDirection: SIMD3<Float>
+        worldLightDirection: SIMD3<Float>,
+        hiddenConcepts: Set<ShadowConcept> = []
     ) {
         let signature = MarkerSignature(
             visible: visible,
             objectType: objectType,
             objectPosition: objectPosition,
             objectHeight: objectHeight,
-            worldLightDirection: worldLightDirection
+            worldLightDirection: worldLightDirection,
+            hiddenConcepts: hiddenConcepts
         )
         // Keep the same RealityKit marker entities alive while the learner
         // advances dialogue/progress. This preserves the working tap behavior
@@ -89,23 +111,24 @@ final class ShadowAnnotationManager {
                 (.lightSide, objectPosition + SIMD3<Float>(-0.08, objectHeight * 0.72, 0)),
                 (.shadowSide, objectPosition + SIMD3<Float>(0.08, objectHeight * 0.5, 0)),
                 (.castShadow, objectPosition + shadowOffset(worldLightDirection: worldLightDirection, scale: 0.24)),
-                (.contactShadow, objectPosition + SIMD3<Float>(0, 0.025, 0.08))
+                (.reflectedLight, objectPosition + SIMD3<Float>(0, objectHeight * 0.28, 0.08))
             ]
         } else {
             concepts = [
-                (.highlight, objectPosition + SIMD3<Float>(-0.05, objectHeight * 0.86, 0)),
-                (.lightSide, objectPosition + SIMD3<Float>(-0.08, objectHeight * 0.62, 0)),
-                (.terminator, objectPosition + SIMD3<Float>(0, objectHeight * 0.72, 0.07)),
-                (.coreShadow, objectPosition + SIMD3<Float>(0, objectHeight * 0.5, 0)),
-                (.reflectedLight, objectPosition + SIMD3<Float>(0.04, objectHeight * 0.34, 0.06)),
+                (.lightSide, objectPosition + SIMD3<Float>(-0.08, objectHeight * 0.68, 0)),
+                (.shadowSide, objectPosition + SIMD3<Float>(0.08, objectHeight * 0.52, 0)),
                 (.castShadow, objectPosition + shadowOffset(worldLightDirection: worldLightDirection, scale: 0.24)),
-                (.contactShadow, objectPosition + SIMD3<Float>(0, 0.025, 0.08))
+                (.reflectedLight, objectPosition + SIMD3<Float>(0.04, objectHeight * 0.34, 0.06))
             ]
         }
 
-        for (concept, position) in concepts {
+        for (concept, position) in concepts where !hiddenConcepts.contains(concept) {
             addMarker(concept: concept, position: position, objectPosition: objectPosition)
         }
+
+        // Kalau ada marker yang sedang dipilih, pertahankan warna merahnya
+        // setelah rebuild (mis. saat progress dialog berubah).
+        setSelected(selectedConcept)
     }
 
     private func subscribeToUpdatesIfNeeded() {
@@ -140,6 +163,7 @@ final class ShadowAnnotationManager {
         dot.components.set(InputTargetComponent())
         root.addChild(dot)
         dots.append(dot)
+        dotsByConcept[concept] = dot
 
         let ringMesh = MeshResource.generatePlane(width: ringDiameter, height: ringDiameter)
         let ring = ModelEntity(mesh: ringMesh, materials: [ShadowAnnotationManager.ringMaterial(alpha: 1.0)])
@@ -152,7 +176,7 @@ final class ShadowAnnotationManager {
         ring.components.set(CollisionComponent(shapes: [.generateSphere(radius: tapTargetRadius * 2.5)]))
         ring.components.set(InputTargetComponent())
         root.addChild(ring)
-        pulseRings.append(PulseRing(entity: ring, startTime: Date()))
+        pulseRings.append(PulseRing(entity: ring, startTime: Date(), concept: concept))
     }
 
     private func addDottedConnector(from start: SIMD3<Float>, to end: SIMD3<Float>) {
@@ -183,20 +207,21 @@ final class ShadowAnnotationManager {
             pulse.entity.scale = SIMD3<Float>(repeating: scale)
 
             let alpha = 1.0 - t
+            let tint = pulse.concept == selectedConcept ? selectedColor : markerColor
             if var model = pulse.entity.components[ModelComponent.self] {
-                model.materials = [ShadowAnnotationManager.ringMaterial(alpha: alpha)]
+                model.materials = [ShadowAnnotationManager.ringMaterial(alpha: alpha, tint: tint)]
                 pulse.entity.components[ModelComponent.self] = model
             }
         }
     }
 
-    private static func ringMaterial(alpha: Float) -> UnlitMaterial {
+    private static func ringMaterial(alpha: Float, tint: UIColor = .white) -> UnlitMaterial {
         var material = UnlitMaterial()
         if let texture = cachedRingTexture ?? generateRingTexture() {
             cachedRingTexture = texture
-            material.color = .init(tint: .white.withAlphaComponent(CGFloat(alpha)), texture: .init(texture))
+            material.color = .init(tint: tint.withAlphaComponent(CGFloat(alpha)), texture: .init(texture))
         } else {
-            material.color = .init(tint: .white.withAlphaComponent(CGFloat(alpha)))
+            material.color = .init(tint: tint.withAlphaComponent(CGFloat(alpha)))
         }
         material.blending = .transparent(opacity: .init(floatLiteral: alpha))
         return material

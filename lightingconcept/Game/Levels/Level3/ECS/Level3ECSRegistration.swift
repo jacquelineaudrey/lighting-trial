@@ -7,6 +7,8 @@ enum Level3ECSRegistration {
         guard !hasRegistered else { return }
         hasRegistered = true
         Level3ShadowPresentationComponent.registerComponent()
+        Level3GuideComponent.registerComponent()
         Level3ShadowPresentationSystem.registerSystem()
+        Level3GuideSystem.registerSystem()
     }
 }

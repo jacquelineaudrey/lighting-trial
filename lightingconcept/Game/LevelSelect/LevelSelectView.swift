@@ -49,9 +49,7 @@ struct LevelSelectView: View {
                         LevelMapButton(
                             levelID: levelID,
                             title: levelTitles[levelID] ?? "Segera Hadir",
-                            isUnlocked: true,
-//                            isUnlocked: levelsWithContent.contains(levelID)
-//                                && progressStore.isLevelUnlocked(levelID),
+                            isUnlocked: isUnlocked(levelID),
                             isCompleted: progressStore.isLevelCompleted(levelID),
                             action: { showCard(for: levelID) }
                         )
@@ -68,37 +66,21 @@ struct LevelSelectView: View {
             }
 
             if let selectedLevel {
-                Color.black.opacity(0.4)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            self.selectedLevel = nil
-                        }
-                    }
+                LevelSelectDimmingBackdrop(action: dismissSelectedLevel)
 
                 LevelCardView(level: selectedLevel) {
                     let levelID = selectedLevel.id
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        self.selectedLevel = nil
-                    }
+                    dismissSelectedLevel()
                     openLevel(levelID)
                 }
                 .transition(.scale.combined(with: .opacity))
             }
 
             if showLevelLockAlert {
-                Color.black.opacity(0.4)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showLevelLockAlert = false
-                        }
-                    }
+                LevelSelectDimmingBackdrop(action: dismissLockAlert)
 
                 LockAlertView(data: lockAlertViewModel.alerts[1]) {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showLevelLockAlert = false
-                    }
+                    dismissLockAlert()
                 }
                 .transition(.scale.combined(with: .opacity))
             }
@@ -126,9 +108,26 @@ struct LevelSelectView: View {
         dismiss()
     }
 
+    private func isUnlocked(_ levelID: Int) -> Bool {
+        #if DEBUG
+        if levelID == 3 {
+            return levelsWithContent.contains(levelID)
+        }
+        #endif
+
+        return levelsWithContent.contains(levelID) && progressStore.isLevelUnlocked(levelID)
+    }
+
+    private func dismissSelectedLevel() {
+        selectedLevel = nil
+    }
+
+    private func dismissLockAlert() {
+        showLevelLockAlert = false
+    }
+
     private func showCard(for levelID: Int) {
-        let isUnlocked = levelsWithContent.contains(levelID) && progressStore.isLevelUnlocked(levelID)
-        guard isUnlocked else {
+        guard isUnlocked(levelID) else {
             withAnimation(.easeInOut(duration: 0.2)) {
                 showLevelLockAlert = true
             }
@@ -173,6 +172,19 @@ struct LevelSelectView: View {
         default:
             break
         }
+    }
+}
+
+private struct LevelSelectDimmingBackdrop: View {
+    let action: () -> Void
+
+    var body: some View {
+        Color.black.opacity(0.4)
+            .ignoresSafeArea()
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+            .onTapGesture(perform: action)
     }
 }
 

@@ -48,8 +48,18 @@ struct LockAlertView: View {
                             .fill(Color(hex: "9FA60C"))
                     )
             }
+            .buttonStyle(LockAlertPressStyle())
             .padding(.top, 120) // distance from dialog top to button — adjust as needed
         }
+    }
+}
+
+private struct LockAlertPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.86 : 1)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
