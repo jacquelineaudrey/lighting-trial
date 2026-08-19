@@ -19,12 +19,17 @@ struct OutlinedText<Content: View>: View {
         _ content: Content,
         foregroundStyle: Color,
         outlineStyle: Color,
-        outlineWidth: CGFloat
+        outlineWidth: CGFloat,
+        baseFontSize: CGFloat = 48
     ) {
         self.content = content
         self.foregroundStyle = foregroundStyle
         self.outlineStyle = outlineStyle
         self.outlineWidth = outlineWidth
+        self._fontSize = ScaledMetric(
+            wrappedValue: baseFontSize,
+            relativeTo: .largeTitle
+        )
     }
 
     var body: some View {

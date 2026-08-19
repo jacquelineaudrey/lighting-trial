@@ -13,9 +13,14 @@ struct Level1FlowView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var narrator = LessonAudioNarrator()
     @State private var showsExitConfirmation = false
+    let onReturnToLevelMenu: (() -> Void)?
     let onNextLevel: (() -> Void)?
 
-    init(onNextLevel: (() -> Void)? = nil) {
+    init(
+        onReturnToLevelMenu: (() -> Void)? = nil,
+        onNextLevel: (() -> Void)? = nil
+    ) {
+        self.onReturnToLevelMenu = onReturnToLevelMenu
         self.onNextLevel = onNextLevel
     }
 
@@ -29,11 +34,24 @@ struct Level1FlowView: View {
                 Level1OpeningOverlay(viewModel: viewModel)
             case .scanningSurface:
                 VStack {
-                    SurfaceScanInstruction(sceneViewModel: viewModel.arSceneViewModel)
+                    SurfaceScanInstruction(
+                        sceneViewModel: viewModel.arSceneViewModel,
+                        progressOverride: viewModel.roomScanProgress,
+                        title: "Scan Ruangan",
+                        guidanceText: viewModel.roomScanGuidanceText
+                    )
                     Spacer()
                 }
             case .surfaceReady:
-                EmptyView()
+                VStack {
+                    Spacer()
+                    SurfaceReadyOverlay(
+                        onContinue: viewModel.startLessonAfterRoomScan,
+                        onRescan: viewModel.rescanSurface,
+                        title: "Ruangan Siap",
+                        message: "Tempat yang aman untuk semua bentuk sudah ditemukan. Yuk, mulai bermain!"
+                    )
+                }
             case .lightShadowIntro:
                 Level1LightShadowOverlay(viewModel: viewModel)
             case .findingShapes:
@@ -55,8 +73,9 @@ struct Level1FlowView: View {
             case .completed:
                 EndLevelView(
                     data: EndLevelViewModel.data(for: Level1Content.levelID),
-                    onBack: dismiss.callAsFunction,
-                    onNext: onNextLevel
+                    onBack: returnToLevelMenu,
+                    onNext: onNextLevel,
+                    backTitle: "Kembali ke Menu"
                 )
                 .padding(.bottom, 24)
             }
@@ -70,17 +89,37 @@ struct Level1FlowView: View {
             }
         }
         .overlay(alignment: .topLeading) {
-            if viewModel.phase != .completed {
-                LevelBackButton { showsExitConfirmation = true }
-                    .padding(.leading, 16)
-                    .padding(.top, 12)
+            if viewModel.phase != .completed,
+               !viewModel.showsPhotoComparisonPanel,
+               viewModel.canGoBackToPreviousState {
+                LevelActionButton(
+                    title: "Ulangi Langkah",
+                    systemImage: "arrow.uturn.backward",
+                    role: .previousStep,
+                    isDisabled: viewModel.isTransitioning,
+                    action: viewModel.goBackToPreviousState
+                )
+                .padding(.leading, 16)
+                .padding(.top, 12)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if viewModel.phase != .completed, !viewModel.showsPhotoComparisonPanel {
+                LevelActionButton(
+                    title: "Kembali ke Menu",
+                    systemImage: "house.fill",
+                    role: .menu,
+                    action: { showsExitConfirmation = true }
+                )
+                .padding(.trailing, 16)
+                .padding(.top, 12)
             }
         }
         #if DEBUG
         .overlay(alignment: .topTrailing) {
             Level1DevFlowMenu(viewModel: viewModel)
                 .padding(.trailing, 16)
-                .padding(.top, 12)
+                .padding(.top, 80)
         }
         #endif
         .overlay(alignment: .top) {
@@ -114,7 +153,7 @@ struct Level1FlowView: View {
             primaryAction: viewModel.clearPhotoSaveMessage
         )
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
-            dismiss()
+            returnToLevelMenu()
         }
         .fullScreenCover(isPresented: $viewModel.showsDrawingCamera) {
             DrawingCameraView(
@@ -128,18 +167,30 @@ struct Level1FlowView: View {
         .task(id: viewModel.narrationID) {
             // Saat scanning, anak hanya melihat instruksi scan. Lumi dan
             // narasinya baru mulai setelah surface stabil dan scene siap.
-            guard viewModel.phase != .scanningSurface else {
+            guard viewModel.phase != .scanningSurface,
+                  viewModel.phase != .surfaceReady else {
                 narrator.stop()
                 return
             }
-            narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
+            let narrationID = viewModel.narrationID
+            viewModel.narrationWillStart(id: narrationID)
+            narrator.speak(
+                viewModel.narrationText,
+                audioFileName: viewModel.narrationAudioFileName,
+                onCompletion: { viewModel.narrationDidFinish(id: narrationID) }
+            )
         }
-        .onAppear(perform: BackgroundMusicPlayer.shared.useGameplayVolume)
+        .onAppear(perform: BackgroundMusicPlayer.shared.playGameplayMusic)
         .onDisappear {
             narrator.stop()
-            BackgroundMusicPlayer.shared.useMenuVolume()
+            BackgroundMusicPlayer.shared.playMenuMusic()
         }
         .navigationBarBackButtonHidden(true)
+    }
+
+    private func returnToLevelMenu() {
+        onReturnToLevelMenu?()
+        dismiss()
     }
 }
 
@@ -156,13 +207,21 @@ private struct Level1GuideOverlay: View {
     }
 
     private var guideContent: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            SpeechBubble(text: viewModel.narrationText, tail: .bottomTrailing)
-                .frame(maxWidth: 420)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .trailing, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 12) {
+                SpeechBubble(text: viewModel.narrationText, tail: .bottomTrailing)
+                    .frame(maxWidth: 420)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            guideImage
-                .frame(width: 104, height: 144)
+                guideImage
+                    .frame(width: 104, height: 144)
+            }
+
+            if viewModel.showsTapToContinueCaption {
+                LevelTapToContinueCaption()
+                    .padding(.trailing, 116)
+                    .transition(.opacity)
+            }
         }
     }
 
@@ -201,29 +260,6 @@ private struct Level1GuideOverlay: View {
         }
     }
 }
-
-#if DEBUG
-private struct Level1DevFlowMenu: View {
-    @ObservedObject var viewModel: Level1ViewModel
-
-    var body: some View {
-        Menu {
-            ForEach(Level1DevFlow.allCases) { flow in
-                Button(flow.rawValue) {
-                    viewModel.jumpToDevFlow(flow)
-                }
-            }
-        } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 42, height: 42)
-                .background(Color.black.opacity(0.44), in: Circle())
-        }
-        .accessibilityLabel("Debug flow")
-    }
-}
-#endif
 
 private struct Level1OpeningOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
@@ -304,27 +340,13 @@ private struct Level1ShapeChangeOverlay: View {
                     Spacer()
                     HStack {
                         Spacer()
-                        Level1PrimaryActionButton(title: "Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
+                        LevelActionButton(title: "Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
                             .padding(.trailing, 42)
                             .padding(.bottom, 36)
                     }
                 }
             }
         }
-    }
-}
-
-struct Level1PrimaryActionButton: View {
-    let title: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(title, action: action)
-            .font(.system(size: 15, weight: .bold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
-            .background(Color.blue, in: Capsule())
     }
 }
 
@@ -346,12 +368,11 @@ private struct Level1DrawingOverlay: View {
                             Level1OverlayGuideCharacter(assetName: viewModel.guideOverlayAssetName)
                                 .frame(width: 128, height: 150)
 
-                            Button("Aku Selesai Gambar", action: viewModel.finishDrawing)
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 10)
-                                .background(Color.blue, in: Capsule())
+                            LevelActionButton(
+                                title: "Aku Selesai Gambar",
+                                isDisabled: !viewModel.isNarrationComplete || viewModel.isTransitioning,
+                                action: viewModel.finishDrawing
+                            )
                                 .padding(.bottom, 18)
                         }
                     }
@@ -394,15 +415,14 @@ private struct Level1PhotoOverlay: View {
             Spacer()
             HStack {
                 Spacer()
-                Button(viewModel.isSavingDrawingPhoto ? "Menyimpan..." : "Foto Gambarku") {
-                    viewModel.captureDrawingPhoto()
-                }
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .background(Color.blue, in: Capsule())
-                .disabled(viewModel.isSavingDrawingPhoto)
+                LevelActionButton(
+                    title: viewModel.isSavingDrawingPhoto ? "Menyimpan..." : "Foto Gambarku",
+                    systemImage: "camera.fill",
+                    isDisabled: viewModel.isSavingDrawingPhoto
+                        || !viewModel.isNarrationComplete
+                        || viewModel.isTransitioning,
+                    action: viewModel.captureDrawingPhoto
+                )
                 .padding(.trailing, 42)
                 .padding(.bottom, 36)
             }
@@ -418,7 +438,12 @@ private struct Level1PhotoSavedOverlay: View {
             Spacer()
             HStack {
                 Spacer()
-                Level1PrimaryActionButton(title: "Lihat Gambar", action: viewModel.showPhotoComparisonPanel)
+                LevelActionButton(
+                    title: "Lihat Gambar",
+                    systemImage: "photo.on.rectangle.angled",
+                    isDisabled: !viewModel.isNarrationComplete || viewModel.isTransitioning,
+                    action: viewModel.showPhotoComparisonPanel
+                )
                     .padding(.trailing, 42)
                     .padding(.bottom, 36)
             }
@@ -442,12 +467,20 @@ private struct Level1PhotoComparisonOverlay: View {
                     comparisonImage(title: "Hasil Gambar Kamu", image: viewModel.userDrawingImage)
                 }
 
-                Button("Selesai", action: viewModel.completeLevelAfterPhotoComparison)
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 11)
-                    .background(Color.red, in: Capsule())
+                HStack(spacing: 14) {
+                    LevelActionButton(
+                        title: "Kembali",
+                        systemImage: "chevron.left",
+                        role: .secondary,
+                        action: viewModel.hidePhotoComparisonPanel
+                    )
+
+                    LevelActionButton(
+                        title: "Selesai",
+                        systemImage: "checkmark",
+                        action: viewModel.completeLevelAfterPhotoComparison
+                    )
+                }
             }
             .padding(26)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))

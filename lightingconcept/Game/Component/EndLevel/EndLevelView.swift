@@ -11,11 +11,18 @@ struct EndLevelView: View {
     let data: EndLevelModel
     let onBack: () -> Void
     let onNext: (() -> Void)?
+    let backTitle: String
 
-    init(data: EndLevelModel, onBack: @escaping () -> Void, onNext: (() -> Void)? = nil) {
+    init(
+        data: EndLevelModel,
+        onBack: @escaping () -> Void,
+        onNext: (() -> Void)? = nil,
+        backTitle: String = "Pilih Level"
+    ) {
         self.data = data
         self.onBack = onBack
         self.onNext = onNext
+        self.backTitle = backTitle
     }
 
     var body: some View {
@@ -50,41 +57,20 @@ struct EndLevelView: View {
                     )
 
                 HStack {
-                    Button(action: {
-                        onBack()
-                    }) {
-                        Text("Kembali")
-                            .font(.system(size: 17))
-                            .fontWeight(.bold)
-                            .foregroundColor(Color(hex: "313131"))
-                            .padding(.horizontal, 15)
-                            .padding(.vertical, 15)
-                            .background(
-                                Capsule()
-                                    .fill(Color(hex: "E6E3BF"))
-                            )
-                    }
+                    LevelActionButton(
+                        title: backTitle,
+                        systemImage: backSystemImage,
+                        role: backButtonRole,
+                        action: onBack
+                    )
 
                     Spacer()
 
-                    Button(action: {
-                        if let onNext {
-                            onNext()
-                        } else {
-                            onBack()
-                        }
-                    }) {
-                        Text(onNext == nil ? "Selesai" : "Selanjutnya")
-                            .font(.system(size: 17))
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 15)
-                            .padding(.vertical, 15)
-                            .background(
-                                Capsule()
-                                    .fill(Color(hex: "9FA60C"))
-                            )
-                    }
+                    LevelActionButton(
+                        title: onNext == nil ? "Selesai" : "Selanjutnya",
+                        systemImage: onNext == nil ? "checkmark" : "arrow.right",
+                        action: finishLevel
+                    )
                 }
                 .frame(maxWidth: 540)
                 .padding(.horizontal, 24)
@@ -94,6 +80,22 @@ struct EndLevelView: View {
             Image(data.mascotImageName)
                 .offset(x: 415, y: 270)
         }
+    }
+
+    private func finishLevel() {
+        if let onNext {
+            onNext()
+        } else {
+            onBack()
+        }
+    }
+
+    private var backSystemImage: String {
+        backTitle == "Kembali ke Menu" ? "house.fill" : "square.grid.2x2"
+    }
+
+    private var backButtonRole: LevelActionButton.Role {
+        backTitle == "Kembali ke Menu" ? .menu : .secondary
     }
 }
 

@@ -4,10 +4,15 @@ import Observation
 
 @MainActor
 @Observable
-final class LessonAudioNarrator {
+final class LessonAudioNarrator: NSObject, AVAudioPlayerDelegate {
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private var speechNarrator = AppleSpeechNarrator()
     @ObservationIgnored private var playbackTask: Task<Void, Never>?
+    @ObservationIgnored private var audioCompletion: CheckedContinuation<Bool, Never>?
+
+    override init() {
+        super.init()
+    }
 
     func speak(_ text: String, audioFileName: String? = nil, onCompletion: (() -> Void)? = nil) {
         speak(text, audioFileNames: audioFileName.map { [$0] } ?? [], onCompletion: onCompletion)
@@ -18,13 +23,7 @@ final class LessonAudioNarrator {
         configureAudioSession()
 
         guard !audioFileNames.isEmpty else {
-            speechNarrator.speak(text)
-            playbackTask = Task { @MainActor in
-                let estimatedDuration = max(Double(text.split(separator: " ").count) * 0.38, 0.8)
-                try? await Task.sleep(nanoseconds: UInt64(estimatedDuration * 1_000_000_000))
-                guard !Task.isCancelled else { return }
-                onCompletion?()
-            }
+            speechNarrator.speak(text, onCompletion: onCompletion)
             return
         }
 
@@ -45,30 +44,63 @@ final class LessonAudioNarrator {
 
             player = nextPlayer
             nextPlayer.prepareToPlay()
-            nextPlayer.play()
-            didPlayAudio = true
-
-            let duration = max(nextPlayer.duration, 0.1)
-            try? await Task.sleep(nanoseconds: UInt64((duration + 0.12) * 1_000_000_000))
+            let didFinish = await playToCompletion(nextPlayer)
+            guard !Task.isCancelled else { return }
+            if didFinish {
+                didPlayAudio = true
+            }
         }
 
         guard !Task.isCancelled else { return }
 
         if !didPlayAudio {
-            speechNarrator.speak(fallbackText)
-            let estimatedDuration = max(Double(fallbackText.split(separator: " ").count) * 0.38, 0.8)
-            try? await Task.sleep(nanoseconds: UInt64(estimatedDuration * 1_000_000_000))
-            guard !Task.isCancelled else { return }
+            speechNarrator.speak(fallbackText, onCompletion: onCompletion)
+            return
         }
 
+        player = nil
         onCompletion?()
+    }
+
+    private func playToCompletion(_ audioPlayer: AVAudioPlayer) async -> Bool {
+        await withCheckedContinuation { continuation in
+            audioCompletion = continuation
+            audioPlayer.delegate = self
+            guard audioPlayer.play() else {
+                finishAudioPlayback(successfully: false)
+                return
+            }
+        }
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor [weak self] in
+            self?.finishAudioPlayback(successfully: flag)
+        }
+    }
+
+    nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        Task { @MainActor [weak self] in
+            self?.finishAudioPlayback(successfully: false)
+        }
+    }
+
+    private func finishAudioPlayback(successfully: Bool) {
+        player?.delegate = nil
+        let continuation = audioCompletion
+        audioCompletion = nil
+        continuation?.resume(returning: successfully)
     }
 
     func stop() {
         playbackTask?.cancel()
         playbackTask = nil
+        player?.delegate = nil
         player?.stop()
         player = nil
+        let continuation = audioCompletion
+        audioCompletion = nil
+        continuation?.resume(returning: false)
         speechNarrator.stop()
     }
 

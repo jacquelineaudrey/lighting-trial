@@ -7,6 +7,11 @@ struct Level3FlowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
+    let onReturnToLevelMenu: (() -> Void)?
+
+    init(onReturnToLevelMenu: (() -> Void)? = nil) {
+        self.onReturnToLevelMenu = onReturnToLevelMenu
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -15,10 +20,15 @@ struct Level3FlowView: View {
             
             overlay
         }
-        .overlay(alignment: .topLeading) {
+        .overlay(alignment: .topTrailing) {
             if viewModel.phase != .completed {
-                LevelBackButton { showsExitConfirmation = true }
-                    .padding(.leading, 16)
+                LevelActionButton(
+                    title: "Kembali ke Menu",
+                    systemImage: "house.fill",
+                    role: .menu,
+                    action: { showsExitConfirmation = true }
+                )
+                    .padding(.trailing, 16)
                     .padding(.top, 12)
             }
         }
@@ -79,8 +89,24 @@ struct Level3FlowView: View {
                     .padding(.horizontal, 20)
             }
         }
+        .gameDialog(
+            isPresented: viewModel.showsFreezeSceneConfirmation,
+            title: "Scene akan di-freeze",
+            message: "Pastikan objek dan bayangannya sudah terlihat jelas sebelum mulai menggambar.",
+            primaryTitle: "Iya, lanjut",
+            secondaryTitle: "Sebentar aku arahkan lagi",
+            primaryAction: viewModel.confirmFreezeSceneAndStartDrawing,
+            secondaryAction: viewModel.cancelFreezeSceneConfirmation
+        )
+        .gameDialog(
+            isPresented: viewModel.photoSaveMessage != nil,
+            title: "Foto Gambar",
+            message: viewModel.photoSaveMessage ?? "",
+            primaryTitle: "OK",
+            primaryAction: viewModel.clearPhotoSaveMessage
+        )
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
-            dismiss()
+            returnToLevelMenu()
         }
         .fullScreenCover(isPresented: $viewModel.showsDrawingCamera) {
             Level3DrawingCameraView(
@@ -90,7 +116,7 @@ struct Level3FlowView: View {
             .ignoresSafeArea()
         }
         .animation(reduceMotion ? nil : .easeInOut, value: viewModel.phase)
-        .animation(.easeInOut(duration: 0.2), value: viewModel.arSceneViewModel.selectedConcept)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: viewModel.arSceneViewModel.selectedConcept)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
         .task(id: viewModel.narrationID) {
             guard viewModel.shouldSpeakNarration else {
@@ -98,7 +124,7 @@ struct Level3FlowView: View {
                 return
             }
             viewModel.narrationWillStart()
-            try? await Task.sleep(nanoseconds: 150_000_000)
+            try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
             narrator.speak(
                 viewModel.narrationText,
@@ -106,10 +132,10 @@ struct Level3FlowView: View {
                 onCompletion: viewModel.narrationDidFinish
             )
         }
-        .onAppear(perform: BackgroundMusicPlayer.shared.useGameplayVolume)
+        .onAppear(perform: BackgroundMusicPlayer.shared.playGameplayMusic)
         .onDisappear {
             narrator.stop()
-            BackgroundMusicPlayer.shared.useMenuVolume()
+            BackgroundMusicPlayer.shared.playMenuMusic()
         }
         .onChange(of: viewModel.arSceneViewModel.surfaceState) { _, _ in
             viewModel.surfaceDidBecomeReady()
@@ -143,7 +169,10 @@ struct Level3FlowView: View {
         switch viewModel.phase {
         case .onboarding:
             if !viewModel.arSceneViewModel.isObjectPlaced {
-                Level3DialogTapCatcher(action: viewModel.advanceOnboarding)
+                Level3DialogTapCatcher(
+                    isEnabled: viewModel.canAdvanceCurrentDialog,
+                    action: viewModel.advanceOnboarding
+                )
             } else {
                 EmptyView()
             }
@@ -164,10 +193,16 @@ struct Level3FlowView: View {
             EmptyView()
 
         case .shadowTrivia:
-            Level3DialogTapCatcher(action: viewModel.advanceShadowTrivia)
+            Level3DialogTapCatcher(
+                isEnabled: viewModel.canAdvanceCurrentDialog,
+                action: viewModel.advanceShadowTrivia
+            )
 
         case .closing:
-            Level3DialogTapCatcher(action: viewModel.advanceClosing)
+            Level3DialogTapCatcher(
+                isEnabled: viewModel.canAdvanceCurrentDialog,
+                action: viewModel.advanceClosing
+            )
 
         case .shadowTypesInteraction:
             Level3ShadowToggleButton(
@@ -186,9 +221,8 @@ struct Level3FlowView: View {
             }
 
         case .drawingPrompt:
-            Level3NextButton(
-                title: "Selanjutnya",
-                isDisabled: !viewModel.canAdvanceCurrentDialog,
+            Level3DialogTapCatcher(
+                isEnabled: viewModel.canAdvanceCurrentDialog,
                 action: viewModel.requestFreezeSceneForDrawing
             )
 
@@ -219,7 +253,8 @@ struct Level3FlowView: View {
         case .completed:
             EndLevelView(
                 data: EndLevelViewModel.data(for: Level3Content.levelID),
-                onBack: dismiss.callAsFunction
+                onBack: returnToLevelMenu,
+                backTitle: "Kembali ke Menu"
             )
             .padding(.bottom, 24)
 
@@ -238,15 +273,19 @@ struct Level3FlowView: View {
             onCompletion: viewModel.narrationDidFinish
         )
     }
+
+    private func returnToLevelMenu() {
+        onReturnToLevelMenu?()
+        dismiss()
+    }
 }
 
 private struct Level3DialogTapCatcher: View {
+    let isEnabled: Bool
     let action: () -> Void
 
     var body: some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .onTapGesture(perform: action)
+        LevelTapToAdvanceOverlay(isEnabled: isEnabled, action: action)
     }
 }
 
@@ -260,12 +299,17 @@ private struct Level3InfoMenu: View {
         VStack(alignment: .trailing, spacing: 8) {
             Button(action: onInfoTap) {
                 Image(systemName: "info.circle")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.black.opacity(0.72))
-                    .frame(width: 34, height: 34)
+                    .font(.system(size: 25, weight: .bold))
+                    .foregroundStyle(Color(hex: "21415D"))
+                    .frame(width: 52, height: 52)
                     .background(.thinMaterial, in: Circle())
+                    .overlay {
+                        Circle()
+                            .stroke(Color(hex: "9FA60C").opacity(0.55), lineWidth: 2)
+                    }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(isOpen ? "Tutup info bayangan" : "Buka info bayangan")
 
             if isOpen {
                 VStack(alignment: .leading, spacing: 0) {
@@ -278,7 +322,7 @@ private struct Level3InfoMenu: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
+                    .frame(minHeight: 48)
 
                     Divider()
                         .padding(.horizontal, 14)
@@ -289,7 +333,7 @@ private struct Level3InfoMenu: View {
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                         .padding(.horizontal, 14)
-                        .padding(.vertical, 11)
+                    .frame(minHeight: 48)
                 }
                 .fixedSize(horizontal: true, vertical: false)
                 .background(.thinMaterial, in: .rect(cornerRadius: 14))
@@ -348,87 +392,6 @@ private struct Level3InfoGestureImage: View {
     }
 }
 
-private struct Level3GreenConfirmationOverlay: View {
-    let title: String
-    let message: String
-    let confirmTitle: String
-    let cancelTitle: String
-    let onConfirm: () -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.35)
-                .ignoresSafeArea()
-
-            VStack(spacing: 14) {
-                Text(title)
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Color(hex: "313131"))
-
-                Text(message)
-                    .font(.system(size: 14, weight: .medium))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(Color(hex: "313131"))
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 10) {
-                    Button(cancelTitle, action: onCancel)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(Color(hex: "313131"))
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(Color.white.opacity(0.9), in: Capsule())
-
-                    Button(confirmTitle, action: onConfirm)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(Color(hex: "9FA60C"), in: Capsule())
-                }
-            }
-            .padding(22)
-            .frame(maxWidth: 360)
-            .background(Color(hex: "EFEBCF"), in: RoundedRectangle(cornerRadius: 35))
-            .overlay(
-                RoundedRectangle(cornerRadius: 35)
-                    .stroke(Color(hex: "D6CF91"), lineWidth: 2)
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-}
-
-private struct Level3GreenNotice: View {
-    let message: String
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(Color(hex: "1F8A55"))
-
-            Text(message)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color(hex: "1F5136"))
-                .lineLimit(2)
-
-            Button("OK", action: onDismiss)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Color(hex: "35A66B"), in: Capsule())
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color(hex: "DDF8E9"), in: Capsule())
-        .overlay(Capsule().stroke(Color(hex: "35A66B"), lineWidth: 1.5))
-    }
-}
-
 private struct Level3FrozenDrawingOverlay: View {
     let text: String
     let actionTitle: String
@@ -465,13 +428,12 @@ private struct Level3FrozenDrawingOverlay: View {
 
             HStack {
                 Spacer()
-                Button(actionTitle, action: action)
-                    .font(.caption.bold())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .background(isActionDisabled ? Color.gray : Color.blue, in: Capsule())
-                    .disabled(isActionDisabled)
+                LevelActionButton(
+                    title: actionTitle,
+                    systemImage: "pencil.and.outline",
+                    isDisabled: isActionDisabled,
+                    action: action
+                )
                     .padding(.trailing, 24)
                     .padding(.bottom, 34)
             }
@@ -511,13 +473,12 @@ private struct Level3PhotoComparisonOverlay: View {
                     comparisonImage(title: "Gambar Kamu", image: userDrawingImage)
                 }
 
-                Button("Selesai", action: action)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .background(isActionDisabled ? Color.gray : Color(hex: "35A66B"), in: Capsule())
-                    .disabled(isActionDisabled)
+                LevelActionButton(
+                    title: "Selesai",
+                    systemImage: "checkmark",
+                    isDisabled: isActionDisabled,
+                    action: action
+                )
             }
             .padding(22)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -630,12 +591,11 @@ private struct Level3ShadowToggleButton: View {
         VStack {
             Spacer()
             HStack {
-                Button(title, action: action)
-                    .font(.caption.bold())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Color.orange, in: Capsule())
+                LevelActionButton(
+                    title: title,
+                    systemImage: "eye.fill",
+                    action: action
+                )
                     .padding(.leading, 24)
 
                 Spacer()
@@ -656,14 +616,16 @@ private struct Level3ShapeComparison: View {
                 .bold()
             HStack {
                 ForEach(Level3ViewModel.ComparisonShape.allCases) { shape in
-                    Button(shape.rawValue) {
-                        viewModel.chooseComparison(shape)
-                    }
-                    .buttonStyle(.borderedProminent)
+                    LevelActionButton(
+                        title: shape.rawValue,
+                        systemImage: shape == .cube ? "cube.fill" : "circle.fill",
+                        role: viewModel.selectedComparison == shape ? .primary : .secondary,
+                        action: { viewModel.chooseComparison(shape) }
+                    )
                 }
             }
             Text(viewModel.hasComparedShapes
-                 ? "Ketuk layar untuk melanjutkan."
+                 ? "Ketuk dimana saja untuk lanjut"
                  : "Pilih kedua bentuk, lalu bandingkan bayangannya.")
             .font(.subheadline)
             

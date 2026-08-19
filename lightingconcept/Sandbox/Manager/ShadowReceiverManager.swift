@@ -42,25 +42,51 @@ final class ShadowReceiverManager {
 }
 
 final class LiDARMeshOcclusionManager {
+    enum RenderMode {
+        case scanVisualization
+        case invisibleOccluder
+    }
+
     private var meshAnchors: [UUID: AnchorEntity] = [:]
     private var visualMeshes: [UUID: ModelEntity] = [:]
     private var faceCounts: [UUID: Int] = [:]
     private var lastUpdateTimes: [UUID: TimeInterval] = [:]
-    private let minimumUpdateInterval: TimeInterval = 0.45
+    private let renderMode: RenderMode
     private var visualizationEnabled = true
+    private var isFrozen = false
+
+    init(renderMode: RenderMode = .scanVisualization) {
+        self.renderMode = renderMode
+    }
+
+    private var minimumUpdateInterval: TimeInterval {
+        renderMode == .invisibleOccluder ? 0.9 : 0.45
+    }
+
+    private var maximumUpdatesPerBatch: Int {
+        renderMode == .invisibleOccluder ? 2 : Int.max
+    }
 
     func setVisualizationEnabled(_ enabled: Bool) {
         visualizationEnabled = enabled
         visualMeshes.values.forEach { $0.isEnabled = enabled }
     }
 
+    func freeze() {
+        isFrozen = true
+    }
+
     func update(from anchors: [ARAnchor], in arView: ARView) -> (updatedCount: Int, meshCount: Int, faceCount: Int) {
+        guard !isFrozen else { return (0, meshAnchors.count, totalFaceCount) }
+
         var updatedCount = 0
         let now = ProcessInfo.processInfo.systemUptime
 
         // ARMeshAnchor berasal dari LiDAR scene reconstruction. Di app ini mesh dibuat
         // visible saat scanning sebagai feedback area yang sudah terbaca oleh device.
         for meshAnchor in anchors.compactMap({ $0 as? ARMeshAnchor }) {
+            guard updatedCount < maximumUpdatesPerBatch else { break }
+
             if let lastUpdate = lastUpdateTimes[meshAnchor.identifier],
                now - lastUpdate < minimumUpdateInterval {
                 continue
@@ -73,9 +99,11 @@ final class LiDARMeshOcclusionManager {
             meshAnchors[meshAnchor.identifier]?.removeFromParent()
 
             let anchorEntity = AnchorEntity(world: meshAnchor.transform)
-            anchorEntity.name = "LiDAR scan visualization mesh"
-            let visualEntity = makeScanVisualizationEntity(mesh: mesh)
-            visualEntity.isEnabled = visualizationEnabled
+            anchorEntity.name = renderMode == .invisibleOccluder
+                ? "LiDAR real-world occlusion mesh"
+                : "LiDAR scan visualization mesh"
+            let visualEntity = makeMeshEntity(mesh: mesh)
+            visualEntity.isEnabled = renderMode == .invisibleOccluder || visualizationEnabled
             anchorEntity.addChild(visualEntity)
 
             arView.scene.addAnchor(anchorEntity)
@@ -91,6 +119,8 @@ final class LiDARMeshOcclusionManager {
     }
 
     func remove(anchors: [ARAnchor]) {
+        guard !isFrozen else { return }
+
         for anchor in anchors {
             meshAnchors[anchor.identifier]?.removeFromParent()
             meshAnchors[anchor.identifier] = nil
@@ -107,6 +137,7 @@ final class LiDARMeshOcclusionManager {
         faceCounts.removeAll()
         lastUpdateTimes.removeAll()
         visualizationEnabled = true
+        isFrozen = false
     }
 
     private var totalFaceCount: Int {
@@ -141,15 +172,27 @@ final class LiDARMeshOcclusionManager {
         return try? MeshResource.generate(from: [descriptor])
     }
 
-    private func makeScanVisualizationEntity(mesh: MeshResource) -> ModelEntity {
-        let material = SimpleMaterial(
-            color: UIColor.systemCyan.withAlphaComponent(0.18),
-            roughness: .init(floatLiteral: 1),
-            isMetallic: false
-        )
-        let entity = ModelEntity(mesh: mesh, materials: [material])
-        entity.name = "LiDAR scanned area preview"
+    private func makeMeshEntity(mesh: MeshResource) -> ModelEntity {
+        let entity: ModelEntity
+        switch renderMode {
+        case .scanVisualization:
+            let material = SimpleMaterial(
+                color: UIColor.systemCyan.withAlphaComponent(0.18),
+                roughness: .init(floatLiteral: 1),
+                isMetallic: false
+            )
+            entity = ModelEntity(mesh: mesh, materials: [material])
+            entity.name = "LiDAR scanned area preview"
+        case .invisibleOccluder:
+            var material = OcclusionMaterial(receivesDynamicLighting: false)
+            material.faceCulling = .none
+            entity = ModelEntity(mesh: mesh, materials: [material])
+            entity.name = "LiDAR real-world depth occluder"
+        }
         entity.components.set(DynamicLightShadowComponent(castsShadow: false))
+        entity.components.set(
+            GroundingShadowComponent(castsShadow: false, receivesShadow: false)
+        )
         return entity
     }
 

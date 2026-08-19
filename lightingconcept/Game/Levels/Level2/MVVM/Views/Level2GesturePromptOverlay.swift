@@ -76,7 +76,7 @@ struct Level2BrightnessControl: View {
                     .fill(.white.opacity(0.50))
                     .frame(width: 15, height: sliderHeight)
                 Capsule()
-                    .fill(Color.blue)
+                    .fill(Color(hex: "9FA60C"))
                     .frame(width: 15, height: max(18, sliderHeight * fillRatio))
                     .animation(.easeOut(duration: 0.12), value: intensityPercentage)
             }

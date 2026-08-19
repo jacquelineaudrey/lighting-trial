@@ -12,6 +12,10 @@ enum MainMenuLayout {
     static let buttonSize = CGSize(width: 484, height: 150)
     static let learnButtonCenter = CGPoint(x: 605, y: 369)
     static let sandboxButtonCenter = CGPoint(x: 605, y: 529)
+    static let settingsButtonSize = CGSize(width: 300, height: 72)
+    static let settingsButtonCenter = CGPoint(x: 605, y: 642)
+    static let settingsFontSize: CGFloat = 30
+    static let settingsOutlineWidth: CGFloat = 3
 
     static let outlineWidth: CGFloat = 5
     static let outlineColor = Color(red: 186 / 255, green: 146 / 255, blue: 93 / 255)

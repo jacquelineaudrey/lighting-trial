@@ -503,7 +503,9 @@ extension SceneObjectSystem {
 
         if texture.shadowBehavior == .cutout {
             material.opacityThreshold = 0.55
-            material.blending = .transparent(opacity: .init(floatLiteral: 0.72))
+            // Area bertekstur tetap solid; hanya piksel alpha pada lubang yang
+            // transparan. Opacity global membuat seluruh benda tampak tembus.
+            material.blending = .transparent(opacity: .init(floatLiteral: 1))
         } else {
             material.blending = .opaque
         }

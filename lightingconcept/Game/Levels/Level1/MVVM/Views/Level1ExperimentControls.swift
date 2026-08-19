@@ -61,11 +61,21 @@ struct Level1ExperimentControls: View {
                 Spacer()
 
                 if viewModel.canContinueToShapeSelection {
-                    Level1PrimaryActionButton(title: "Selanjutnya", action: viewModel.continueToShapeSelection)
+                    LevelActionButton(
+                        title: "Selanjutnya",
+                        systemImage: "arrow.right",
+                        isDisabled: viewModel.isTransitioning,
+                        action: viewModel.continueToShapeSelection
+                    )
                         .padding(.trailing, 42)
                         .padding(.bottom, 36)
                 } else if viewModel.canConfirmDrawingChoices {
-                    Level1PrimaryActionButton(title: "Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
+                    LevelActionButton(
+                        title: "Aku Pilih Ini",
+                        systemImage: "checkmark",
+                        isDisabled: viewModel.isTransitioning,
+                        action: viewModel.confirmDrawingChoices
+                    )
                         .padding(.trailing, 42)
                         .padding(.bottom, 36)
                 }
@@ -114,7 +124,7 @@ struct Level1ExperimentControls: View {
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(isSelected ? .white : .white.opacity(0.86))
                 .frame(width: 44, height: 44)
-                .background(isSelected ? Color.blue : Color.white.opacity(0.10), in: Circle())
+                .background(isSelected ? Color(hex: "9FA60C") : Color.white.opacity(0.10), in: Circle())
         }
         .buttonStyle(.plain)
     }
@@ -147,12 +157,7 @@ private struct Level1TexturePickerPanel: View {
                         HStack {
 
                             Text(texture.name)
-                                .font(
-                                    .system(
-                                        size: 14,
-                                        weight: .medium
-                                    )
-                                )
+                                .font(.body)
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
 
@@ -163,6 +168,7 @@ private struct Level1TexturePickerPanel: View {
                                 isSelected: index == selectedIndex
                             )
                         }
+                        .frame(minHeight: 44)
                         .frame(maxWidth: .infinity)
                         .contentShape(.rect)
                     }
@@ -201,12 +207,7 @@ private struct Level1ShapePickerPanel: View {
                         HStack {
 
                             Text(shape.displayName)
-                                .font(
-                                    .system(
-                                        size: 14,
-                                        weight: .medium
-                                    )
-                                )
+                                .font(.body)
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
 
@@ -217,6 +218,7 @@ private struct Level1ShapePickerPanel: View {
                                 isSelected: index == selectedIndex
                             )
                         }
+                        .frame(minHeight: 44)
                         .frame(maxWidth: .infinity)
                         .contentShape(.rect)
                     }
@@ -333,7 +335,7 @@ private struct TextureSwatch: View {
             }
             .overlay {
                 Circle()
-                    .stroke(isSelected ? Color.blue : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
+                    .stroke(isSelected ? Color(hex: "9FA60C") : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
             }
             .shadow(color: .black.opacity(0.16), radius: 2, y: 1)
     }
@@ -353,11 +355,11 @@ private struct ShapeSwatch: View {
             .overlay {
                 Image(systemName: shape.quizSymbolName)
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(isSelected ? Color.blue : Color.white.opacity(0.9))
+                    .foregroundStyle(isSelected ? Color(hex: "9FA60C") : Color.white.opacity(0.9))
             }
             .overlay {
                 Circle()
-                    .stroke(isSelected ? Color.blue : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
+                    .stroke(isSelected ? Color(hex: "9FA60C") : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
             }
     }
 }
@@ -444,7 +446,7 @@ private struct Level1ExperimentControlsPreviewState: View {
 
                     } else if mode == .shape {
                         Level1ShapePickerPanel(
-                            shapes: Level1Content.checkpoints.map(\.shape),
+                            shapes: Level1Content.allShapes,
                             selectedIndex: selectedShapeIndex,
                             showsGesture: false
                         ) { index in
@@ -533,7 +535,7 @@ private struct Level1ExperimentControlsPreviewState: View {
                 .frame(width: 44, height: 44)
                 .background(
                     isSelected
-                        ? Color.blue
+                        ? Color(hex: "9FA60C")
                         : Color.white.opacity(0.10),
                     in: Circle()
                 )

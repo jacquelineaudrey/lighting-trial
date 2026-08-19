@@ -9,6 +9,7 @@ import SwiftUI
 
 struct LevelCardView: View {
     let level: Level
+    var onBack: () -> Void = {}
     var onStart: () -> Void = {}
 
     var body: some View {
@@ -60,11 +61,31 @@ struct LevelCardView: View {
                 .buttonStyle(.plain)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            Button(action: onBack) {
+                Image(systemName: "multiply")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(Color(hex: "21415D"))
+                    .frame(width: 56, height: 56)
+                    .background(Color(hex: "FFF4C7"), in: Circle())
+                    .overlay {
+                        Circle()
+                            .stroke(Color(hex: "D6A83E"), lineWidth: 3)
+                    }
+                    .shadow(color: .black.opacity(0.18), radius: 5, y: 3)
+            }
+            .buttonStyle(.plain)
+            .contentShape(Circle())
+            .accessibilityLabel("Kembali")
+            .accessibilityHint("Menutup kartu level dan kembali ke peta.")
+            .padding(.top, 38)
+            .padding(.trailing, 38)
+        }
     }
 }
 
 #Preview(traits: .landscapeLeft) {
-    LevelCardView(level: Level(id: 1, levelNumber: 1, title: "Bentuk dan\nTekstur", subtitle: "Yuk, lihat perbedaan\nbayangannya!")) {
+    LevelCardView(level: Level(id: 1, levelNumber: 1, title: "Bentuk dan\nTekstur", subtitle: "Yuk, lihat perbedaan\nbayangannya!"), onStart: {
         print("Tapped MULAI")
-    }
+    })
 }

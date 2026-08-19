@@ -21,7 +21,6 @@ struct Level1ARView: UIViewRepresentable {
         arView.environment.lighting.intensityExponent = 0
         arView.renderOptions.insert(.disableMotionBlur)
         arView.renderOptions.insert(.disableDepthOfField)
-        arView.renderOptions.insert(.disablePersonOcclusion)
         
         // 1. Register Native ECS Systems
         PulseAnimationSystem.registerSystem()
@@ -34,24 +33,25 @@ struct Level1ARView: UIViewRepresentable {
         
         // 3. Configure ARKit to open the Camera and detect planes
         let config = ARWorldTrackingConfiguration()
-        config.planeDetection = [.horizontal]
+        // Bidang vertikal ikut dipindai supaya susunan checkpoint dapat menjaga
+        // jarak dari tembok, bukan hanya menempel pada lantai yang ditemukan.
+        config.planeDetection = [.horizontal, .vertical]
         config.environmentTexturing = .automatic
         config.isLightEstimationEnabled = true
         if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
             config.frameSemantics.insert(.smoothedSceneDepth)
         }
         arView.environment.sceneUnderstanding.options.insert(.occlusion)
-        arView.environment.sceneUnderstanding.options.insert(.collision)
-        arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
         
         let supportsLiDAR = ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh)
         if supportsLiDAR {
             config.sceneReconstruction = .mesh
         }
+        context.coordinator.noteInitialSceneReconstructionState(isActive: supportsLiDAR)
         // `makeUIView` dijalankan di dalam update SwiftUI. Menunda publish ke
         // putaran main queue berikutnya menghindari perubahan ObservableObject
         // dari dalam lifecycle update view.
-        DispatchQueue.main.async {
+        Task { @MainActor in
             viewModel.arSceneViewModel.isLiDARAvailable = supportsLiDAR
         }
         
@@ -68,21 +68,9 @@ struct Level1ARView: UIViewRepresentable {
         context.coordinator.coachingOverlay = coachingOverlay
         
         // 4. Send scene updates to ViewModel for proximity checks
-        context.coordinator.subscription = AnyCancellable(arView.scene.subscribe(to: SceneEvents.Update.self) { event in
-            guard let cameraTransform = arView.session.currentFrame?.camera.transform else { return }
-            viewModel.processSceneUpdate(cameraTransform: cameraTransform)
-            if let guideWorldPosition = viewModel.guideOverlayWorldPosition,
-               let projectedPosition = arView.project(guideWorldPosition) {
-                viewModel.updateGuideOverlayScreenPosition(projectedPosition)
-            } else {
-                viewModel.updateGuideOverlayScreenPosition(nil)
-            }
-            if let objectWorldPosition = viewModel.textureTapObjectWorldPosition,
-               let projectedObjectPosition = arView.project(objectWorldPosition) {
-                viewModel.updateTextureTapObjectScreenPosition(projectedObjectPosition)
-            } else {
-                viewModel.updateTextureTapObjectScreenPosition(nil)
-            }
+        let coordinator = context.coordinator
+        coordinator.subscription = AnyCancellable(arView.scene.subscribe(to: SceneEvents.Update.self) { _ in
+            coordinator.processSceneFrame(in: arView)
         })
 
         let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
@@ -93,24 +81,31 @@ struct Level1ARView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: ARView, context: Context) {
-        viewModel.syncEntities()
-
         if viewModel.isSceneFrozen && !context.coordinator.hasFrozenScene {
             context.coordinator.hasFrozenScene = true
             uiView.session.pause()
+        } else if !viewModel.isSceneFrozen,
+                  context.coordinator.hasFrozenScene,
+                  let configuration = uiView.session.configuration {
+            context.coordinator.hasFrozenScene = false
+            // Melanjutkan sesi yang sama tanpa reset tracking atau anchor.
+            uiView.session.run(configuration)
         }
 
         if context.coordinator.lastCaptureFlag != viewModel.pendingDrawingPhotoCapture {
             context.coordinator.lastCaptureFlag = viewModel.pendingDrawingPhotoCapture
             context.coordinator.captureAndSaveSnapshot()
         }
+
+        context.coordinator.setSceneReconstructionActive(
+            viewModel.phase == .scanningSurface,
+            in: uiView
+        )
         
         // Show/Hide Coaching overlay based on Phase
-        if viewModel.phase == .scanningSurface {
-            context.coordinator.coachingOverlay?.setActive(true, animated: true)
-        } else {
-            context.coordinator.coachingOverlay?.setActive(false, animated: true)
-        }
+        let shouldShowCoaching = viewModel.phase == .scanningSurface
+            && viewModel.arSceneViewModel.surfaceState == .scanning
+        context.coordinator.setCoachingActive(shouldShowCoaching)
     }
     
     func makeCoordinator() -> Coordinator {
@@ -122,7 +117,16 @@ struct Level1ARView: UIViewRepresentable {
         var subscription: AnyCancellable?
         var lastCaptureFlag = false
         var hasFrozenScene = false
+        private var isCoachingActive = false
+        private var lastSceneUpdateTime: TimeInterval = 0
+        private var lastProjectionUpdateTime: TimeInterval = 0
+        private var isSceneReconstructionActive: Bool?
+        private let sceneUpdateInterval: TimeInterval = 1.0 / 30.0
+        private let projectionUpdateInterval: TimeInterval = 1.0 / 30.0
         weak var arView: ARView?
+        private let realWorldOcclusionManager = LiDARMeshOcclusionManager(
+            renderMode: .invisibleOccluder
+        )
         
         weak var coachingOverlay: ARCoachingOverlayView? {
             didSet { coachingOverlay?.delegate = self }
@@ -130,6 +134,56 @@ struct Level1ARView: UIViewRepresentable {
         
         init(viewModel: Level1ViewModel) {
             self.viewModel = viewModel
+        }
+
+        func processSceneFrame(in arView: ARView) {
+            guard !hasFrozenScene,
+                  let cameraTransform = arView.session.currentFrame?.camera.transform else { return }
+
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastSceneUpdateTime >= sceneUpdateInterval {
+                lastSceneUpdateTime = now
+                viewModel.processCameraFrame(cameraTransform: cameraTransform)
+            }
+
+            guard now - lastProjectionUpdateTime >= projectionUpdateInterval else { return }
+            lastProjectionUpdateTime = now
+
+            let guidePosition = viewModel.guideOverlayWorldPosition.flatMap(arView.project)
+            viewModel.updateGuideOverlayScreenPosition(guidePosition)
+
+            let objectPosition = viewModel.textureTapObjectWorldPosition.flatMap(arView.project)
+            viewModel.updateTextureTapObjectScreenPosition(objectPosition)
+        }
+
+        func setCoachingActive(_ isActive: Bool) {
+            guard isCoachingActive != isActive else { return }
+            isCoachingActive = isActive
+            coachingOverlay?.setActive(isActive, animated: true)
+        }
+
+        func setSceneReconstructionActive(_ isActive: Bool, in arView: ARView) {
+            guard ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
+                  isSceneReconstructionActive != isActive,
+                  let configuration = arView.session.configuration as? ARWorldTrackingConfiguration else {
+                return
+            }
+
+            isSceneReconstructionActive = isActive
+            if isActive {
+                realWorldOcclusionManager.reset()
+                configuration.sceneReconstruction = .mesh
+            } else {
+                // Pertahankan mesh akhir sebagai depth occluder, lalu hentikan
+                // pekerjaan rekonstruksi ARKit tanpa reset tracking/anchor game.
+                realWorldOcclusionManager.freeze()
+                configuration.sceneReconstruction = []
+            }
+            arView.session.run(configuration)
+        }
+
+        func noteInitialSceneReconstructionState(isActive: Bool) {
+            isSceneReconstructionActive = isActive
         }
 
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
@@ -197,58 +251,28 @@ struct Level1ARView: UIViewRepresentable {
             process(anchors)
         }
 
-        // Runs every frame: keeps the viewModel's notion of "where is the child
-        // looking right now" fresh, and drives the LiDAR scan progress card so the
-        // scanning screen actually shows feedback while the room gets scanned
-        // instead of appearing stuck. Matches the `nonisolated` + `Task { @MainActor }`
-        // pattern `ARSceneCoordinator` already uses for the same `didUpdate frame:`
-        // callback, since ARKit may not deliver it on the main thread.
-        nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
-            let transform = frame.camera.transform
-            let position = SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
-            let forward = -SIMD3<Float>(transform.columns.2.x, transform.columns.2.y, transform.columns.2.z)
-
-            var meshCount = 0
-            var faceCount = 0
-            if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-                for anchor in frame.anchors {
-                    guard let meshAnchor = anchor as? ARMeshAnchor else { continue }
-                    meshCount += 1
-                    faceCount += meshAnchor.geometry.faces.count
-                }
-            }
-
-            // Capture immutable values before crossing to the main actor. Swift 6
-            // rejects capturing the mutable loop counters in this concurrent task.
-            let scannedMeshCount = meshCount
-            let scannedFaceCount = faceCount
-
-            Task { @MainActor in
-                self.viewModel.updateCameraPose(position: position, forward: forward)
-                if scannedMeshCount > 0 {
-                    self.viewModel.arSceneViewModel.updateLiDARScan(meshCount: scannedMeshCount, faceCount: scannedFaceCount)
-                }
-            }
+        func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
+            realWorldOcclusionManager.remove(anchors: anchors)
+            viewModel.removeScannedAnchors(anchors)
         }
-        
+
         private func process(_ anchors: [ARAnchor]) {
-            var meshCount = 0
-            var faceCount = 0
-            
+            guard viewModel.phase == .scanningSurface else { return }
+
+            if let arView {
+                // Mesh invisible menulis depth sehingga bayangan fallback tidak
+                // tergambar menembus furnitur atau tembok dunia nyata.
+                _ = realWorldOcclusionManager.update(from: anchors, in: arView)
+            }
+
             for anchor in anchors {
                 if let plane = anchor as? ARPlaneAnchor {
-                    viewModel.trackLatestHorizontalPlane(plane)
+                    viewModel.trackPlane(plane)
                 }
-                
-                // FIX: Feed LiDAR data to the progress card
+
                 if let mesh = anchor as? ARMeshAnchor {
-                    meshCount += 1
-                    faceCount += mesh.geometry.faces.count
+                    viewModel.trackSceneMesh(mesh)
                 }
-            }
-            
-            if meshCount > 0 {
-                viewModel.arSceneViewModel.updateLiDARScan(meshCount: meshCount, faceCount: faceCount)
             }
         }
 

@@ -251,9 +251,10 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 5VK9KJ95XB;
+				DEVELOPMENT_TEAM = C584GP8PPR;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = LumiBayo;
 				INFOPLIST_KEY_NSCameraUsageDescription = "The app uses the camera to detect real surfaces and show AR lighting and shadow lessons.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "The app needs access to your photo library";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -286,9 +287,10 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 5VK9KJ95XB;
+				DEVELOPMENT_TEAM = C584GP8PPR;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = LumiBayo;
 				INFOPLIST_KEY_NSCameraUsageDescription = "The app uses the camera to detect real surfaces and show AR lighting and shadow lessons.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "The app needs access to your photo library";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
