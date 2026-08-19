@@ -13,6 +13,6 @@ struct WaypointIndicatorComponent: Component {
     var moveAmplitude: Float = 0.10
     var floatSpeed: Float = 2.0
     var floatAmplitude: Float = 0.015
-    var forwardOffset: Float = 1.15
+    var forwardOffset: Float = 0.0
     var heightOffset: Float = -0.35
 }

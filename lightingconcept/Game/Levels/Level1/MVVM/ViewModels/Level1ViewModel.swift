@@ -35,6 +35,20 @@ enum Level1ExperimentPanel: Equatable {
     case shape
 }
 
+enum Level1DevFlow: String, CaseIterable, Identifiable {
+    case onboarding = "Onboarding"
+    case lightShadowIntro = "Cahaya & Bayangan"
+    case findingShapes = "Cari Bentuk"
+    case textureTapPrompt = "Tap Tekstur"
+    case textureExploration = "Eksplor Tekstur"
+    case shapeChange = "Ganti Bentuk"
+    case drawingPrompt = "Mulai Gambar"
+    case photoPrompt = "Foto Gambar"
+    case completed = "Selesai"
+
+    var id: String { rawValue }
+}
+
 enum Level1RadarTarget: String, CaseIterable, Equatable {
     case light
     case shadow
@@ -85,11 +99,15 @@ final class Level1ViewModel: ObservableObject {
     @Published private(set) var isSavingDrawingPhoto = false
     @Published private(set) var frozenSceneImage: UIImage?
     @Published private(set) var userDrawingImage: UIImage?
+    @Published private(set) var showsPhotoComparisonPanel = false
     @Published var showsDrawingCamera = false
     @Published private(set) var photoSaveMessage: String?
     @Published var showsFreezeSceneConfirmation = false
+    @Published private(set) var isPreparingFrozenScene = false
     @Published private(set) var isSceneFrozen = false
     @Published private(set) var successFeedbackTrigger = 0
+    @Published private(set) var guideOverlayScreenPosition: CGPoint?
+    @Published private(set) var textureTapObjectScreenPosition: CGPoint?
 
     private var visitedCheckpoints: Set<Int> = []
     private var visitedTextures: Set<Int> = [0]
@@ -112,6 +130,7 @@ final class Level1ViewModel: ObservableObject {
     private var checkpointLocalPositions: [SIMD3<Float>] = []
     private var markerWorldPositions: [SIMD3<Float>] = []
     private var checkpointHighlightEntities: [Entity] = []
+    private var checkpointShadowEntities: [ModelEntity] = []
     private var directionIndicatorRoot: ModelEntity?
     private var directionIndicatorLabel: ModelEntity?
     private var lastIndicatorDistanceText: String?
@@ -126,11 +145,13 @@ final class Level1ViewModel: ObservableObject {
     private var guideNeedsPlacement = true
 
     private let hapticGenerator = UINotificationFeedbackGenerator()
-    private let pathRadius: Float = 1.5
+    private let checkpointSpacing: Float = 1.2
+    private let firstCheckpointDistance: Float = 0.8
     private let checkpointHeight: Float = 0.34
-    private let markerRadius: Float = 1.0
+    private let markerRadius: Float = 0.5
 
     private static var cachedRadarRingTexture: TextureResource?
+    private static var cachedShadowTextures: [String: TextureResource] = [:]
 
     private let lightShadowInstructions: [Level1Instruction] = [
         Level1Instruction(
@@ -215,6 +236,29 @@ final class Level1ViewModel: ObservableObject {
         guard length > 0.0001 else { return }
         latestCameraForwardXZ = horizontalForward / length
         updateGuidePosition(cameraPosition: position, horizontalForward: horizontalForward / length)
+    }
+
+    var guideOverlayWorldPosition: SIMD3<Float>? {
+        guard showsGuideOverlay, !guideNeedsPlacement, let guide = guideRoot else { return nil }
+        return guide.position(relativeTo: nil)
+    }
+
+    func updateGuideOverlayScreenPosition(_ position: CGPoint?) {
+        guideOverlayScreenPosition = position
+    }
+
+    var textureTapObjectWorldPosition: SIMD3<Float>? {
+        guard phase == .textureTapPrompt,
+              let pathAnchor,
+              let objectPosition = checkpointLocalPositions.first else { return nil }
+
+        return pathAnchor.position(relativeTo: nil)
+            + objectPosition
+            + SIMD3<Float>(0, checkpointHeight * 0.65, 0)
+    }
+
+    func updateTextureTapObjectScreenPosition(_ position: CGPoint?) {
+        textureTapObjectScreenPosition = position
     }
 
     func processSceneUpdate(cameraTransform: simd_float4x4) {
@@ -309,6 +353,7 @@ final class Level1ViewModel: ObservableObject {
         checkpointLocalPositions.removeAll()
         markerWorldPositions.removeAll()
         checkpointHighlightEntities.removeAll()
+        checkpointShadowEntities.removeAll()
         shadowReceiverManager.reset()
         latestHorizontalPlaneAnchor = nil
         guideNeedsPlacement = true
@@ -318,8 +363,10 @@ final class Level1ViewModel: ObservableObject {
         hasContinuedToShapeSelection = false
         frozenSceneImage = nil
         userDrawingImage = nil
+        showsPhotoComparisonPanel = false
         showsDrawingCamera = false
         showsFreezeSceneConfirmation = false
+        isPreparingFrozenScene = false
         isSceneFrozen = false
         scanStartTime = Date()
         phase = .scanningSurface
@@ -459,19 +506,36 @@ final class Level1ViewModel: ObservableObject {
     }
 
     func cancelFreezeSceneConfirmation() {
+        guard !isPreparingFrozenScene else { return }
         showsFreezeSceneConfirmation = false
     }
 
     func confirmFreezeSceneAndStartDrawing() {
         guard (phase == .textureExploration || phase == .shapeChange), canConfirmDrawingChoices else {
             showsFreezeSceneConfirmation = false
+            isPreparingFrozenScene = false
+            return
+        }
+
+        isPreparingFrozenScene = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(650))
+            self?.freezeSceneAndStartDrawing()
+        }
+    }
+
+    private func freezeSceneAndStartDrawing() {
+        guard (phase == .textureExploration || phase == .shapeChange), canConfirmDrawingChoices else {
+            showsFreezeSceneConfirmation = false
+            isPreparingFrozenScene = false
             return
         }
 
         showsFreezeSceneConfirmation = false
+        isPreparingFrozenScene = false
         activeExperimentPanel = nil
         showsObjectModeBadge = false
-        hidesGuideForDrawing = false
+        hidesGuideForDrawing = true
         isSceneFrozen = true
         phase = .drawingPrompt
         triggerSuccessFeedback()
@@ -521,14 +585,22 @@ final class Level1ViewModel: ObservableObject {
             }
 
             self.userDrawingImage = image
+            self.hidesGuideForDrawing = false
+            self.showsPhotoComparisonPanel = false
             self.phase = .photoComparison
             self.triggerSuccessFeedback()
             self.syncEntities()
         }
     }
 
+    func showPhotoComparisonPanel() {
+        guard phase == .photoComparison else { return }
+        showsPhotoComparisonPanel = true
+    }
+
     func completeLevelAfterPhotoComparison() {
         guard phase == .photoComparison else { return }
+        showsPhotoComparisonPanel = false
         phase = .completed
         progressStore.markLevelCompleted(Level1Content.levelID)
         triggerSuccessFeedback()
@@ -538,6 +610,80 @@ final class Level1ViewModel: ObservableObject {
     func clearPhotoSaveMessage() {
         photoSaveMessage = nil
     }
+
+    #if DEBUG
+    func jumpToDevFlow(_ flow: Level1DevFlow) {
+        if !hasPlacedScene {
+            placeSceneIfNeeded()
+        }
+
+        selectedRadarTarget = nil
+        activeExperimentPanel = nil
+        showsObjectModeBadge = false
+        hasWaypointTarget = false
+        recentlyExplainedCheckpointIndex = nil
+        isSceneFrozen = false
+        showsFreezeSceneConfirmation = false
+        isPreparingFrozenScene = false
+        showsDrawingCamera = false
+        showsPhotoComparisonPanel = false
+        guideNeedsPlacement = true
+
+        switch flow {
+        case .onboarding:
+            phase = .onboarding
+            onboardingIndex = 0
+            visitedCheckpoints.removeAll()
+        case .lightShadowIntro:
+            phase = .lightShadowIntro
+            lightShadowIndex = 0
+            visitedCheckpoints = [0]
+        case .findingShapes:
+            phase = .findingShapes
+            visitedCheckpoints = [0]
+            currentCheckpointIndex = 1
+            hasWaypointTarget = true
+        case .textureTapPrompt:
+            phase = .textureTapPrompt
+            currentCheckpointIndex = 0
+            visitedCheckpoints = Set(checkpoints.indices)
+        case .textureExploration:
+            phase = .textureExploration
+            currentCheckpointIndex = 0
+            currentTextureIndex = 0
+            visitedCheckpoints = Set(checkpoints.indices)
+            hasSelectedTexture = false
+            hasOpenedTextureControls = false
+            showsObjectModeBadge = true
+        case .shapeChange:
+            phase = .shapeChange
+            currentCheckpointIndex = 0
+            currentTextureIndex = min(1, textureStops.count - 1)
+            selectedShapeIndex = 0
+            visitedCheckpoints = Set(checkpoints.indices)
+            hasSelectedTexture = true
+            hasSelectedShape = false
+            hasOpenedShapeControls = false
+            showsObjectModeBadge = true
+            applyCurrentTextureToPrimaryObject()
+        case .drawingPrompt:
+            phase = .drawingPrompt
+            visitedCheckpoints = Set(checkpoints.indices)
+            hasSelectedTexture = true
+            hasSelectedShape = true
+        case .photoPrompt:
+            phase = .photoPrompt
+            visitedCheckpoints = Set(checkpoints.indices)
+            hasSelectedTexture = true
+            hasSelectedShape = true
+        case .completed:
+            phase = .completed
+            visitedCheckpoints = Set(checkpoints.indices)
+        }
+
+        syncEntities()
+    }
+    #endif
 
     private func saveImageToPhotoLibrary(_ image: UIImage, completion: @escaping (Bool, String?) -> Void) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
@@ -790,9 +936,10 @@ final class Level1ViewModel: ObservableObject {
         let scanCameraXZ = latestCameraPositionXZ ?? .zero
         let scanForwardXZ = latestCameraForwardXZ ?? SIMD2<Float>(0, -1)
         let floorY = latestHorizontalPlaneAnchor?.transform.columns.3.y ?? -1.2
-        let firstCheckpointDistance: Float = 1.5
-        let pathCenterXZ = scanCameraXZ + scanForwardXZ * (pathRadius + firstCheckpointDistance)
+        let firstCheckpointXZ = firstCheckpointPlacementXZ(cameraXZ: scanCameraXZ, forwardXZ: scanForwardXZ)
         let firstCheckpointDirection = -scanForwardXZ
+        let explorationRadius = explorationPathRadius(for: count)
+        let pathCenterXZ = firstCheckpointXZ - firstCheckpointDirection * explorationRadius
 
         var matrix = matrix_identity_float4x4
         matrix.columns.3 = SIMD4<Float>(pathCenterXZ.x, floorY, pathCenterXZ.y, 1)
@@ -806,12 +953,12 @@ final class Level1ViewModel: ObservableObject {
             if count == 2 {
                 // Dua target dibuat sebagai jalur lurus di depan pemain agar
                 // waypoint mudah diikuti dan objek kedua tidak muncul terlalu jauh.
-                shapeXZ = scanCameraXZ + scanForwardXZ * (firstCheckpointDistance + Float(index) * 1.5)
+                shapeXZ = scanCameraXZ + scanForwardXZ * (firstCheckpointDistance + Float(index) * checkpointSpacing)
             } else {
                 let angleStep = (2 * Float.pi) / Float(count)
                 let baseAngle = atan2(firstCheckpointDirection.y, firstCheckpointDirection.x)
                 let angle = baseAngle + angleStep * Float(index)
-                shapeXZ = pathCenterXZ + SIMD2<Float>(cos(angle), sin(angle)) * pathRadius
+                shapeXZ = pathCenterXZ + SIMD2<Float>(cos(angle), sin(angle)) * explorationRadius
             }
             let worldPosition = SIMD3<Float>(shapeXZ.x, floorY + 0.005, shapeXZ.y)
             markerWorldPositions.append(worldPosition)
@@ -830,6 +977,20 @@ final class Level1ViewModel: ObservableObject {
             let lightEntity = makeLightEntity(from: lightPosition, aimingAt: lightTarget)
             checkpointLightEntities.append(lightEntity)
             anchorGroup.addChild(lightEntity)
+
+            let shadowEntity = makeShadowVisualEntity(
+                objectType: checkpoint.shape.objectType,
+                texture: checkpoint.shape.textures[0].material
+            )
+            updateShadowVisualEntity(
+                shadowEntity,
+                objectPosition: localPosition,
+                lightPosition: lightPosition,
+                objectType: checkpoint.shape.objectType,
+                texture: checkpoint.shape.textures[0].material
+            )
+            checkpointShadowEntities.append(shadowEntity)
+            anchorGroup.addChild(shadowEntity)
 
             // Checkpoint floor ring sengaja tidak dibuat: Level 1 sekarang
             // fokus pada cahaya, bayangan, dan objek uji yang sama.
@@ -860,7 +1021,7 @@ final class Level1ViewModel: ObservableObject {
         for (target, positions) in radarPositions {
             let radar = makeRadarEntity(target: target)
             radar.position = positions.marker
-            if target != .light {
+            if target == .object {
                 radar.addChild(makeDashedLeader(toward: positions.target - positions.marker))
             }
             radarEntities[target] = radar
@@ -873,6 +1034,23 @@ final class Level1ViewModel: ObservableObject {
         }
 
         syncEntities()
+    }
+
+    private func explorationPathRadius(for checkpointCount: Int) -> Float {
+        guard checkpointCount > 2 else { return checkpointSpacing }
+        let halfAngle = Float.pi / Float(checkpointCount)
+        return checkpointSpacing / (2 * sin(halfAngle))
+    }
+
+    private func firstCheckpointPlacementXZ(cameraXZ: SIMD2<Float>, forwardXZ: SIMD2<Float>) -> SIMD2<Float> {
+        guard let planeAnchor = latestHorizontalPlaneAnchor else {
+            return cameraXZ + forwardXZ * firstCheckpointDistance
+        }
+
+        let center = planeAnchor.center
+        let localCenter = SIMD4<Float>(center.x, 0, center.z, 1)
+        let worldCenter = planeAnchor.transform * localCenter
+        return SIMD2<Float>(worldCenter.x, worldCenter.z)
     }
 
     private func checkProximity(cameraPosition: SIMD3<Float>) {
@@ -945,6 +1123,10 @@ final class Level1ViewModel: ObservableObject {
             light.isEnabled = showLightAndShadow && (checkpointEntities[safe: index]?.isEnabled == true)
         }
 
+        for (index, shadow) in checkpointShadowEntities.enumerated() {
+            shadow.isEnabled = showLightAndShadow && (checkpointEntities[safe: index]?.isEnabled == true)
+        }
+
         for (index, highlight) in checkpointHighlightEntities.enumerated() {
             highlight.isEnabled = phase == .findingShapes && index == nextTargetCheckpointIndex
         }
@@ -1002,6 +1184,7 @@ final class Level1ViewModel: ObservableObject {
         var material = SceneObjectSystem.makeMaterial(for: currentTexture.material)
         material.faceCulling = .none
         entity.model?.materials = [material]
+        refreshPrimaryShadowVisual()
     }
 
     private func applyCurrentShapeToPrimaryObject() {
@@ -1011,7 +1194,9 @@ final class Level1ViewModel: ObservableObject {
         entity.collision = replacement.collision
         let finalScale = checkpointHeight / SceneObjectSystem.baseDimensions(for: selectedShape.objectType).y
         entity.components.set(DynamicLightShadowComponent(castsShadow: true))
+        entity.components.set(GroundingShadowComponent(castsShadow: true, receivesShadow: false))
         entity.scale = SIMD3<Float>(repeating: finalScale)
+        refreshPrimaryShadowVisual()
     }
 
     private func hideGuideAfterDrawingInstruction() {
@@ -1116,7 +1301,329 @@ final class Level1ViewModel: ObservableObject {
         var material = SceneObjectSystem.makeMaterial(for: checkpoint.shape.textures[0].material)
         material.faceCulling = .none
         entity.model?.materials = [material]
+        entity.components.set(DynamicLightShadowComponent(castsShadow: true))
+        entity.components.set(GroundingShadowComponent(castsShadow: true, receivesShadow: false))
         return entity
+    }
+
+    private func makeShadowVisualEntity(objectType: LearningObjectType, texture: MaterialTexture) -> ModelEntity {
+        let entity = ModelEntity(
+            mesh: .generatePlane(width: 0.1, height: 0.1),
+            materials: [shadowVisualMaterial(objectType: objectType, texture: texture)]
+        )
+        entity.name = "Level 1 floor shadow decal"
+        entity.components.set(CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(0.28, 0.006, 0.42))]))
+        entity.components.set(DynamicLightShadowComponent(castsShadow: false))
+        entity.components.set(GroundingShadowComponent(castsShadow: false, receivesShadow: false))
+        return entity
+    }
+
+    private func refreshPrimaryShadowVisual() {
+        guard let shadow = checkpointShadowEntities.first,
+              let objectPosition = checkpointLocalPositions.first,
+              let lightPosition = checkpointLightEntities.first?.position else { return }
+
+        updateShadowVisualEntity(
+            shadow,
+            objectPosition: objectPosition,
+            lightPosition: lightPosition,
+            objectType: selectedShape.objectType,
+            texture: currentTexture.material
+        )
+    }
+
+    private func updateShadowVisualEntity(
+        _ entity: ModelEntity,
+        objectPosition: SIMD3<Float>,
+        lightPosition: SIMD3<Float>,
+        objectType: LearningObjectType,
+        texture: MaterialTexture
+    ) {
+        let dimensions = scaledObjectDimensions(for: objectType)
+        let groundDirection = ShadowGeometryCalculator.groundShadowDirection(
+            lightPosition: lightPosition,
+            objectPosition: objectPosition
+        ) ?? SIMD3<Float>(0, 0, 1)
+        let lightDirection = simd_normalize(objectPosition - lightPosition)
+        let estimatedLength = ShadowGeometryCalculator.approximateShadowLength(
+            lightDirection: lightDirection,
+            objectHeight: dimensions.y
+        ) ?? 0.34
+
+        let footprintDepth = projectedShadowFootprintDepth(for: objectType, dimensions: dimensions)
+        let projectedLength = estimatedLength * predefinedShadowLengthMultiplier(for: objectType)
+        let shadowLength = clamped(
+            max(projectedLength, dimensions.y * 1.05) + footprintDepth * 1.25,
+            0.58,
+            1.55
+        )
+        let shadowWidth = clamped(
+            max(dimensions.x, dimensions.z) * shadowWidthMultiplier(for: objectType) + shadowLength * 0.16,
+            0.34,
+            0.86
+        )
+        let centerOffset = max(0.04, shadowLength * 0.5 - footprintDepth * 0.52)
+
+        entity.model = ModelComponent(
+            mesh: .generatePlane(width: shadowWidth, height: shadowLength),
+            materials: [shadowVisualMaterial(objectType: objectType, texture: texture)]
+        )
+        entity.scale = .one
+        entity.position = objectPosition + groundDirection * centerOffset + SIMD3<Float>(0, 0.018, 0)
+        let yaw = atan2(groundDirection.x, groundDirection.z)
+        entity.orientation = simd_quatf(angle: yaw, axis: SIMD3<Float>(0, 1, 0))
+            * simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
+        entity.components.set(CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(shadowWidth, 0.006, shadowLength))]))
+    }
+
+    private func predefinedShadowLengthMultiplier(for objectType: LearningObjectType) -> Float {
+        switch objectType {
+        case .sphere:
+            return 1.18
+        case .cylinder, .cone:
+            return 1.24
+        case .cube:
+            return 1.36
+        case .cuboid:
+            return 1.42
+        case .squarePyramid, .triangularPyramid:
+            return 1.22
+        default:
+            return 1.24
+        }
+    }
+
+    private func shadowWidthMultiplier(for objectType: LearningObjectType) -> Float {
+        switch objectType {
+        case .sphere:
+            return 1.45
+        case .cylinder, .cone:
+            return 1.35
+        case .cube:
+            return 1.55
+        case .cuboid:
+            return 1.34
+        default:
+            return 1.25
+        }
+    }
+
+    private func projectedShadowFootprintDepth(for objectType: LearningObjectType, dimensions: SIMD3<Float>) -> Float {
+        switch objectType {
+        case .cube:
+            return max(dimensions.x, dimensions.z) * 1.0
+        case .cuboid:
+            return max(dimensions.x, dimensions.z) * 1.08
+        case .sphere, .cylinder:
+            return max(dimensions.x, dimensions.z) * 0.92
+        case .cone, .squarePyramid, .triangularPyramid:
+            return max(dimensions.x, dimensions.z) * 0.82
+        case .hemisphere:
+            return max(dimensions.x, dimensions.z) * 0.78
+        }
+    }
+
+    private func shadowVisualMaterial(objectType: LearningObjectType, texture: MaterialTexture) -> UnlitMaterial {
+        var material = UnlitMaterial()
+        let alpha = shadowAlpha(for: objectType, texture: texture)
+        let key = "v3-\(objectType.rawValue)-\(texture.id)"
+        if let shadowTexture = Self.cachedShadowTextures[key] ?? Self.generateShadowTexture(objectType: objectType, texture: texture) {
+            Self.cachedShadowTextures[key] = shadowTexture
+            material.color = .init(tint: .white, texture: .init(shadowTexture))
+            material.blending = .transparent(opacity: .init(floatLiteral: 1.0))
+        } else {
+            material.color = .init(tint: UIColor.black.withAlphaComponent(alpha))
+            material.blending = .transparent(opacity: .init(floatLiteral: Float(alpha)))
+        }
+        material.faceCulling = .none
+        material.readsDepth = true
+        material.writesDepth = false
+        return material
+    }
+
+    private func shadowAlpha(for objectType: LearningObjectType, texture: MaterialTexture) -> CGFloat {
+        let baseAlpha: CGFloat
+        switch texture.shadowBehavior {
+        case .cutout:
+            baseAlpha = 0.34
+        case .opaque:
+            baseAlpha = texture.isMetallic ? 0.42 : 0.46
+        }
+
+        switch objectType {
+        case .sphere:
+            return baseAlpha - 0.04
+        case .cube, .cuboid:
+            return baseAlpha + 0.02
+        default:
+            return baseAlpha
+        }
+    }
+
+    private static func generateShadowTexture(
+        objectType: LearningObjectType,
+        texture: MaterialTexture,
+        size: CGFloat = 256
+    ) -> TextureResource? {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        let image = renderer.image { context in
+            let cgContext = context.cgContext
+            cgContext.clear(CGRect(x: 0, y: 0, width: size, height: size))
+
+            drawSoftShadowSilhouette(
+                in: cgContext,
+                objectType: objectType,
+                texture: texture,
+                size: size
+            )
+
+            if texture.shadowBehavior == .cutout {
+                drawProjectedCutoutOpenings(
+                    in: cgContext,
+                    objectType: objectType,
+                    size: size
+                )
+            }
+        }
+
+        guard let cgImage = image.cgImage else { return nil }
+        return try? TextureResource(image: cgImage, withName: nil, options: .init(semantic: .color))
+    }
+
+    private static func drawSoftShadowSilhouette(
+        in cgContext: CGContext,
+        objectType: LearningObjectType,
+        texture: MaterialTexture,
+        size: CGFloat
+    ) {
+        let baseRect = CGRect(
+            x: size * 0.12,
+            y: size * 0.16,
+            width: size * 0.76,
+            height: size * 0.68
+        )
+        let centerAlpha = shadowCenterAlpha(for: texture)
+        let edgeAlpha = CGFloat(0.045)
+
+        for layer in 0..<9 {
+            let progress = CGFloat(layer) / 8
+            let inset = size * 0.045 * progress
+            let alpha = edgeAlpha + pow(progress, 1.55) * (centerAlpha - edgeAlpha)
+            let rect = baseRect.insetBy(dx: inset, dy: inset * 0.82)
+            cgContext.setFillColor(UIColor.black.withAlphaComponent(alpha).cgColor)
+            cgContext.addPath(shadowSilhouettePath(for: objectType, in: rect))
+            cgContext.fillPath()
+        }
+    }
+
+    private static func drawProjectedCutoutOpenings(
+        in cgContext: CGContext,
+        objectType: LearningObjectType,
+        size: CGFloat
+    ) {
+        let baseRect = CGRect(
+            x: size * 0.12,
+            y: size * 0.16,
+            width: size * 0.76,
+            height: size * 0.68
+        )
+        let silhouette = shadowSilhouettePath(for: objectType, in: baseRect)
+
+        cgContext.saveGState()
+        cgContext.addPath(silhouette)
+        cgContext.clip()
+
+        // Cutout shadow is not fully transparent in AR because floor texture,
+        // ambient light, and penumbra still soften the projected openings.
+        cgContext.setBlendMode(.destinationOut)
+        for row in 0..<4 {
+            let progress = CGFloat(row) / 3
+            let y = baseRect.minY + baseRect.height * (0.26 + progress * 0.48)
+            let rowWidth = baseRect.width * (0.58 + progress * 0.16)
+            let startX = baseRect.midX - rowWidth / 2
+            let columnCount = row % 2 == 0 ? 4 : 3
+
+            for column in 0..<columnCount {
+                let fraction = CGFloat(column) / CGFloat(max(columnCount - 1, 1))
+                let drift = (progress - 0.5) * baseRect.width * 0.10
+                let x = startX + rowWidth * fraction + drift
+                let openingWidth = size * (0.068 + progress * 0.018)
+                let openingHeight = size * (0.090 + progress * 0.030)
+                let rect = CGRect(
+                    x: x - openingWidth / 2,
+                    y: y - openingHeight / 2,
+                    width: openingWidth,
+                    height: openingHeight
+                )
+
+                for layer in stride(from: 3, through: 0, by: -1) {
+                    let layerProgress = CGFloat(layer) / 3
+                    let inset = size * 0.010 * layerProgress
+                    let alpha = 0.10 + (1 - layerProgress) * 0.42
+                    cgContext.setFillColor(UIColor.black.withAlphaComponent(alpha).cgColor)
+                    cgContext.fillEllipse(in: rect.insetBy(dx: -inset, dy: -inset * 0.72))
+                }
+            }
+        }
+
+        cgContext.setBlendMode(.normal)
+        cgContext.restoreGState()
+    }
+
+    private static func shadowSilhouettePath(for objectType: LearningObjectType, in rect: CGRect) -> CGPath {
+        switch objectType {
+        case .cube:
+            return UIBezierPath(roundedRect: rect.insetBy(dx: rect.width * 0.02, dy: rect.height * 0.04), cornerRadius: 4).cgPath
+        case .cuboid:
+            return UIBezierPath(roundedRect: rect.insetBy(dx: rect.width * 0.07, dy: rect.height * 0.02), cornerRadius: 4).cgPath
+        case .sphere, .cylinder:
+            return UIBezierPath(ovalIn: rect).cgPath
+        case .cone:
+            let path = UIBezierPath()
+            path.move(to: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.08))
+            path.addQuadCurve(
+                to: CGPoint(x: rect.maxX - rect.width * 0.10, y: rect.maxY - rect.height * 0.10),
+                controlPoint: CGPoint(x: rect.maxX + rect.width * 0.04, y: rect.midY)
+            )
+            path.addQuadCurve(
+                to: CGPoint(x: rect.minX + rect.width * 0.10, y: rect.maxY - rect.height * 0.10),
+                controlPoint: CGPoint(x: rect.midX, y: rect.maxY + rect.height * 0.08)
+            )
+            path.addQuadCurve(
+                to: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.08),
+                controlPoint: CGPoint(x: rect.minX - rect.width * 0.04, y: rect.midY)
+            )
+            path.close()
+            return path.cgPath
+        case .squarePyramid, .triangularPyramid:
+            let path = UIBezierPath()
+            path.move(to: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.04))
+            path.addLine(to: CGPoint(x: rect.maxX - rect.width * 0.08, y: rect.midY + rect.height * 0.10))
+            path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY - rect.height * 0.04))
+            path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.08, y: rect.midY + rect.height * 0.10))
+            path.close()
+            return path.cgPath
+        default:
+            return UIBezierPath(ovalIn: rect).cgPath
+        }
+    }
+
+    private static func shadowCenterAlpha(for texture: MaterialTexture) -> CGFloat {
+        switch texture.shadowBehavior {
+        case .cutout:
+            return 0.42
+        case .opaque:
+            return texture.isMetallic ? 0.44 : 0.48
+        }
+    }
+
+    private static func shadowMidAlpha(for texture: MaterialTexture) -> CGFloat {
+        switch texture.shadowBehavior {
+        case .cutout:
+            return 0.26
+        case .opaque:
+            return texture.isMetallic ? 0.28 : 0.30
+        }
     }
 
     // MARK: - Lumi AR Guide
@@ -1190,7 +1697,16 @@ final class Level1ViewModel: ObservableObject {
     }
 
     private var shouldShowGuide: Bool {
-        phase != .scanningSurface && phase != .drawingActive && phase != .completed
+        false
+    }
+
+    var showsGuideOverlay: Bool {
+        guard !hidesGuideForDrawing else { return false }
+        return phase != .scanningSurface && phase != .drawingActive && phase != .completed
+    }
+
+    var guideOverlayAssetName: String {
+        currentGuideAsset.rawValue
     }
 
     private var activeGuideRadarTarget: Level1RadarTarget? {
@@ -1228,7 +1744,7 @@ final class Level1ViewModel: ObservableObject {
         case .drawingPrompt:
             return .lumiIdle
         case .drawingReady, .photoPrompt:
-            return .lumiQuestion
+            return .lumiPointWink
         case .drawingActive, .scanningSurface, .photoComparison, .completed:
             return .lumiIdle
         }
@@ -1315,7 +1831,15 @@ final class Level1ViewModel: ObservableObject {
             lightDirection: lightDirection,
             objectHeight: objectHeight
         ) ?? 0.38
-        let length = clamped(estimatedLength * 0.55, 0.18, 0.58)
+        let dimensions = scaledObjectDimensions(for: objectType)
+        let footprintDepth = projectedShadowFootprintDepth(for: objectType, dimensions: dimensions)
+        let projectedLength = estimatedLength * predefinedShadowLengthMultiplier(for: objectType)
+        let shadowLength = clamped(
+            max(projectedLength, dimensions.y * 1.05) + footprintDepth * 1.25,
+            0.58,
+            1.55
+        )
+        let length = max(0.04, shadowLength * 0.5 - footprintDepth * 0.52)
         return objectPosition + groundDirection * length + SIMD3<Float>(0, 0.025, 0)
     }
 
@@ -1430,10 +1954,10 @@ final class Level1ViewModel: ObservableObject {
         let light = Entity()
         var component = SpotLightComponent()
         component.color = .yellow
-        component.intensity = 3_800
-        component.attenuationRadius = 3.8
+        component.intensity = 4_200
+        component.attenuationRadius = 5.5
         component.innerAngleInDegrees = 16
-        component.outerAngleInDegrees = 38
+        component.outerAngleInDegrees = 46
         light.components.set(component)
         var shadow = SpotLightComponent.Shadow()
         shadow.zNear = .fixed(0.01)
