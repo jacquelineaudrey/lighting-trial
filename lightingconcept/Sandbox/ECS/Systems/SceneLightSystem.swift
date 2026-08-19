@@ -184,7 +184,7 @@ final class SceneLightSystem: System {
             var shadow = SpotLightComponent.Shadow()
             shadow.zNear = .fixed(0.01)
             shadow.zFar = .fixed(8)
-            shadow.depthBias = 0.08
+            shadow.depthBias = 0.004
             light.components.set(shadow)
 
             var fill = PointLightComponent()

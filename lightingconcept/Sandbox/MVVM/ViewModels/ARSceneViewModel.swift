@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import SwiftUI
+import RealityKit
 
 final class ARSceneViewModel: ObservableObject {
     @Published var objects: [ObjectConfiguration]
@@ -30,6 +31,12 @@ final class ARSceneViewModel: ObservableObject {
 
     @Published var selectedConcept: ShadowConcept?
     @Published var selectedConceptTapLocation: CGPoint = .zero
+    /// Posisi WORLD dari marker (white mark) yang sedang dipilih. Dipakai
+    /// Level 3 supaya Bayo bisa terbang mendekat ke titik yang dipencet, mirip
+    /// cara Lumi menghampiri marker di Level 1. `nil` saat tidak ada yang dipilih.
+    @Published var selectedConceptWorldPosition: SIMD3<Float>?
+    @Published var hiddenShadowConcepts: Set<ShadowConcept> = []
+    @Published var isShadowConceptSelectionEnabled = true
     @Published var shadowInfo = ShadowInfo()
     @Published var collisionWarning: String?
     @Published var isImportingModel = false
@@ -44,6 +51,7 @@ final class ARSceneViewModel: ObservableObject {
     @Published var isViewFrozen = false
     @Published var pendingCaptureSnapshot = false
     @Published var isSavingSnapshot = false
+    @Published var capturedSnapshotImage: UIImage?
     @Published var snapshotFeedback: SnapshotFeedback?
     /// Kalau `true`, `ARSceneCoordinator` menaruh scene (object + light) secara
     /// OTOMATIS begitu permukaan datar ketemu — anak tidak perlu tap layar.
@@ -77,7 +85,8 @@ final class ARSceneViewModel: ObservableObject {
     /// memakai scan sebagai feedback UX saja supaya anak tidak terkunci menunggu
     /// mesh reconstruction yang lambat di iPhone.
     @Published var requiresLiDARScanBeforePlacement = true
-
+    @Published var additionalEntities: [Entity] = []
+    
     init() {
         let initialObject = ObjectConfiguration.defaultObject()
         let initialLight = LightConfiguration.defaultLight()
@@ -87,6 +96,10 @@ final class ARSceneViewModel: ObservableObject {
         selectedLightID = initialLight.id
     }
 
+    func addEntityToScene(_ entity: Entity) {
+        additionalEntities.append(entity)
+    }
+    
     var surfaceGuidanceText: String {
         switch surfaceState {
         case .scanning:
@@ -314,6 +327,7 @@ final class ARSceneViewModel: ObservableObject {
     func captureSnapshot() {
         guard isViewFrozen, !isSavingSnapshot else { return }
         isSavingSnapshot = true
+        capturedSnapshotImage = nil
         pendingCaptureSnapshot.toggle()
     }
 

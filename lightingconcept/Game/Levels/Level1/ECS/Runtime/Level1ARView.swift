@@ -17,6 +17,11 @@ struct Level1ARView: UIViewRepresentable {
     
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
+        arView.automaticallyConfigureSession = false
+        arView.environment.lighting.intensityExponent = 0
+        arView.renderOptions.insert(.disableMotionBlur)
+        arView.renderOptions.insert(.disableDepthOfField)
+        arView.renderOptions.insert(.disablePersonOcclusion)
         
         // 1. Register Native ECS Systems
         PulseAnimationSystem.registerSystem()
@@ -30,6 +35,14 @@ struct Level1ARView: UIViewRepresentable {
         // 3. Configure ARKit to open the Camera and detect planes
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal]
+        config.environmentTexturing = .automatic
+        config.isLightEstimationEnabled = true
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+            config.frameSemantics.insert(.smoothedSceneDepth)
+        }
+        arView.environment.sceneUnderstanding.options.insert(.occlusion)
+        arView.environment.sceneUnderstanding.options.insert(.collision)
+        arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
         
         let supportsLiDAR = ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh)
         if supportsLiDAR {
@@ -70,6 +83,11 @@ struct Level1ARView: UIViewRepresentable {
     func updateUIView(_ uiView: ARView, context: Context) {
         viewModel.syncEntities()
 
+        if viewModel.isSceneFrozen && !context.coordinator.hasFrozenScene {
+            context.coordinator.hasFrozenScene = true
+            uiView.session.pause()
+        }
+
         if context.coordinator.lastCaptureFlag != viewModel.pendingDrawingPhotoCapture {
             context.coordinator.lastCaptureFlag = viewModel.pendingDrawingPhotoCapture
             context.coordinator.captureAndSaveSnapshot()
@@ -91,6 +109,7 @@ struct Level1ARView: UIViewRepresentable {
         let viewModel: Level1ViewModel
         var subscription: AnyCancellable?
         var lastCaptureFlag = false
+        var hasFrozenScene = false
         weak var arView: ARView?
         
         weak var coachingOverlay: ARCoachingOverlayView? {
@@ -109,7 +128,7 @@ struct Level1ARView: UIViewRepresentable {
 
         func captureAndSaveSnapshot() {
             guard let arView else {
-                viewModel.completeDrawingPhotoSave(success: false, message: "Kamera AR belum siap.")
+                viewModel.completeFrozenSceneSnapshot(success: false, image: nil, message: "Kamera AR belum siap.")
                 return
             }
 
@@ -117,7 +136,7 @@ struct Level1ARView: UIViewRepresentable {
                 Task { @MainActor in
                     guard let self else { return }
                     guard let image else {
-                        self.viewModel.completeDrawingPhotoSave(success: false, message: "Foto AR gagal dibuat.")
+                        self.viewModel.completeFrozenSceneSnapshot(success: false, image: nil, message: "Foto AR gagal dibuat.")
                         return
                     }
                     self.saveImageToPhotoLibrary(image)
@@ -134,16 +153,18 @@ struct Level1ARView: UIViewRepresentable {
                         PHAssetChangeRequest.creationRequestForAsset(from: image)
                     } completionHandler: { success, error in
                         Task { @MainActor in
-                            self.viewModel.completeDrawingPhotoSave(
+                            self.viewModel.completeFrozenSceneSnapshot(
                                 success: success,
-                                message: success ? "Keren! Gambarmu sudah tersimpan." : "Foto belum tersimpan. \(error?.localizedDescription ?? "")"
+                                image: success ? image : nil,
+                                message: success ? nil : "Foto belum tersimpan. \(error?.localizedDescription ?? "")"
                             )
                         }
                     }
                 default:
                     Task { @MainActor in
-                        self.viewModel.completeDrawingPhotoSave(
+                        self.viewModel.completeFrozenSceneSnapshot(
                             success: false,
+                            image: nil,
                             message: "Izinkan akses Photos untuk menyimpan foto."
                         )
                     }

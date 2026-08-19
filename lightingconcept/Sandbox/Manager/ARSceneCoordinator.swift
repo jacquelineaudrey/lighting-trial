@@ -56,6 +56,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var lastAppliedObjectYawDegrees: Float?
     private weak var selectedConceptEntity: Entity?
     private var hasLoggedLiDARMeshOcclusion = false
+    nonisolated(unsafe) private var lastDispatchedCameraTelemetryTimestamp: TimeInterval = 0
 
     init(
         viewModel: ARSceneViewModel,
@@ -316,22 +317,36 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
-    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+    @objc func handleTap(_ gesture: UITapGestureRecognizer) {
         guard let arView else { return }
         let location = gesture.location(in: arView)
 
         // Label edukasi adalah entity 3D. Saat diketuk, SwiftUI menampilkan alert penjelasan.
         if let entity = annotationEntity(at: location, in: arView) {
             let conceptName = entity.name.replacingOccurrences(of: "Label: ", with: "")
-            selectedConceptEntity = entity
-            viewModel.selectedConceptTapLocation = location
-            viewModel.selectedConcept = ShadowConcept.allCases.first { $0.rawValue == conceptName }
-            return
+            if let concept = ShadowConcept.allCases.first(where: { $0.rawValue == conceptName }),
+               viewModel.isShadowConceptSelectionEnabled,
+               !viewModel.hiddenShadowConcepts.contains(concept) {
+                selectedConceptEntity = entity
+                viewModel.selectedConceptTapLocation = location
+                if viewModel.selectedConcept == concept {
+                    viewModel.selectedConcept = nil
+                    selectedConceptEntity = nil
+                } else {
+                    viewModel.selectedConcept = concept
+                }
+                syncConceptSelection()
+                if viewModel.selectedConcept == concept {
+                    telemetryDelegate?.shadowConceptDidSelect(concept)
+                }
+                return
+            }
         }
 
         if let entity = arView.entity(at: location),
            selectLight(containing: entity) {
             viewModel.interactionMode = .moveLight
+            telemetryDelegate?.lightDidSelect()
             synchronizeScene()
             return
         }
@@ -344,7 +359,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             return
         }
 
-        guard let result = raycastPlane(from: location) else { return }
+        guard let result = raycastPlane(from: location) else {
+            telemetryDelegate?.sceneDidReceiveWorldTap()
+            syncConceptSelection()
+            return
+        }
 
         if sceneAnchor == nil {
             // Di device LiDAR, placement ditahan sampai coverage scan cukup agar posisi awal
@@ -357,6 +376,23 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         } else if viewModel.interactionMode == .moveObject,
                   !viewModel.directManipulationRotatesOnly {
             moveObject(to: result)
+        } else {
+            telemetryDelegate?.sceneDidReceiveWorldTap()
+            syncConceptSelection()
+        }
+    }
+
+    /// Selaraskan tampilan marker dengan pilihan saat ini: white mark terpilih
+    /// jadi merah (seperti Level 1), sisanya putih, dan posisi world-nya
+    /// dipublikasikan agar Bayo bisa terbang mendekat. Dipanggil setiap kali
+    /// pilihan bisa berubah (tap marker atau tap dunia untuk menutup).
+    private func syncConceptSelection() {
+        annotationManager.setSelected(viewModel.selectedConcept)
+        if viewModel.selectedConcept != nil, let entity = selectedConceptEntity {
+            viewModel.selectedConceptWorldPosition = entity.position(relativeTo: nil)
+        } else {
+            selectedConceptEntity = nil
+            viewModel.selectedConceptWorldPosition = nil
         }
     }
 
@@ -641,13 +677,19 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         case .none:
             break
         case .level2LightControl:
-            guard let light = SceneLightSystem.entityWithLightID(viewModel.selectedLightID, in: anchor) else { return }
-            let configuration = viewModel.selectedLight
-            light.components.set(Level2LightControlComponent(
-                intensity: configuration.intensity,
-                outerAngleInDegrees: configuration.effectiveOuterAngleDegrees,
-                isEnabled: configuration.type == .spot
-            ))
+            if let light = SceneLightSystem.entityWithLightID(viewModel.selectedLightID, in: anchor) {
+                let configuration = viewModel.selectedLight
+                light.components.set(Level2LightControlComponent(
+                    intensity: configuration.intensity,
+                    outerAngleInDegrees: configuration.effectiveOuterAngleDegrees,
+                    isEnabled: configuration.type == .spot
+                ))
+            }
+            if let object = SceneObjectSystem.entityWithObjectID(viewModel.selectedObjectID, in: anchor) {
+                object.components.set(Level3ShadowPresentationComponent(
+                    castsShadow: viewModel.showGroundProjection
+                ))
+            }
         case .level3ShadowPresentation:
             guard let object = SceneObjectSystem.entityWithObjectID(viewModel.selectedObjectID, in: anchor) else { return }
             object.components.set(Level3ShadowPresentationComponent(
@@ -828,7 +870,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             // ini yang membuat titik "castShadow" akhirnya sinkron dengan
             // bayangan asli yang dirender, termasuk saat anchor scene
             // punya rotasi (kasus Level 4).
-            worldLightDirection: lightDirection
+            worldLightDirection: lightDirection,
+            hiddenConcepts: viewModel.hiddenShadowConcepts
         )
     }
 
@@ -961,6 +1004,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
                     self.viewModel.debugLog("AR snapshot capture returned no image")
                     return
                 }
+                self.viewModel.capturedSnapshotImage = image
                 self.saveImageToPhotoLibrary(image)
             }
         }
@@ -1031,7 +1075,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             showLightRays: viewModel.showLightRays,
             showProjectionLines: viewModel.showProjectionLines,
             showGroundProjection: viewModel.showGroundProjection,
-            showShadowLabels: viewModel.showShadowLabels
+            showShadowLabels: viewModel.showShadowLabels,
+            hiddenShadowConcepts: viewModel.hiddenShadowConcepts
         )
     }
 
@@ -1105,21 +1150,58 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     }
 
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        guard frame.timestamp - lastDispatchedCameraTelemetryTimestamp >= (1.0 / 30.0) else { return }
+        lastDispatchedCameraTelemetryTimestamp = frame.timestamp
+
         let cameraTransform = frame.camera.transform
         let cameraPosition = SIMD3<Float>(
             cameraTransform.columns.3.x,
             cameraTransform.columns.3.y,
             cameraTransform.columns.3.z
         )
+        let cameraForward = -SIMD3<Float>(
+            cameraTransform.columns.2.x,
+            cameraTransform.columns.2.y,
+            cameraTransform.columns.2.z
+        )
+        let cameraRight = SIMD3<Float>(
+            cameraTransform.columns.0.x,
+            cameraTransform.columns.0.y,
+            cameraTransform.columns.0.z
+        )
+        let cameraUp = SIMD3<Float>(
+            cameraTransform.columns.1.x,
+            cameraTransform.columns.1.y,
+            cameraTransform.columns.1.z
+        )
 
         Task { @MainActor in
-            self.telemetryDelegate?.cameraDidUpdate(position: cameraPosition)
+            guard !self.viewModel.isViewFrozen else { return }
+
+            self.telemetryDelegate?.cameraDidUpdate(
+                position: cameraPosition,
+                forward: cameraForward,
+                right: cameraRight,
+                up: cameraUp
+            )
+
+            // White mark terpilih diwarnai merah. Recolor hanya saat pilihan
+            // berubah supaya tidak mengalokasi material tiap frame. Ini menutup
+            // semua cara deselect (tap ulang, tap dunia, atau menutup overlay).
+            if self.annotationManager.selectedConcept != self.viewModel.selectedConcept {
+                self.annotationManager.setSelected(self.viewModel.selectedConcept)
+            }
 
             guard self.viewModel.selectedConcept != nil,
                   let arView = self.arView,
-                  let entity = self.selectedConceptEntity else { return }
+                  let entity = self.selectedConceptEntity else {
+                self.viewModel.selectedConceptWorldPosition = nil
+                return
+            }
 
             let worldPosition = entity.position(relativeTo: nil)
+            // Bayo (Level 3) memakai posisi world ini untuk terbang mendekat.
+            self.viewModel.selectedConceptWorldPosition = worldPosition
             if let screenPoint = arView.project(worldPosition) {
                 self.viewModel.selectedConceptTapLocation = screenPoint
             }

@@ -1,9 +1,9 @@
 import SwiftUI
-import Combine
+import UIKit
 
 struct Level3FlowView: View {
     @State private var viewModel = Level3ViewModel()
-    @State private var narrator = AppleSpeechNarrator()
+    @State private var narrator = LessonAudioNarrator()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
@@ -12,12 +12,8 @@ struct Level3FlowView: View {
         ZStack(alignment: .bottom) {
             Level3ARContainerView(sceneViewModel: viewModel.arSceneViewModel, telemetryDelegate: viewModel)
                 .ignoresSafeArea()
-
+            
             overlay
-        }
-        // ⭐️ FIX: Memanggil wrapper view yang mengobservasi ARSceneViewModel secara langsung
-        .overlay {
-            Level3ConceptOverlayContainer(sceneViewModel: viewModel.arSceneViewModel)
         }
         .overlay(alignment: .topLeading) {
             if viewModel.phase != .completed {
@@ -35,160 +31,600 @@ struct Level3FlowView: View {
                     .allowsHitTesting(false)
             }
         }
-        #if DEBUG
         .overlay(alignment: .topTrailing) {
-            if viewModel.phase != .completed {
-                Button("DEV: Lanjut") {
-                    viewModel.debugAdvanceCurrentPhase()
+            if viewModel.phase == .review {
+                ZStack(alignment: .topTrailing) {
+                    Level3InfoMenu(
+                        isOpen: viewModel.isShadowInfoOpen,
+                        onInfoTap: viewModel.handleInfoButtonTap,
+                        onTypesTap: viewModel.handleShadowTypesMenuTap
+                    )
+
+                    if viewModel.shouldShowInfoGesture {
+                        Level3InfoGestureImage()
+                            .frame(width: 82, height: 82)
+                            .offset(infoGestureOffset)
+                            .allowsHitTesting(false)
+                    }
                 }
-                .font(.caption.bold())
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .padding(.trailing, 16)
+                .padding(.trailing, 18)
                 .padding(.top, 12)
             }
         }
-        #endif
+        .overlay {
+            if viewModel.showsFreezeSceneConfirmation {
+                Level3GreenConfirmationOverlay(
+                    title: "Scene akan di-freeze",
+                    message: "Pastikan objek dan bayangannya sudah terlihat jelas sebelum mulai menggambar.",
+                    confirmTitle: "Iya, lanjut",
+                    cancelTitle: "Sebentar",
+                    onConfirm: viewModel.confirmFreezeSceneAndStartDrawing,
+                    onCancel: viewModel.cancelFreezeSceneConfirmation
+                )
+            }
+        }
+        .overlay(alignment: .top) {
+            if let message = viewModel.photoSaveMessage {
+                Level3GreenNotice(message: message, onDismiss: viewModel.clearPhotoSaveMessage)
+                    .padding(.top, 54)
+                    .padding(.horizontal, 20)
+            }
+        }
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
             dismiss()
+        }
+        .fullScreenCover(isPresented: $viewModel.showsDrawingCamera) {
+            Level3DrawingCameraView(
+                onImagePicked: viewModel.completeUserDrawingPhoto,
+                onCancel: viewModel.cancelDrawingCamera
+            )
+            .ignoresSafeArea()
         }
         .animation(reduceMotion ? nil : .easeInOut, value: viewModel.phase)
         .animation(.easeInOut(duration: 0.2), value: viewModel.arSceneViewModel.selectedConcept)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
-        .task(id: viewModel.narrationText) { narrator.speak(viewModel.narrationText) }
-        .onDisappear { narrator.stop() }
+        .task(id: viewModel.narrationID) {
+            viewModel.narrationWillStart()
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+            narrator.speak(
+                viewModel.narrationText,
+                audioFileName: viewModel.narrationAudioFileName,
+                onCompletion: viewModel.narrationDidFinish
+            )
+        }
+        .onAppear(perform: BackgroundMusicPlayer.shared.useGameplayVolume)
+        .onDisappear {
+            narrator.stop()
+            BackgroundMusicPlayer.shared.useMenuVolume()
+        }
         .onChange(of: viewModel.arSceneViewModel.surfaceState) { _, _ in
             viewModel.surfaceDidBecomeReady()
+        }
+        .onChange(of: viewModel.arSceneViewModel.selectedConcept) { _, _ in
+            viewModel.forceSyncGuideForConcept()
+        }
+        .onChange(of: viewModel.markerNarrationTrigger) { _, _ in
+            guard viewModel.arSceneViewModel.selectedConcept != nil else { return }
+            viewModel.narrationWillStart()
+            narrator.speak(
+                viewModel.narrationText,
+                audioFileName: viewModel.narrationAudioFileName,
+                onCompletion: viewModel.narrationDidFinish
+            )
+        }
+        .onChange(of: viewModel.arSceneViewModel.capturedSnapshotImage) { _, image in
+            viewModel.completeFrozenSceneSnapshot(image)
         }
         .navigationBarBackButtonHidden(true)
     }
 
-    private func replayNarration() {
-        narrator.speak(viewModel.narrationText)
+    private var infoGestureOffset: CGSize {
+        viewModel.isShadowInfoOpen
+            ? CGSize(width: -92, height: 50)
+            : CGSize(width: -20, height: 0)
     }
 
-    @ViewBuilder private var overlay: some View {
+    @ViewBuilder
+    private var overlay: some View {
         switch viewModel.phase {
         case .onboarding:
-            Level3Dialog(line: viewModel.currentOnboardingLine, buttonTitle: viewModel.onboardingIndex == Level3Content.onboardingDialog.count - 1 ? "Mulai" : "Lanjut", replayNarration: replayNarration, action: viewModel.advanceOnboarding)
+            if !viewModel.arSceneViewModel.isObjectPlaced {
+                Level3DialogTapCatcher(action: viewModel.advanceOnboarding)
+            } else {
+                EmptyView()
+            }
+
         case .placingScene:
-            Level3Placement(sceneViewModel: viewModel.arSceneViewModel, replayNarration: replayNarration, action: viewModel.arSceneViewModel.placeSceneAtScreenCenter)
+            Level2PlacementOverlay(
+                sceneViewModel: viewModel.arSceneViewModel,
+                replayNarration: replayNarration
+            )
+
         case .surfaceReady:
             SurfaceReadyOverlay(
                 onContinue: viewModel.continueAfterSurfaceCheck,
                 onRescan: viewModel.rescanSurface
             )
+
         case .shadowExploration:
-            Level3TaskCard(title: "Cari bayangan", progress: viewModel.shadowProgress, total: 3, button: viewModel.hasCompletedShadowTask ? "Lihat Penjelasan" : nil, replayNarration: replayNarration, action: viewModel.continueFromShadowTask)
+            EmptyView()
+
         case .shadowTrivia:
-            Level3Dialog(line: viewModel.currentShadowTriviaLine, buttonTitle: viewModel.shadowTriviaIndex == Level3Content.shadowTrivia.count - 1 ? "Lihat Jenis Bayangan" : "Lanjut", replayNarration: replayNarration, action: viewModel.advanceShadowTrivia)
+            Level3DialogTapCatcher(action: viewModel.advanceShadowTrivia)
+
+        case .closing:
+            Level3DialogTapCatcher(action: viewModel.advanceClosing)
+
         case .shadowTypesInteraction:
-            VStack(spacing: 12) {
-                Level3Dialog(line: viewModel.currentShadowTypesLine, buttonTitle: viewModel.shadowTypesIndex == Level3Content.shadowTypesTrivia.count - 1 ? "Bandingkan Bentuk" : "Lanjut", replayNarration: replayNarration, action: viewModel.advanceShadowTypes)
-                Button(viewModel.shadowVisible ? "Sembunyikan Bayangan" : "Tampilkan Bayangan", action: viewModel.toggleShadow).buttonStyle(.borderedProminent)
-            }
+            Level3ShadowToggleButton(
+                title: viewModel.shadowVisible ? "Sembunyikan Bayangan" : "Tampilkan Bayangan",
+                action: viewModel.toggleShadow
+            )
+
         case .shapeComparison:
             Level3ShapeComparison(viewModel: viewModel, replayNarration: replayNarration)
-        case .closing:
-            Level3Dialog(line: viewModel.currentClosingLine, buttonTitle: viewModel.closingIndex == Level3Content.closingDialog.count - 1 ? "Lihat Rangkuman" : "Lanjut", replayNarration: replayNarration, action: viewModel.advanceClosing)
+
         case .review:
-            Level3Review(points: Level3Content.reviewPoints, replayNarration: replayNarration, action: viewModel.finishReview)
-        case .completed:
-            Level3TaskCard(title: "Level 3 selesai!", progress: 1, total: 1, button: "Selesai", replayNarration: replayNarration, action: dismiss.callAsFunction)
-        }
-    }
-}
-
-// ⭐️ FIX: Wrapper View untuk memaksa SwiftUI merender ulang saat marker di-tap
-private struct Level3ConceptOverlayContainer: View {
-    @ObservedObject var sceneViewModel: ARSceneViewModel
-    
-    var body: some View {
-        if let concept = sceneViewModel.selectedConcept {
-            ShadowConceptOverlayView(
-                concept: concept,
-                tapLocation: sceneViewModel.selectedConceptTapLocation
-            ) {
-                sceneViewModel.selectedConcept = nil
+            if viewModel.reviewIndex == Level3Content.reviewDialog.count - 1 {
+                Level3NextButton(title: "Selanjutnya", action: viewModel.advanceReview)
+            } else {
+                EmptyView()
             }
-            .transition(.opacity)
+
+        case .drawingPrompt:
+            Level3DialogTapCatcher(action: viewModel.requestFreezeSceneForDrawing)
+
+        case .drawingReady:
+            Level3FrozenDrawingOverlay(
+                text: viewModel.currentDrawingLine.text,
+                actionTitle: "Sudah Menggambar",
+                isActionDisabled: !viewModel.canAdvanceCurrentDialog,
+                action: viewModel.finishDrawing
+            )
+
+        case .photoPrompt:
+            Level3FrozenDrawingOverlay(
+                text: viewModel.currentDrawingLine.text,
+                actionTitle: viewModel.isSavingDrawingPhoto ? "Menyimpan..." : "Foto Gambarku",
+                isActionDisabled: viewModel.isSavingDrawingPhoto || !viewModel.canAdvanceCurrentDialog,
+                action: viewModel.captureDrawingPhoto
+            )
+
+        case .photoComparison:
+            Level3PhotoComparisonOverlay(
+                frozenSceneImage: viewModel.frozenSceneImage,
+                userDrawingImage: viewModel.userDrawingImage,
+                isActionDisabled: !viewModel.canAdvanceCurrentDialog,
+                action: viewModel.completeLevelAfterPhotoComparison
+            )
+
+        case .completed:
+            EndLevelView(
+                data: EndLevelViewModel.data(for: Level3Content.levelID),
+                onBack: dismiss.callAsFunction
+            )
+            .padding(.bottom, 24)
+
         }
+    }
+
+    private func replayNarration() {
+        viewModel.narrationWillStart()
+        narrator.speak(
+            viewModel.narrationText,
+            audioFileName: viewModel.narrationAudioFileName,
+            onCompletion: viewModel.narrationDidFinish
+        )
     }
 }
 
-private struct Level3Dialog: View {
-    let line: DialogLine
-    let buttonTitle: String
-    let replayNarration: () -> Void
+private struct Level3DialogTapCatcher: View {
     let action: () -> Void
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("🦉")
-                .font(.largeTitle.scaled(by: 1.6))
-                .accessibilityHidden(true)
+        Color.clear
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+    }
+}
 
-            Text(line.characterName)
-                .font(.headline)
-                .foregroundStyle(.blue)
+private struct Level3InfoMenu: View {
+    let isOpen: Bool
+    let onInfoTap: () -> Void
+    let onTypesTap: () -> Void
 
-            Text(line.text)
-                .font(.title3)
-                .bold()
-                .multilineTextAlignment(.center)
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            Button(action: onInfoTap) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(.black.opacity(0.72))
+                    .frame(width: 34, height: 34)
+                    .background(.thinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
 
-            Level2ReplayNarrationButton(action: replayNarration)
+            if isOpen {
+                VStack(alignment: .leading, spacing: 0) {
+                    Button(action: onTypesTap) {
+                        Text("Jenis Bayangan")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.black.opacity(0.82))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
 
-            Button(buttonTitle, action: action)
-                .font(.title3)
-                .bold()
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .frame(maxWidth: .infinity)
+                    Divider()
+                        .padding(.horizontal, 14)
+
+                    Text("Garis Bayangan")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.black.opacity(0.32))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 11)
+                }
+                .fixedSize(horizontal: true, vertical: false)
+                .background(.thinMaterial, in: .rect(cornerRadius: 14))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(.white.opacity(0.35), lineWidth: 1)
+                )
+            }
         }
-        .padding(24)
+    }
+}
+
+private struct Level3InfoGestureImage: View {
+    var body: some View {
+        if let image = Self.image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+        } else {
+            Image(systemName: "hand.point.up.left.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+        }
+    }
+
+    private static var image: UIImage? {
+        ["gestureLevel3v1", "Gestures/gestureLevel3v1"]
+            .lazy
+            .compactMap { UIImage(named: $0) }
+            .first
+    }
+}
+
+private struct Level3GreenConfirmationOverlay: View {
+    let title: String
+    let message: String
+    let confirmTitle: String
+    let cancelTitle: String
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.35)
+                .ignoresSafeArea()
+
+            VStack(spacing: 14) {
+                Text(title)
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Color(hex: "313131"))
+
+                Text(message)
+                    .font(.system(size: 14, weight: .medium))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Color(hex: "313131"))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    Button(cancelTitle, action: onCancel)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(Color(hex: "313131"))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(Color.white.opacity(0.9), in: Capsule())
+
+                    Button(confirmTitle, action: onConfirm)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(Color(hex: "9FA60C"), in: Capsule())
+                }
+            }
+            .padding(22)
+            .frame(maxWidth: 360)
+            .background(Color(hex: "EFEBCF"), in: RoundedRectangle(cornerRadius: 35))
+            .overlay(
+                RoundedRectangle(cornerRadius: 35)
+                    .stroke(Color(hex: "D6CF91"), lineWidth: 2)
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+}
+
+private struct Level3GreenNotice: View {
+    let message: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Color(hex: "1F8A55"))
+
+            Text(message)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color(hex: "1F5136"))
+                .lineLimit(2)
+
+            Button("OK", action: onDismiss)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Color(hex: "35A66B"), in: Capsule())
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(hex: "DDF8E9"), in: Capsule())
+        .overlay(Capsule().stroke(Color(hex: "35A66B"), lineWidth: 1.5))
+    }
+}
+
+private struct Level3FrozenDrawingOverlay: View {
+    let text: String
+    let actionTitle: String
+    let isActionDisabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            HStack(alignment: .bottom, spacing: 8) {
+                bayoImage
+                    .frame(width: 120, height: 148)
+                    .padding(.leading, 24)
+
+                Text(text)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.black)
+                    .multilineTextAlignment(.leading)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .frame(minWidth: 230, maxWidth: 360, alignment: .leading)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        TrianglePointer()
+                            .fill(.ultraThinMaterial)
+                            .frame(width: 18, height: 16)
+                            .rotationEffect(.degrees(180))
+                            .offset(x: -14),
+                        alignment: .leading
+                    )
+                    .padding(.bottom, 42)
+
+                Spacer()
+            }
+
+            HStack {
+                Spacer()
+                Button(actionTitle, action: action)
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .background(isActionDisabled ? Color.gray : Color.blue, in: Capsule())
+                    .disabled(isActionDisabled)
+                    .padding(.trailing, 24)
+                    .padding(.bottom, 34)
+            }
+        }
+        .padding(.bottom, 12)
+    }
+
+    @ViewBuilder
+    private var bayoImage: some View {
+        if let image = UIImage(named: "bayoPointWink") ?? UIImage(named: "bayoPoint") ?? UIImage(named: "bayoIdle") {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+        } else {
+            Image(systemName: "person.crop.circle.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(Color(hex: "A86CE8"))
+        }
+    }
+}
+
+private struct Level3PhotoComparisonOverlay: View {
+    let frozenSceneImage: UIImage?
+    let userDrawingImage: UIImage?
+    let isActionDisabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.35)
+                .ignoresSafeArea()
+
+            VStack(spacing: 18) {
+                HStack(spacing: 18) {
+                    comparisonImage(title: "Scene Freeze", image: frozenSceneImage)
+                    comparisonImage(title: "Gambar Kamu", image: userDrawingImage)
+                }
+
+                Button("Selesai", action: action)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
+                    .background(isActionDisabled ? Color.gray : Color(hex: "35A66B"), in: Capsule())
+                    .disabled(isActionDisabled)
+            }
+            .padding(22)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .frame(maxWidth: 1080)
+            .padding(.horizontal, 28)
+        }
+    }
+
+    private func comparisonImage(title: String, image: UIImage?) -> some View {
+        VStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(.white)
+
+            Group {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                } else {
+                    Color.white.opacity(0.18)
+                }
+            }
+            .frame(width: 440, height: 360)
+            .background(Color.black.opacity(0.18))
+            .clipped()
+        }
+    }
+}
+
+private struct TrianglePointer: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct Level3DrawingCameraView: UIViewControllerRepresentable {
+    let onImagePicked: (UIImage) -> Void
+    let onCancel: () -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImagePicked: onImagePicked, onCancel: onCancel)
+    }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let onImagePicked: (UIImage) -> Void
+        let onCancel: () -> Void
+
+        init(onImagePicked: @escaping (UIImage) -> Void, onCancel: @escaping () -> Void) {
+            self.onImagePicked = onImagePicked
+            self.onCancel = onCancel
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            guard let image = info[.originalImage] as? UIImage else {
+                onCancel()
+                return
+            }
+            onImagePicked(image)
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onCancel()
+        }
+    }
+}
+
+private struct Level3NextButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack {
+            Spacer()
+            Button(title, action: action)
+                .font(.caption.bold())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Color.blue, in: Capsule())
+                .buttonStyle(.plain)
+        }
+        .padding(.trailing, 24)
+        .padding(.bottom, 34)
+    }
+}
+
+private struct Level3ShadowToggleButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Button(title, action: action)
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.orange, in: Capsule())
+                    .padding(.leading, 24)
+
+                Spacer()
+            }
+            .padding(.bottom, 36)
+        }
+    }
+}
+
+private struct Level3ShapeComparison: View {
+    let viewModel: Level3ViewModel
+    let replayNarration: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("Bentuk berbeda, bayangan berbeda")
+                .font(.title3)
+                .bold()
+            HStack {
+                ForEach(Level3ViewModel.ComparisonShape.allCases) { shape in
+                    Button(shape.rawValue) {
+                        viewModel.chooseComparison(shape)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            Text(viewModel.hasComparedShapes
+                 ? "Ketuk layar untuk melanjutkan."
+                 : "Pilih kedua bentuk, lalu bandingkan bayangannya.")
+            .font(.subheadline)
+            
+            Level2ReplayNarrationButton(action: replayNarration)
+        }
+        .padding(22)
         .background(.thinMaterial, in: .rect(cornerRadius: 28))
         .padding(.horizontal, 20)
         .padding(.bottom, 36)
     }
-}
-
-private struct Level3Placement: View {
-    @ObservedObject var sceneViewModel: ARSceneViewModel; let replayNarration: () -> Void; let action: () -> Void
-    var body: some View {
-        VStack(spacing: 12) {
-            SurfaceScanInstruction(sceneViewModel: sceneViewModel)
-            Text(sceneViewModel.surfaceGuidanceText).multilineTextAlignment(.center)
-
-            Level2ReplayNarrationButton(action: replayNarration)
-
-            Button("Taruh Benda di Tengah", action: action)
-                .buttonStyle(.borderedProminent)
-        }
-        .padding(20)
-        .frame(maxWidth: 620)
-        .background(.thinMaterial, in: .rect(cornerRadius: 24))
-        .padding(16)
-    }
-}
-
-private struct Level3TaskCard: View {
-    let title: String; let progress: Int; let total: Int; let button: String?; let replayNarration: () -> Void; let action: () -> Void
-    var body: some View { VStack(spacing: 12) { Text(title).font(.title3).bold(); ProgressView(value: Double(progress), total: Double(total)); Level2ReplayNarrationButton(action: replayNarration); if let button { Button(button, action: action).buttonStyle(.borderedProminent) } }.padding(22)
-        .background(.thinMaterial, in: .rect(cornerRadius: 28))
-        .padding(.horizontal, 20)
-        .padding(.bottom, 36) }
-}
-
-private struct Level3ShapeComparison: View {
-    let viewModel: Level3ViewModel; let replayNarration: () -> Void
-    var body: some View { VStack(spacing: 12) { Text("Bentuk berbeda, bayangan berbeda").font(.title3).bold(); HStack { ForEach(Level3ViewModel.ComparisonShape.allCases) { shape in Button(shape.rawValue) { viewModel.chooseComparison(shape) }.buttonStyle(.borderedProminent) } }; Text("Pilih kedua bentuk, lalu bandingkan bayangannya.").font(.subheadline); Level2ReplayNarrationButton(action: replayNarration); Button("Lanjut", action: viewModel.finishShapeComparison).buttonStyle(.borderedProminent).disabled(!viewModel.hasComparedShapes) }.padding(22)
-        .background(.thinMaterial, in: .rect(cornerRadius: 28))
-        .padding(.horizontal, 20)
-        .padding(.bottom, 36) }
-}
-
-private struct Level3Review: View {
-    let points: [String]; let replayNarration: () -> Void; let action: () -> Void
-    var body: some View { VStack(alignment: .leading, spacing: 12) { Text("Learning Review").font(.title2).bold(); ForEach(points, id: \.self) { Text("• \($0)") }; Level2ReplayNarrationButton(action: replayNarration); Button("Selesai", action: action).buttonStyle(.borderedProminent) }.padding(20).frame(maxWidth: 620).background(.thinMaterial, in: .rect(cornerRadius: 24)).padding(16) }
 }
