@@ -22,7 +22,7 @@ struct lightingconceptApp: App {
     var body: some SwiftUI.Scene {
         WindowGroup {
             MainMenuView()
-                .onAppear(perform: BackgroundMusicPlayer.shared.play)
+                .onAppear(perform: BackgroundMusicPlayer.shared.playMenuMusic)
                 .onChange(of: scenePhase) { _, newPhase in
                     handleScenePhase(newPhase)
                 }

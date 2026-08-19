@@ -1,10 +1,15 @@
 import AVFoundation
 import Foundation
 
-/// Memutar satu BGM yang terus digunakan selama aplikasi berjalan.
+/// Memutar BGM menu atau gameplay sesuai layar yang sedang aktif.
 @MainActor
 final class BackgroundMusicPlayer {
     static let shared = BackgroundMusicPlayer()
+
+    private enum Track: String {
+        case menu = "bg-music-main menu"
+        case gameplay = "bg-music"
+    }
 
     private static let defaultMenuVolume = 1.0
     private static let defaultGameplayVolume = 0.4
@@ -14,8 +19,9 @@ final class BackgroundMusicPlayer {
 
     private let defaults: UserDefaults
     private var player: AVAudioPlayer?
+    private var currentTrack = Track.menu
+    private var loadedTrack: Track?
     private var targetVolume: Float
-    private var isUsingGameplayVolume = false
 
     private(set) var menuVolume: Double
     private(set) var gameplayVolume: Double
@@ -38,9 +44,7 @@ final class BackgroundMusicPlayer {
     func play() {
         configureAudioSession()
 
-        if player == nil {
-            preparePlayer()
-        }
+        preparePlayerIfNeeded(for: currentTrack)
 
         guard let player, !player.isPlaying else { return }
         player.volume = targetVolume
@@ -51,21 +55,19 @@ final class BackgroundMusicPlayer {
         player?.pause()
     }
 
-    func useMenuVolume() {
-        isUsingGameplayVolume = false
-        setPlayerVolume(menuVolume)
+    func playMenuMusic() {
+        play(track: .menu, volume: menuVolume)
     }
 
-    func useGameplayVolume() {
-        isUsingGameplayVolume = true
-        setPlayerVolume(gameplayVolume)
+    func playGameplayMusic() {
+        play(track: .gameplay, volume: gameplayVolume)
     }
 
     func updateMenuVolume(_ volume: Double) {
         menuVolume = Self.clamped(volume)
         defaults.set(menuVolume, forKey: Self.menuVolumeDefaultsKey)
 
-        if !isUsingGameplayVolume {
+        if currentTrack == .menu {
             setPlayerVolume(menuVolume)
         }
     }
@@ -74,16 +76,43 @@ final class BackgroundMusicPlayer {
         gameplayVolume = Self.clamped(volume)
         defaults.set(gameplayVolume, forKey: Self.gameplayVolumeDefaultsKey)
 
-        if isUsingGameplayVolume {
+        if currentTrack == .gameplay {
             setPlayerVolume(gameplayVolume)
         }
     }
 
-    private func preparePlayer() {
+    private func play(track: Track, volume: Double) {
+        let didChangeTrack = currentTrack != track
+        currentTrack = track
+        targetVolume = Float(Self.clamped(volume))
+        configureAudioSession()
+
+        if didChangeTrack {
+            player?.stop()
+            player = nil
+            loadedTrack = nil
+        }
+
+        preparePlayerIfNeeded(for: track)
+
+        guard let player else { return }
+        player.volume = targetVolume
+
+        if !player.isPlaying {
+            player.play()
+        }
+    }
+
+    private func preparePlayerIfNeeded(for track: Track) {
+        guard player == nil || loadedTrack != track else { return }
+
         guard let musicURL = Bundle.main.url(
-            forResource: "bg-music",
+            forResource: track.rawValue,
             withExtension: "mp3"
-        ) else { return }
+        ) else {
+            assertionFailure("BGM resource not found: \(track.rawValue).mp3")
+            return
+        }
 
         do {
             let musicPlayer = try AVAudioPlayer(contentsOf: musicURL)
@@ -91,7 +120,9 @@ final class BackgroundMusicPlayer {
             musicPlayer.volume = targetVolume
             musicPlayer.prepareToPlay()
             player = musicPlayer
+            loadedTrack = track
         } catch {
+            assertionFailure("Failed to prepare BGM \(track.rawValue): \(error)")
         }
     }
 

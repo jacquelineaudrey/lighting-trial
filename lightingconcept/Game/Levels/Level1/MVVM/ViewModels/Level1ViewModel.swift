@@ -130,7 +130,7 @@ final class Level1ViewModel: ObservableObject {
     private var checkpointLocalPositions: [SIMD3<Float>] = []
     private var markerWorldPositions: [SIMD3<Float>] = []
     private var checkpointHighlightEntities: [Entity] = []
-    private var checkpointShadowEntities: [ModelEntity] = []
+    private var checkpointShadowEntities: [Entity] = []
     private var directionIndicatorRoot: ModelEntity?
     private var directionIndicatorLabel: ModelEntity?
     private var lastIndicatorDistanceText: String?
@@ -151,7 +151,6 @@ final class Level1ViewModel: ObservableObject {
     private let markerRadius: Float = 0.5
 
     private static var cachedRadarRingTexture: TextureResource?
-    private static var cachedShadowTextures: [String: TextureResource] = [:]
 
     private let lightShadowInstructions: [Level1Instruction] = [
         Level1Instruction(
@@ -978,22 +977,22 @@ final class Level1ViewModel: ObservableObject {
             checkpointLightEntities.append(lightEntity)
             anchorGroup.addChild(lightEntity)
 
-            let shadowEntity = makeShadowVisualEntity(
-                objectType: checkpoint.shape.objectType,
-                texture: checkpoint.shape.textures[0].material
+            let shadowEntity = Level1ShadowRenderer.makeEntity(
+                name: "Level 1 projected shadow — \(checkpoint.shape.id)"
             )
-            updateShadowVisualEntity(
+            Level1ShadowRenderer.update(
                 shadowEntity,
-                objectPosition: localPosition,
-                lightPosition: lightPosition,
                 objectType: checkpoint.shape.objectType,
+                objectPosition: localPosition,
+                objectDimensions: scaledObjectDimensions(for: checkpoint.shape.objectType),
+                lightPosition: lightPosition,
                 texture: checkpoint.shape.textures[0].material
             )
             checkpointShadowEntities.append(shadowEntity)
             anchorGroup.addChild(shadowEntity)
 
             // Checkpoint floor ring sengaja tidak dibuat: Level 1 sekarang
-            // fokus pada cahaya, bayangan, dan objek uji yang sama.
+            // fokus pada cahaya, bayangan berbasis geometri, dan objek uji yang sama.
         }
 
         let primaryObjectPosition = checkpointLocalPositions.first ?? .zero
@@ -1021,7 +1020,7 @@ final class Level1ViewModel: ObservableObject {
         for (target, positions) in radarPositions {
             let radar = makeRadarEntity(target: target)
             radar.position = positions.marker
-            if target == .object {
+            if target != .light {
                 radar.addChild(makeDashedLeader(toward: positions.target - positions.marker))
             }
             radarEntities[target] = radar
@@ -1194,9 +1193,23 @@ final class Level1ViewModel: ObservableObject {
         entity.collision = replacement.collision
         let finalScale = checkpointHeight / SceneObjectSystem.baseDimensions(for: selectedShape.objectType).y
         entity.components.set(DynamicLightShadowComponent(castsShadow: true))
-        entity.components.set(GroundingShadowComponent(castsShadow: true, receivesShadow: false))
         entity.scale = SIMD3<Float>(repeating: finalScale)
         refreshPrimaryShadowVisual()
+    }
+
+    private func refreshPrimaryShadowVisual() {
+        guard let shadow = checkpointShadowEntities.first,
+              let objectPosition = checkpointLocalPositions.first,
+              let lightPosition = checkpointLightEntities.first?.position else { return }
+
+        Level1ShadowRenderer.update(
+            shadow,
+            objectType: selectedShape.objectType,
+            objectPosition: objectPosition,
+            objectDimensions: scaledObjectDimensions(for: selectedShape.objectType),
+            lightPosition: lightPosition,
+            texture: currentTexture.material
+        )
     }
 
     private func hideGuideAfterDrawingInstruction() {
@@ -1302,328 +1315,7 @@ final class Level1ViewModel: ObservableObject {
         material.faceCulling = .none
         entity.model?.materials = [material]
         entity.components.set(DynamicLightShadowComponent(castsShadow: true))
-        entity.components.set(GroundingShadowComponent(castsShadow: true, receivesShadow: false))
         return entity
-    }
-
-    private func makeShadowVisualEntity(objectType: LearningObjectType, texture: MaterialTexture) -> ModelEntity {
-        let entity = ModelEntity(
-            mesh: .generatePlane(width: 0.1, height: 0.1),
-            materials: [shadowVisualMaterial(objectType: objectType, texture: texture)]
-        )
-        entity.name = "Level 1 floor shadow decal"
-        entity.components.set(CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(0.28, 0.006, 0.42))]))
-        entity.components.set(DynamicLightShadowComponent(castsShadow: false))
-        entity.components.set(GroundingShadowComponent(castsShadow: false, receivesShadow: false))
-        return entity
-    }
-
-    private func refreshPrimaryShadowVisual() {
-        guard let shadow = checkpointShadowEntities.first,
-              let objectPosition = checkpointLocalPositions.first,
-              let lightPosition = checkpointLightEntities.first?.position else { return }
-
-        updateShadowVisualEntity(
-            shadow,
-            objectPosition: objectPosition,
-            lightPosition: lightPosition,
-            objectType: selectedShape.objectType,
-            texture: currentTexture.material
-        )
-    }
-
-    private func updateShadowVisualEntity(
-        _ entity: ModelEntity,
-        objectPosition: SIMD3<Float>,
-        lightPosition: SIMD3<Float>,
-        objectType: LearningObjectType,
-        texture: MaterialTexture
-    ) {
-        let dimensions = scaledObjectDimensions(for: objectType)
-        let groundDirection = ShadowGeometryCalculator.groundShadowDirection(
-            lightPosition: lightPosition,
-            objectPosition: objectPosition
-        ) ?? SIMD3<Float>(0, 0, 1)
-        let lightDirection = simd_normalize(objectPosition - lightPosition)
-        let estimatedLength = ShadowGeometryCalculator.approximateShadowLength(
-            lightDirection: lightDirection,
-            objectHeight: dimensions.y
-        ) ?? 0.34
-
-        let footprintDepth = projectedShadowFootprintDepth(for: objectType, dimensions: dimensions)
-        let projectedLength = estimatedLength * predefinedShadowLengthMultiplier(for: objectType)
-        let shadowLength = clamped(
-            max(projectedLength, dimensions.y * 1.05) + footprintDepth * 1.25,
-            0.58,
-            1.55
-        )
-        let shadowWidth = clamped(
-            max(dimensions.x, dimensions.z) * shadowWidthMultiplier(for: objectType) + shadowLength * 0.16,
-            0.34,
-            0.86
-        )
-        let centerOffset = max(0.04, shadowLength * 0.5 - footprintDepth * 0.52)
-
-        entity.model = ModelComponent(
-            mesh: .generatePlane(width: shadowWidth, height: shadowLength),
-            materials: [shadowVisualMaterial(objectType: objectType, texture: texture)]
-        )
-        entity.scale = .one
-        entity.position = objectPosition + groundDirection * centerOffset + SIMD3<Float>(0, 0.018, 0)
-        let yaw = atan2(groundDirection.x, groundDirection.z)
-        entity.orientation = simd_quatf(angle: yaw, axis: SIMD3<Float>(0, 1, 0))
-            * simd_quatf(angle: -.pi / 2, axis: SIMD3<Float>(1, 0, 0))
-        entity.components.set(CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(shadowWidth, 0.006, shadowLength))]))
-    }
-
-    private func predefinedShadowLengthMultiplier(for objectType: LearningObjectType) -> Float {
-        switch objectType {
-        case .sphere:
-            return 1.18
-        case .cylinder, .cone:
-            return 1.24
-        case .cube:
-            return 1.36
-        case .cuboid:
-            return 1.42
-        case .squarePyramid, .triangularPyramid:
-            return 1.22
-        default:
-            return 1.24
-        }
-    }
-
-    private func shadowWidthMultiplier(for objectType: LearningObjectType) -> Float {
-        switch objectType {
-        case .sphere:
-            return 1.45
-        case .cylinder, .cone:
-            return 1.35
-        case .cube:
-            return 1.55
-        case .cuboid:
-            return 1.34
-        default:
-            return 1.25
-        }
-    }
-
-    private func projectedShadowFootprintDepth(for objectType: LearningObjectType, dimensions: SIMD3<Float>) -> Float {
-        switch objectType {
-        case .cube:
-            return max(dimensions.x, dimensions.z) * 1.0
-        case .cuboid:
-            return max(dimensions.x, dimensions.z) * 1.08
-        case .sphere, .cylinder:
-            return max(dimensions.x, dimensions.z) * 0.92
-        case .cone, .squarePyramid, .triangularPyramid:
-            return max(dimensions.x, dimensions.z) * 0.82
-        case .hemisphere:
-            return max(dimensions.x, dimensions.z) * 0.78
-        }
-    }
-
-    private func shadowVisualMaterial(objectType: LearningObjectType, texture: MaterialTexture) -> UnlitMaterial {
-        var material = UnlitMaterial()
-        let alpha = shadowAlpha(for: objectType, texture: texture)
-        let key = "v3-\(objectType.rawValue)-\(texture.id)"
-        if let shadowTexture = Self.cachedShadowTextures[key] ?? Self.generateShadowTexture(objectType: objectType, texture: texture) {
-            Self.cachedShadowTextures[key] = shadowTexture
-            material.color = .init(tint: .white, texture: .init(shadowTexture))
-            material.blending = .transparent(opacity: .init(floatLiteral: 1.0))
-        } else {
-            material.color = .init(tint: UIColor.black.withAlphaComponent(alpha))
-            material.blending = .transparent(opacity: .init(floatLiteral: Float(alpha)))
-        }
-        material.faceCulling = .none
-        material.readsDepth = true
-        material.writesDepth = false
-        return material
-    }
-
-    private func shadowAlpha(for objectType: LearningObjectType, texture: MaterialTexture) -> CGFloat {
-        let baseAlpha: CGFloat
-        switch texture.shadowBehavior {
-        case .cutout:
-            baseAlpha = 0.34
-        case .opaque:
-            baseAlpha = texture.isMetallic ? 0.42 : 0.46
-        }
-
-        switch objectType {
-        case .sphere:
-            return baseAlpha - 0.04
-        case .cube, .cuboid:
-            return baseAlpha + 0.02
-        default:
-            return baseAlpha
-        }
-    }
-
-    private static func generateShadowTexture(
-        objectType: LearningObjectType,
-        texture: MaterialTexture,
-        size: CGFloat = 256
-    ) -> TextureResource? {
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
-        let image = renderer.image { context in
-            let cgContext = context.cgContext
-            cgContext.clear(CGRect(x: 0, y: 0, width: size, height: size))
-
-            drawSoftShadowSilhouette(
-                in: cgContext,
-                objectType: objectType,
-                texture: texture,
-                size: size
-            )
-
-            if texture.shadowBehavior == .cutout {
-                drawProjectedCutoutOpenings(
-                    in: cgContext,
-                    objectType: objectType,
-                    size: size
-                )
-            }
-        }
-
-        guard let cgImage = image.cgImage else { return nil }
-        return try? TextureResource(image: cgImage, withName: nil, options: .init(semantic: .color))
-    }
-
-    private static func drawSoftShadowSilhouette(
-        in cgContext: CGContext,
-        objectType: LearningObjectType,
-        texture: MaterialTexture,
-        size: CGFloat
-    ) {
-        let baseRect = CGRect(
-            x: size * 0.12,
-            y: size * 0.16,
-            width: size * 0.76,
-            height: size * 0.68
-        )
-        let centerAlpha = shadowCenterAlpha(for: texture)
-        let edgeAlpha = CGFloat(0.045)
-
-        for layer in 0..<9 {
-            let progress = CGFloat(layer) / 8
-            let inset = size * 0.045 * progress
-            let alpha = edgeAlpha + pow(progress, 1.55) * (centerAlpha - edgeAlpha)
-            let rect = baseRect.insetBy(dx: inset, dy: inset * 0.82)
-            cgContext.setFillColor(UIColor.black.withAlphaComponent(alpha).cgColor)
-            cgContext.addPath(shadowSilhouettePath(for: objectType, in: rect))
-            cgContext.fillPath()
-        }
-    }
-
-    private static func drawProjectedCutoutOpenings(
-        in cgContext: CGContext,
-        objectType: LearningObjectType,
-        size: CGFloat
-    ) {
-        let baseRect = CGRect(
-            x: size * 0.12,
-            y: size * 0.16,
-            width: size * 0.76,
-            height: size * 0.68
-        )
-        let silhouette = shadowSilhouettePath(for: objectType, in: baseRect)
-
-        cgContext.saveGState()
-        cgContext.addPath(silhouette)
-        cgContext.clip()
-
-        // Cutout shadow is not fully transparent in AR because floor texture,
-        // ambient light, and penumbra still soften the projected openings.
-        cgContext.setBlendMode(.destinationOut)
-        for row in 0..<4 {
-            let progress = CGFloat(row) / 3
-            let y = baseRect.minY + baseRect.height * (0.26 + progress * 0.48)
-            let rowWidth = baseRect.width * (0.58 + progress * 0.16)
-            let startX = baseRect.midX - rowWidth / 2
-            let columnCount = row % 2 == 0 ? 4 : 3
-
-            for column in 0..<columnCount {
-                let fraction = CGFloat(column) / CGFloat(max(columnCount - 1, 1))
-                let drift = (progress - 0.5) * baseRect.width * 0.10
-                let x = startX + rowWidth * fraction + drift
-                let openingWidth = size * (0.068 + progress * 0.018)
-                let openingHeight = size * (0.090 + progress * 0.030)
-                let rect = CGRect(
-                    x: x - openingWidth / 2,
-                    y: y - openingHeight / 2,
-                    width: openingWidth,
-                    height: openingHeight
-                )
-
-                for layer in stride(from: 3, through: 0, by: -1) {
-                    let layerProgress = CGFloat(layer) / 3
-                    let inset = size * 0.010 * layerProgress
-                    let alpha = 0.10 + (1 - layerProgress) * 0.42
-                    cgContext.setFillColor(UIColor.black.withAlphaComponent(alpha).cgColor)
-                    cgContext.fillEllipse(in: rect.insetBy(dx: -inset, dy: -inset * 0.72))
-                }
-            }
-        }
-
-        cgContext.setBlendMode(.normal)
-        cgContext.restoreGState()
-    }
-
-    private static func shadowSilhouettePath(for objectType: LearningObjectType, in rect: CGRect) -> CGPath {
-        switch objectType {
-        case .cube:
-            return UIBezierPath(roundedRect: rect.insetBy(dx: rect.width * 0.02, dy: rect.height * 0.04), cornerRadius: 4).cgPath
-        case .cuboid:
-            return UIBezierPath(roundedRect: rect.insetBy(dx: rect.width * 0.07, dy: rect.height * 0.02), cornerRadius: 4).cgPath
-        case .sphere, .cylinder:
-            return UIBezierPath(ovalIn: rect).cgPath
-        case .cone:
-            let path = UIBezierPath()
-            path.move(to: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.08))
-            path.addQuadCurve(
-                to: CGPoint(x: rect.maxX - rect.width * 0.10, y: rect.maxY - rect.height * 0.10),
-                controlPoint: CGPoint(x: rect.maxX + rect.width * 0.04, y: rect.midY)
-            )
-            path.addQuadCurve(
-                to: CGPoint(x: rect.minX + rect.width * 0.10, y: rect.maxY - rect.height * 0.10),
-                controlPoint: CGPoint(x: rect.midX, y: rect.maxY + rect.height * 0.08)
-            )
-            path.addQuadCurve(
-                to: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.08),
-                controlPoint: CGPoint(x: rect.minX - rect.width * 0.04, y: rect.midY)
-            )
-            path.close()
-            return path.cgPath
-        case .squarePyramid, .triangularPyramid:
-            let path = UIBezierPath()
-            path.move(to: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.04))
-            path.addLine(to: CGPoint(x: rect.maxX - rect.width * 0.08, y: rect.midY + rect.height * 0.10))
-            path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY - rect.height * 0.04))
-            path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.08, y: rect.midY + rect.height * 0.10))
-            path.close()
-            return path.cgPath
-        default:
-            return UIBezierPath(ovalIn: rect).cgPath
-        }
-    }
-
-    private static func shadowCenterAlpha(for texture: MaterialTexture) -> CGFloat {
-        switch texture.shadowBehavior {
-        case .cutout:
-            return 0.42
-        case .opaque:
-            return texture.isMetallic ? 0.44 : 0.48
-        }
-    }
-
-    private static func shadowMidAlpha(for texture: MaterialTexture) -> CGFloat {
-        switch texture.shadowBehavior {
-        case .cutout:
-            return 0.26
-        case .opaque:
-            return texture.isMetallic ? 0.28 : 0.30
-        }
     }
 
     // MARK: - Lumi AR Guide
@@ -1831,15 +1523,9 @@ final class Level1ViewModel: ObservableObject {
             lightDirection: lightDirection,
             objectHeight: objectHeight
         ) ?? 0.38
-        let dimensions = scaledObjectDimensions(for: objectType)
-        let footprintDepth = projectedShadowFootprintDepth(for: objectType, dimensions: dimensions)
-        let projectedLength = estimatedLength * predefinedShadowLengthMultiplier(for: objectType)
-        let shadowLength = clamped(
-            max(projectedLength, dimensions.y * 1.05) + footprintDepth * 1.25,
-            0.58,
-            1.55
-        )
-        let length = max(0.04, shadowLength * 0.5 - footprintDepth * 0.52)
+        // Posisi ini hanya untuk white marker edukasi. Siluet bayangan dibuat
+        // terpisah oleh Level1ShadowRenderer dari proyeksi geometri objek.
+        let length = clamped(estimatedLength * 0.55, 0.18, 0.58)
         return objectPosition + groundDirection * length + SIMD3<Float>(0, 0.025, 0)
     }
 

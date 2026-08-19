@@ -134,10 +134,10 @@ struct Level1FlowView: View {
             }
             narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
         }
-        .onAppear(perform: BackgroundMusicPlayer.shared.useGameplayVolume)
+        .onAppear(perform: BackgroundMusicPlayer.shared.playGameplayMusic)
         .onDisappear {
             narrator.stop()
-            BackgroundMusicPlayer.shared.useMenuVolume()
+            BackgroundMusicPlayer.shared.playMenuMusic()
         }
         .navigationBarBackButtonHidden(true)
     }
