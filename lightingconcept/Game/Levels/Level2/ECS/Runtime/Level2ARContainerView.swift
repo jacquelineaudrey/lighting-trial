@@ -107,6 +107,9 @@ struct Level2ARContainerView: UIViewRepresentable {
                 cameraTransform.columns.2.z
             )
             viewModel.updateGuide(cameraPosition: cameraPosition, forward: forward)
+
+            let guidePosition = viewModel.guideOverlayWorldPosition.flatMap(arView.project)
+            viewModel.updateGuideOverlayScreenPosition(guidePosition)
         }
     }
 }

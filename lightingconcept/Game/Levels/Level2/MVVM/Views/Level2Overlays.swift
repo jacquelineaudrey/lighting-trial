@@ -117,7 +117,7 @@ struct Level2MascotDialogOverlay: View {
     var body: some View {
         ZStack {
             if advancesOnTap {
-                LevelTapToAdvanceOverlay(action: action)
+                LevelTapToAdvanceOverlay(showsCaption: false, action: action)
             }
 
             if showsButton {

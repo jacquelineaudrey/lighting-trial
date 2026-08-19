@@ -9,6 +9,7 @@ protocol ARSceneTelemetryDelegate: AnyObject {
     func cameraDidUpdate(position: SIMD3<Float>)
     func lightDidSelect()
     func shadowConceptDidSelect(_ concept: ShadowConcept)
+    func markerSurfaceToneDidChange(_ tone: EducationalMarkerStyle.SurfaceTone)
 }
 
 extension ARSceneTelemetryDelegate {
@@ -27,4 +28,5 @@ extension ARSceneTelemetryDelegate {
 
     func sceneDidReceiveWorldTap() {}
     func shadowConceptDidSelect(_ concept: ShadowConcept) {}
+    func markerSurfaceToneDidChange(_ tone: EducationalMarkerStyle.SurfaceTone) {}
 }

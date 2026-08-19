@@ -26,24 +26,17 @@ final class WaypointSystem: System {
         
         let cameraTransform = camera.transformMatrix(relativeTo: nil)
         let cameraPosition = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-        let forward3D = -SIMD3<Float>(cameraTransform.columns.2.x, cameraTransform.columns.2.y, cameraTransform.columns.2.z)
-        let horizontalForward3D = SIMD3<Float>(forward3D.x, 0, forward3D.z)
-        let forwardLength = simd_length(horizontalForward3D)
-
-        guard forwardLength > 0.0001 else { return }
-        let normalizedForward = horizontalForward3D / forwardLength
         let time = Float(CACurrentMediaTime())
 
         for entity in context.entities(matching: Self.indicatorQuery, updatingSystemWhen: .rendering) {
             guard let indicator = entity.components[WaypointIndicatorComponent.self],
-                  let targetPosition = indicator.targetPosition,
+                  let basePosition = indicator.targetPosition,
                   entity.isEnabled else { continue }
 
             // 1. Animasi naik-turun (floating) saja pada posisi dasarnya
             let verticalFloat = sin(time * indicator.floatSpeed) * indicator.floatAmplitude
 
             // 2. Gunakan targetPosition / anchor posisi asli (bukan cameraPosition)
-            let basePosition = indicator.targetPosition ?? entity.position(relativeTo: nil)
             let currentPosition = SIMD3<Float>(basePosition.x, basePosition.y + verticalFloat, basePosition.z)
 
             // 3. Update posisi di world space tanpa mengaitkannya ke kamera

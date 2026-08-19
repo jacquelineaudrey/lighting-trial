@@ -113,12 +113,6 @@ struct LevelSelectView: View {
     }
 
     private func isUnlocked(_ levelID: Int) -> Bool {
-        #if DEBUG
-        if levelID == 3 {
-            return levelsWithContent.contains(levelID)
-        }
-        #endif
-
         return levelsWithContent.contains(levelID) && progressStore.isLevelUnlocked(levelID)
     }
 
@@ -147,6 +141,8 @@ struct LevelSelectView: View {
     }
 
     private func openLevel(_ levelID: Int) {
+        guard isUnlocked(levelID) else { return }
+
         switch levelID {
         case 1:
             startLevel1 = true
@@ -162,14 +158,18 @@ struct LevelSelectView: View {
     }
 
     private func openNextLevel(after completedLevelID: Int) {
+        guard progressStore.isLevelCompleted(completedLevelID) else { return }
+
         switch completedLevelID {
         case 1:
+            guard progressStore.isLevelUnlocked(2) else { return }
             startLevel1 = false
             level2SessionID = UUID()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 startLevel2 = true
             }
         case 2:
+            guard progressStore.isLevelUnlocked(3) else { return }
             startLevel2 = false
             level3SessionID = UUID()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {

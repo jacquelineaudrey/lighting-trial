@@ -104,6 +104,15 @@ struct Level2FlowView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
 
+            if viewModel.showsGuideOverlay {
+                LevelGuideOverlay(
+                    text: viewModel.narrationText,
+                    assetName: viewModel.guideOverlayAssetName,
+                    screenPosition: viewModel.guideOverlayScreenPosition,
+                    bottomPadding: guideBottomPadding
+                )
+            }
+
             if viewModel.isAdjustingIntensity {
                 GeometryReader { proxy in
                     Level2BrightnessControl(intensityPercentage: viewModel.intensityPercentage)
@@ -112,6 +121,20 @@ struct Level2FlowView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
                 .transition(.opacity)
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if viewModel.phase != .completed,
+               viewModel.canGoBackToPreviousState {
+                LevelActionButton(
+                    title: "Ulangi Langkah",
+                    systemImage: "arrow.uturn.backward",
+                    role: .previousStep,
+                    isDisabled: viewModel.isTransitioning,
+                    action: viewModel.goBackToPreviousState
+                )
+                .padding(.leading, 16)
+                .padding(.top, 12)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -184,6 +207,17 @@ struct Level2FlowView: View {
             viewModel.narrationText,
             audioFileNames: viewModel.narrationAudioFileNames
         )
+    }
+
+    private var guideBottomPadding: CGFloat {
+        switch viewModel.phase {
+        case .spreadFreeExploration:
+            112
+        case .mission where viewModel.missionIndex == 5:
+            112
+        default:
+            32
+        }
     }
 
     private func returnToLevelMenu() {

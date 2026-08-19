@@ -11,8 +11,8 @@ import Observation
 /// Menyimpan progres menu "Belajar" (level mana yang sudah selesai) dan menentukan
 /// kapan menu "Sandbox" terbuka.
 ///
-/// Nanti kalau konten level 2-6 sudah ada, cukup isi `Level2Content`, dst — angka
-/// `totalBelajarLevels` di sini sudah disiapkan untuk 6 level dari awal.
+/// Enam level tetap ditampilkan pada peta, tetapi saat ini hanya Level 1-3 yang
+/// sudah dapat dimainkan.
 @MainActor
 @Observable
 final class GameProgressStore {
@@ -21,31 +21,42 @@ final class GameProgressStore {
     /// Total level Belajar yang direncanakan (fixed di 6 sesuai desain).
     let totalBelajarLevels = 6
 
+    /// Level 4-6 masih dalam pengembangan dan tidak ikut skema unlock.
+    let playableBelajarLevelIDs: Set<Int> = [1, 2, 3]
+
     private(set) var completedLevelIDs: Set<Int>
 
     private let defaultsKey = "belajar.completedLevelIDs"
 
     private init() {
         let saved = UserDefaults.standard.array(forKey: defaultsKey) as? [Int] ?? []
-        completedLevelIDs = Set(saved)
+        completedLevelIDs = Self.normalizedCompletedLevelIDs(from: Set(saved))
+
+        // Bersihkan progres lama dari bypass debug atau level yang belum rilis.
+        if completedLevelIDs != Set(saved) {
+            UserDefaults.standard.set(completedLevelIDs.sorted(), forKey: defaultsKey)
+        }
     }
 
-    /// Level 1 selalu terbuka. Level berikutnya baru terbuka kalau level
-    /// sebelumnya sudah selesai (unlock berurutan/linear).
+    /// Level 1 selalu terbuka. Level berikutnya hanya terbuka jika seluruh
+    /// level sebelumnya sudah selesai. Level yang masih dikembangkan tetap
+    /// terkunci meskipun Level 3 sudah selesai.
     func isLevelUnlocked(_ levelID: Int) -> Bool {
-        if levelID <= 1 { return true }
-        return completedLevelIDs.contains(levelID - 1)
+        guard playableBelajarLevelIDs.contains(levelID) else { return false }
+        guard levelID > 1 else { return true }
+        return Set(1..<levelID).isSubset(of: completedLevelIDs)
     }
 
     func isLevelCompleted(_ levelID: Int) -> Bool {
-        completedLevelIDs.contains(levelID)
+        playableBelajarLevelIDs.contains(levelID) && completedLevelIDs.contains(levelID)
     }
 
     func markLevelCompleted(_ levelID: Int) {
-        guard belajarLevelIDs.contains(levelID) else { return }
+        guard playableBelajarLevelIDs.contains(levelID) else { return }
+        guard isLevelUnlocked(levelID) else { return }
         guard !completedLevelIDs.contains(levelID) else { return }
         completedLevelIDs.insert(levelID)
-        UserDefaults.standard.set(Array(completedLevelIDs), forKey: defaultsKey)
+        UserDefaults.standard.set(completedLevelIDs.sorted(), forKey: defaultsKey)
     }
 
     /// Sandbox baru terbuka setelah SEMUA level Belajar selesai.
@@ -55,6 +66,15 @@ final class GameProgressStore {
 
     private var belajarLevelIDs: Set<Int> {
         Set(1...totalBelajarLevels)
+    }
+
+    private static func normalizedCompletedLevelIDs(from saved: Set<Int>) -> Set<Int> {
+        var normalized: Set<Int> = []
+        for levelID in 1...3 {
+            guard saved.contains(levelID) else { break }
+            normalized.insert(levelID)
+        }
+        return normalized
     }
 
     #if DEBUG

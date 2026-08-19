@@ -123,6 +123,7 @@ struct Level1ARView: UIViewRepresentable {
         private var isSceneReconstructionActive: Bool?
         private let sceneUpdateInterval: TimeInterval = 1.0 / 30.0
         private let projectionUpdateInterval: TimeInterval = 1.0 / 30.0
+        private let markerSurfaceToneEstimator = EducationalMarkerSurfaceToneEstimator()
         weak var arView: ARView?
         private let realWorldOcclusionManager = LiDARMeshOcclusionManager(
             renderMode: .invisibleOccluder
@@ -138,7 +139,12 @@ struct Level1ARView: UIViewRepresentable {
 
         func processSceneFrame(in arView: ARView) {
             guard !hasFrozenScene,
-                  let cameraTransform = arView.session.currentFrame?.camera.transform else { return }
+                  let frame = arView.session.currentFrame else { return }
+            let cameraTransform = frame.camera.transform
+
+            if let tone = markerSurfaceToneEstimator.updatedTone(for: frame) {
+                viewModel.markerSurfaceToneDidChange(tone)
+            }
 
             let now = ProcessInfo.processInfo.systemUptime
             if now - lastSceneUpdateTime >= sceneUpdateInterval {

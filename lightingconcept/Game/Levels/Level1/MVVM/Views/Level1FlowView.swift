@@ -81,7 +81,13 @@ struct Level1FlowView: View {
             }
 
             if viewModel.showsGuideOverlay {
-                Level1GuideOverlay(viewModel: viewModel)
+                LevelGuideOverlay(
+                    text: viewModel.narrationText,
+                    assetName: viewModel.guideOverlayAssetName,
+                    screenPosition: viewModel.guideOverlayScreenPosition,
+                    showsTapToContinueCaption: viewModel.showsTapToContinueCaption,
+                    bottomPadding: guideBottomPadding
+                )
             }
 
             if viewModel.showsPhotoComparisonPanel {
@@ -115,13 +121,6 @@ struct Level1FlowView: View {
                 .padding(.top, 12)
             }
         }
-        #if DEBUG
-        .overlay(alignment: .topTrailing) {
-            Level1DevFlowMenu(viewModel: viewModel)
-                .padding(.trailing, 16)
-                .padding(.top, 80)
-        }
-        #endif
         .overlay(alignment: .top) {
             if viewModel.showsObjectModeBadge {
                 Text("Kamu jadi objek!")
@@ -136,7 +135,7 @@ struct Level1FlowView: View {
         }
         .gameDialog(
             isPresented: viewModel.showsFreezeSceneConfirmation,
-            title: viewModel.isPreparingFrozenScene ? "Menyiapkan scene" : "Scene akan di-freeze",
+            title: viewModel.isPreparingFrozenScene ? "Menyiapkan scene" : "Scene akan dibekukan",
             message: "Pastikan layarmu menangkap objek.",
             primaryTitle: "Iya, lanjut",
             secondaryTitle: "Sebentar aku arahkan lagi",
@@ -192,66 +191,8 @@ struct Level1FlowView: View {
         onReturnToLevelMenu?()
         dismiss()
     }
-}
 
-private struct Level1GuideOverlay: View {
-    @ObservedObject var viewModel: Level1ViewModel
-
-    var body: some View {
-        GeometryReader { proxy in
-            guideContent
-                .position(overlayPosition(in: proxy.size))
-        }
-        .allowsHitTesting(false)
-        .transition(.opacity)
-    }
-
-    private var guideContent: some View {
-        VStack(alignment: .trailing, spacing: 8) {
-            HStack(alignment: .bottom, spacing: 12) {
-                SpeechBubble(text: viewModel.narrationText, tail: .bottomTrailing)
-                    .frame(maxWidth: 420)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                guideImage
-                    .frame(width: 104, height: 144)
-            }
-
-            if viewModel.showsTapToContinueCaption {
-                LevelTapToContinueCaption()
-                    .padding(.trailing, 116)
-                    .transition(.opacity)
-            }
-        }
-    }
-
-    private func overlayPosition(in size: CGSize) -> CGPoint {
-        if let arPosition = viewModel.guideOverlayScreenPosition {
-            let x = min(max(arPosition.x, 280), size.width - 120)
-            let y = min(max(arPosition.y, 150), size.height - bottomPadding)
-            return CGPoint(x: x, y: y)
-        }
-
-        return CGPoint(x: size.width - 280, y: size.height - bottomPadding)
-    }
-
-    private var guideImage: some View {
-        Group {
-            if let image = UIImage(named: viewModel.guideOverlayAssetName) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-            } else {
-                Image(systemName: "sparkles")
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(.white)
-            }
-        }
-        .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
-    }
-
-    private var bottomPadding: CGFloat {
+    private var guideBottomPadding: CGFloat {
         switch viewModel.phase {
         case .textureExploration, .shapeChange, .drawingReady, .photoPrompt:
             132
@@ -291,10 +232,11 @@ private struct Level1TextureTapPromptOverlay: View {
     var body: some View {
         GeometryReader { proxy in
             TouchGestureImage()
-                .frame(width: 82, height: 164)
-                .rotationEffect(.degrees(210))
+                .frame(width: 72, height: 166)
+                .rotationEffect(.degrees(-12))
                 .position(handPosition(in: proxy.size))
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
         .transition(.opacity)
     }
@@ -304,8 +246,10 @@ private struct Level1TextureTapPromptOverlay: View {
             ?? CGPoint(x: size.width * 0.5, y: size.height * 0.56)
 
         return CGPoint(
-            x: min(max(objectPosition.x - 58, 70), size.width - 70),
-            y: min(max(objectPosition.y + 62, 120), size.height - 90)
+            // Ujung telunjuk tetap menempel pada objek; badan tangan berada di
+            // bawah-kanannya agar objek tidak tertutup setelah ukurannya mengecil.
+            x: min(max(objectPosition.x + 13, 42), size.width - 42),
+            y: min(max(objectPosition.y + 60, 84), size.height - 84)
         )
     }
 }
@@ -572,34 +516,13 @@ private struct DrawingCameraView: UIViewControllerRepresentable {
     }
 }
 
-private struct SpeechBubble: View {
+private struct SpeechBubbleShape: Shape {
     enum Tail {
         case bottomLeading
         case bottomTrailing
     }
 
-    let text: String
-    var tail: Tail = .bottomTrailing
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 20, weight: .medium))
-            .foregroundStyle(Color(UIColor.darkGray))
-            .multilineTextAlignment(.center)
-            .lineLimit(4)
-            .minimumScaleFactor(0.82)
-            .padding(.horizontal, 30)
-            .padding(.vertical, 24)
-            .background {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(.white.opacity(0.95))
-            }
-            .shadow(color: .black.opacity(0.10), radius: 8, y: 3)
-    }
-}
-
-private struct SpeechBubbleShape: Shape {
-    let tail: SpeechBubble.Tail
+    let tail: Tail
 
     func path(in rect: CGRect) -> Path {
         var path = Path()

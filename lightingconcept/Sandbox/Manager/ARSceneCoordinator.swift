@@ -32,6 +32,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     private let projectionRenderer = ProjectionLineRenderer()
     private let annotationManager = ShadowAnnotationManager()
+    private let markerSurfaceToneEstimator = EducationalMarkerSurfaceToneEstimator()
     private let receiverManager = ShadowReceiverManager()
     private let lidarMeshOcclusionManager = LiDARMeshOcclusionManager()
     private static let lidarLightRadius: Float = 0.045
@@ -382,8 +383,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
-    /// Selaraskan tampilan marker dengan pilihan saat ini: white mark terpilih
-    /// jadi merah (seperti Level 1), sisanya putih, dan posisi world-nya
+    /// Selaraskan tampilan marker dengan pilihan saat ini: marker terpilih
+    /// memakai warna status berbeda, dan posisi world-nya
     /// dipublikasikan agar Bayo bisa terbang mendekat. Dipanggil setiap kali
     /// pilihan bisa berubah (tap marker atau tap dunia untuk menutup).
     private func syncConceptSelection() {
@@ -1152,6 +1153,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
         guard frame.timestamp - lastDispatchedCameraTelemetryTimestamp >= (1.0 / 30.0) else { return }
         lastDispatchedCameraTelemetryTimestamp = frame.timestamp
+        let updatedMarkerSurfaceTone = markerSurfaceToneEstimator.updatedTone(for: frame)
 
         let cameraTransform = frame.camera.transform
         let cameraPosition = SIMD3<Float>(
@@ -1177,6 +1179,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
         Task { @MainActor in
             guard !self.viewModel.isViewFrozen else { return }
+
+            if let updatedMarkerSurfaceTone {
+                self.annotationManager.setSurfaceTone(updatedMarkerSurfaceTone)
+                self.telemetryDelegate?.markerSurfaceToneDidChange(updatedMarkerSurfaceTone)
+            }
 
             self.telemetryDelegate?.cameraDidUpdate(
                 position: cameraPosition,

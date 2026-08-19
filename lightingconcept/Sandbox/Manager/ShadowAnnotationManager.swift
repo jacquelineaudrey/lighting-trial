@@ -10,22 +10,20 @@ final class ShadowAnnotationManager {
     private var updateSubscription: Cancellable?
     private var lastPulseUpdate = Date.distantPast
     private var lastMarkerSignature: MarkerSignature?
-    private static var cachedRingTexture: TextureResource?
 
-    // Marker yang sedang dipilih pemain. Marker ini diberi warna MERAH (dot &
-    // ring), sisanya tetap putih — meniru perilaku white mark di Level 1 yang
-    // berubah merah saat ditekan.
+    // Marker yang sedang dipilih pemain memakai warna status yang berbeda
+    // agar tetap mudah dibedakan dari marker aktif lainnya.
     private(set) var selectedConcept: ShadowConcept?
     private var dotsByConcept: [ShadowConcept: ModelEntity] = [:]
 
-    private let dotRadius: Float = 0.004
-    private let tapTargetRadius: Float = 0.01
-    private let ringDiameter: Float = 0.01
     private let pulseStartScale: Float = 1.0
-    private let pulseEndScale: Float = 2.6
-    private let pulseDuration: TimeInterval = 1.3
-    private let markerColor: UIColor = .white
-    private let selectedColor: UIColor = .systemRed
+    private let pulseEndScale: Float = 2.35
+    private let pulseDuration: TimeInterval = 1.45
+    private var surfaceTone: EducationalMarkerStyle.SurfaceTone = .medium
+
+    private var palette: EducationalMarkerStyle.Palette {
+        EducationalMarkerStyle.palette(for: surfaceTone)
+    }
 
     private struct PulseRing {
         let entity: ModelEntity
@@ -64,14 +62,26 @@ final class ShadowAnnotationManager {
         pulseRings.removeAll()
     }
 
-    /// Tandai marker terpilih menjadi merah (dot langsung; ring menyusul lewat
-    /// `advancePulses`). Kirim `nil` untuk mengembalikan semua ke putih.
+    func setSurfaceTone(_ tone: EducationalMarkerStyle.SurfaceTone) {
+        guard surfaceTone != tone else { return }
+        surfaceTone = tone
+        refreshMarkerMaterials()
+    }
+
+    /// Tandai marker terpilih dengan warna status yang kontras. Ring menyusul
+    /// lewat `advancePulses` pada tick animasi berikutnya.
     func setSelected(_ concept: ShadowConcept?) {
         selectedConcept = concept
+        refreshMarkerMaterials()
+    }
+
+    private func refreshMarkerMaterials() {
         for (markerConcept, dot) in dotsByConcept {
-            let color = markerConcept == concept ? selectedColor : markerColor
+            let color = markerConcept == selectedConcept ? palette.selected : palette.primary
             dot.model?.materials = [UnlitMaterial(color: color)]
         }
+        let connectorMaterial = UnlitMaterial(color: palette.primary.withAlphaComponent(0.88))
+        connectorDashes.forEach { $0.model?.materials = [connectorMaterial] }
     }
 
     func update(
@@ -154,36 +164,46 @@ final class ShadowAnnotationManager {
         addDottedConnector(from: position, to: markerPosition)
 
         let dot = ModelEntity(
-            mesh: .generateSphere(radius: dotRadius),
-            materials: [UnlitMaterial(color: markerColor)]
+            mesh: .generateSphere(radius: EducationalMarkerStyle.dotRadius),
+            materials: [UnlitMaterial(color: palette.primary)]
         )
         dot.name = "Label: \(concept.rawValue)"
         dot.position = markerPosition
-        dot.components.set(CollisionComponent(shapes: [.generateSphere(radius: tapTargetRadius)]))
+        dot.components.set(CollisionComponent(shapes: [
+            .generateSphere(radius: EducationalMarkerStyle.tapTargetRadius)
+        ]))
         dot.components.set(InputTargetComponent())
         root.addChild(dot)
         dots.append(dot)
         dotsByConcept[concept] = dot
 
-        let ringMesh = MeshResource.generatePlane(width: ringDiameter, height: ringDiameter)
-        let ring = ModelEntity(mesh: ringMesh, materials: [ShadowAnnotationManager.ringMaterial(alpha: 1.0)])
+        let ringMesh = MeshResource.generatePlane(
+            width: EducationalMarkerStyle.ringDiameter,
+            height: EducationalMarkerStyle.ringDiameter
+        )
+        let ring = ModelEntity(
+            mesh: ringMesh,
+            materials: [EducationalMarkerStyle.ringMaterial(alpha: 1.0, tint: palette.primary)]
+        )
         // The expanding ring is what learners can see and aim for. Give it the
         // same label identifier and a larger collision volume as the dot so a
         // tap opens the SwiftUI explanation during the first Level 3 task.
         ring.name = "Label: \(concept.rawValue)"
         ring.position = markerPosition
         ring.components.set(BillboardComponent())
-        ring.components.set(CollisionComponent(shapes: [.generateSphere(radius: tapTargetRadius * 2.5)]))
+        ring.components.set(CollisionComponent(shapes: [
+            .generateSphere(radius: EducationalMarkerStyle.ringTapTargetRadius)
+        ]))
         ring.components.set(InputTargetComponent())
         root.addChild(ring)
         pulseRings.append(PulseRing(entity: ring, startTime: Date(), concept: concept))
     }
 
     private func addDottedConnector(from start: SIMD3<Float>, to end: SIMD3<Float>) {
-        let dashMaterial = UnlitMaterial(color: UIColor.white.withAlphaComponent(0.75))
+        let dashMaterial = UnlitMaterial(color: palette.primary.withAlphaComponent(0.88))
         for fraction: Float in [0.25, 0.5, 0.75] {
             let dash = ModelEntity(
-                mesh: .generateSphere(radius: 0.0018),
+                mesh: .generateSphere(radius: EducationalMarkerStyle.connectorDashRadius),
                 materials: [dashMaterial]
             )
             dash.position = start + (end - start) * fraction
@@ -203,43 +223,17 @@ final class ShadowAnnotationManager {
             let elapsed = now.timeIntervalSince(pulse.startTime).truncatingRemainder(dividingBy: pulseDuration)
             let t = Float(elapsed / pulseDuration)
 
-            let scale = pulseStartScale + (pulseEndScale - pulseStartScale) * t
+            let easedProgress = 1 - pow(1 - t, 2)
+            let scale = pulseStartScale + (pulseEndScale - pulseStartScale) * easedProgress
             pulse.entity.scale = SIMD3<Float>(repeating: scale)
 
-            let alpha = 1.0 - t
-            let tint = pulse.concept == selectedConcept ? selectedColor : markerColor
+            let alpha = max(0.12, 1.0 - easedProgress)
+            let tint = pulse.concept == selectedConcept ? palette.selected : palette.primary
             if var model = pulse.entity.components[ModelComponent.self] {
-                model.materials = [ShadowAnnotationManager.ringMaterial(alpha: alpha, tint: tint)]
+                model.materials = [EducationalMarkerStyle.ringMaterial(alpha: alpha, tint: tint)]
                 pulse.entity.components[ModelComponent.self] = model
             }
         }
-    }
-
-    private static func ringMaterial(alpha: Float, tint: UIColor = .white) -> UnlitMaterial {
-        var material = UnlitMaterial()
-        if let texture = cachedRingTexture ?? generateRingTexture() {
-            cachedRingTexture = texture
-            material.color = .init(tint: tint.withAlphaComponent(CGFloat(alpha)), texture: .init(texture))
-        } else {
-            material.color = .init(tint: tint.withAlphaComponent(CGFloat(alpha)))
-        }
-        material.blending = .transparent(opacity: .init(floatLiteral: alpha))
-        return material
-    }
-
-    private static func generateRingTexture(size: CGFloat = 256, strokeWidthFraction: CGFloat = 0.1) -> TextureResource? {
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
-        let image = renderer.image { context in
-            let rect = CGRect(x: 0, y: 0, width: size, height: size)
-            context.cgContext.clear(rect)
-            let lineWidth = size * strokeWidthFraction
-            let ringRect = rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
-            context.cgContext.setStrokeColor(UIColor.white.cgColor)
-            context.cgContext.setLineWidth(lineWidth)
-            context.cgContext.strokeEllipse(in: ringRect)
-        }
-        guard let cgImage = image.cgImage else { return nil }
-        return try? TextureResource(image: cgImage, withName: nil, options: .init(semantic: .color))
     }
 
     /// PENTING: `worldLightDirection` HARUS sudah dalam world space (sudah

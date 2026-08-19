@@ -152,7 +152,7 @@ extension View {
         .ignoresSafeArea()
         .gameDialog(
             isPresented: true,
-            title: "Scene akan di-freeze",
+            title: "Scene akan dibekukan",
             message: "Pastikan layarmu menangkap objek.",
             primaryTitle: "Iya, lanjut",
             secondaryTitle: "Sebentar aku arahkan lagi",

@@ -138,6 +138,7 @@ final class Level1ViewModel: ObservableObject {
     private var checkpointEntities: [ModelEntity] = []
     private var checkpointLocalPositions: [SIMD3<Float>] = []
     private var markerWorldPositions: [SIMD3<Float>] = []
+    private var markerSurfaceTone: EducationalMarkerStyle.SurfaceTone = .medium
     private var checkpointHighlightEntities: [Entity] = []
     private var checkpointShadowEntities: [Entity] = []
     private var directionIndicatorRoot: ModelEntity?
@@ -180,7 +181,6 @@ final class Level1ViewModel: ObservableObject {
     private static let shadowBeamOuterAngle: Float = 54
     private static let shadowAttenuationRadius: Float = 8
 
-    private static var cachedRadarRingTexture: TextureResource?
 
     private let lightShadowInstructions: [Level1Instruction] = [
         Level1Instruction(
@@ -226,9 +226,14 @@ final class Level1ViewModel: ObservableObject {
 
     func setupLevel(in anchor: AnchorEntity) {
         rootAnchor = anchor
-        resetRoomScanTracking()
         setupDirectionIndicator()
         setupGuideCharacter()
+
+        // `setupLevel` dipanggil dari `UIViewRepresentable.makeUIView`. Tunda
+        // perubahan @Published sampai siklus pembaruan SwiftUI selesai.
+        Task { @MainActor [weak self] in
+            self?.resetRoomScanTracking()
+        }
     }
 
     func trackPlane(_ planeAnchor: ARPlaneAnchor) {
@@ -305,9 +310,16 @@ final class Level1ViewModel: ObservableObject {
         scannedHeadingSectors.removeAll()
         lastPlacementAttemptTime = 0
         arSceneViewModel.resetLiDARScan()
-        arSceneViewModel.surfaceState = .scanning
-        roomScanProgress = 0
-        roomScanGuidanceText = "Putar badan pelan-pelan dan arahkan kamera ke sekeliling ruangan."
+        if arSceneViewModel.surfaceState != .scanning {
+            arSceneViewModel.surfaceState = .scanning
+        }
+        if roomScanProgress != 0 {
+            roomScanProgress = 0
+        }
+        let initialGuidance = "Putar badan pelan-pelan dan arahkan kamera ke sekeliling ruangan."
+        if roomScanGuidanceText != initialGuidance {
+            roomScanGuidanceText = initialGuidance
+        }
     }
 
     private var hasCompletedDirectionScan: Bool {
@@ -682,7 +694,7 @@ final class Level1ViewModel: ObservableObject {
 
         return pathAnchor.position(relativeTo: nil)
             + objectPosition
-            + SIMD3<Float>(0, checkpointHeight * 0.65, 0)
+            + SIMD3<Float>(0, checkpointHeight * 0.55, 0)
     }
 
     func updateTextureTapObjectScreenPosition(_ position: CGPoint?) {
@@ -1921,21 +1933,64 @@ final class Level1ViewModel: ObservableObject {
         radarLabelEntity?.removeFromParent()
         radarLabelEntity = nil
 
-        // Penjelasan setelah white mark ditekan ditampilkan lewat bubble Lumi.
+        // Penjelasan setelah marker ditekan ditampilkan lewat bubble Lumi.
         // Label marker terpisah sengaja tidak dibuat agar dialog tidak duplikat.
     }
 
     private func updateRadarAppearance(_ entity: Entity, isSelected: Bool) {
-        guard let center = entity.children.first(where: { $0.name.contains("-center") }) as? ModelEntity else { return }
+        guard let center = entity.children.first(where: { $0.name.contains("-center") }) as? ModelEntity,
+              let ring = entity.children.first(where: { $0.name.contains("-ring") }) as? ModelEntity else { return }
+
+        let tint = isSelected
+            ? markerPalette.selected
+            : markerPalette.primary
+        center.model?.materials = [UnlitMaterial(color: tint)]
+        ring.model?.materials = [EducationalMarkerStyle.ringMaterial(alpha: 1.0, tint: tint)]
 
         if isSelected {
-            center.model?.materials = [UnlitMaterial(color: .systemRed)]
             center.components.set(PulseAnimationComponent(baseScale: 1, speed: 5.0, amplitude: 0.35, isActiveTarget: true))
         } else {
-            center.model?.materials = [UnlitMaterial(color: .white)]
             center.components.remove(PulseAnimationComponent.self)
             center.scale = SIMD3<Float>(repeating: 1)
         }
+    }
+
+    func markerSurfaceToneDidChange(_ tone: EducationalMarkerStyle.SurfaceTone) {
+        guard markerSurfaceTone != tone else { return }
+        markerSurfaceTone = tone
+
+        let explainedTarget = phase == .lightShadowIntro
+            && currentLightShadowInstruction.radarTarget == nil
+            ? selectedRadarTarget
+            : nil
+        for (target, entity) in radarEntities {
+            updateRadarAppearance(entity, isSelected: explainedTarget == target)
+            refreshConnectorMaterials(in: entity)
+        }
+        checkpointHighlightEntities.forEach(refreshCheckpointHighlightMaterial)
+    }
+
+    private var markerPalette: EducationalMarkerStyle.Palette {
+        EducationalMarkerStyle.palette(for: markerSurfaceTone)
+    }
+
+    private func refreshConnectorMaterials(in entity: Entity) {
+        for child in entity.children {
+            if child.name == "level1-marker-connector-dash",
+               let dash = child as? ModelEntity {
+                dash.model?.materials = [UnlitMaterial(
+                    color: markerPalette.primary.withAlphaComponent(0.9)
+                )]
+            }
+            refreshConnectorMaterials(in: child)
+        }
+    }
+
+    private func refreshCheckpointHighlightMaterial(_ entity: Entity) {
+        guard let circle = entity.children.first as? ModelEntity else { return }
+        var material = UnlitMaterial(color: markerPalette.primary.withAlphaComponent(0.55))
+        material.blending = .transparent(opacity: 0.55)
+        circle.model?.materials = [material]
     }
 
     private func setupDirectionIndicator() {
@@ -2223,7 +2278,7 @@ final class Level1ViewModel: ObservableObject {
             lightDirection: lightDirection,
             objectHeight: objectHeight
         ) ?? 0.38
-        // Posisi ini hanya untuk white marker edukasi. Siluet bayangan dibuat
+        // Posisi ini hanya untuk marker edukasi. Siluet bayangan dibuat
         // terpisah oleh Level1ShadowRenderer dari proyeksi geometri objek.
         let length = clamped(estimatedLength * 0.55, 0.18, 0.58)
         return objectPosition + groundDirection * length + SIMD3<Float>(0, 0.025, 0)
@@ -2231,7 +2286,7 @@ final class Level1ViewModel: ObservableObject {
 
     private func makeCheckpointHighlightEntity() -> Entity {
         let root = Entity()
-        var material = UnlitMaterial(color: UIColor.systemBlue.withAlphaComponent(0.55))
+        var material = UnlitMaterial(color: markerPalette.primary.withAlphaComponent(0.55))
         material.blending = .transparent(opacity: 0.55)
         let circle = ModelEntity(mesh: .generateSphere(radius: 0.55), materials: [material])
         circle.scale = SIMD3<Float>(1, 0.035, 1)
@@ -2240,76 +2295,52 @@ final class Level1ViewModel: ObservableObject {
     }
 
     private func makeRadarEntity(target: Level1RadarTarget) -> Entity {
-        let root = makeWhiteMarkEntity(name: "level1-radar-\(target.rawValue)", receivesInput: true)
-        root.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.04)]))
+        let root = makeEducationalMarkerEntity(name: "level1-radar-\(target.rawValue)", receivesInput: true)
+        root.components.set(CollisionComponent(shapes: [
+            .generateSphere(radius: EducationalMarkerStyle.ringTapTargetRadius)
+        ]))
         root.components.set(InputTargetComponent())
         return root
     }
 
-    private func makeWhiteMarkEntity(name: String, receivesInput: Bool) -> Entity {
+    private func makeEducationalMarkerEntity(name: String, receivesInput: Bool) -> Entity {
         let root = Entity()
         root.name = name
 
         let dot = ModelEntity(
-            mesh: .generateSphere(radius: 0.007),
-            materials: [UnlitMaterial(color: .white)]
+            mesh: .generateSphere(radius: EducationalMarkerStyle.dotRadius),
+            materials: [UnlitMaterial(color: markerPalette.primary)]
         )
         dot.name = "\(name)-center"
         dot.components.set(DynamicLightShadowComponent(castsShadow: false))
         if receivesInput {
-            dot.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.018)]))
+            dot.components.set(CollisionComponent(shapes: [
+                .generateSphere(radius: EducationalMarkerStyle.tapTargetRadius)
+            ]))
             dot.components.set(InputTargetComponent())
         }
         root.addChild(dot)
 
         let ring = ModelEntity(
-            mesh: .generatePlane(width: 0.022, height: 0.022),
-            materials: [Self.radarRingMaterial(alpha: 1.0)]
+            mesh: .generatePlane(
+                width: EducationalMarkerStyle.ringDiameter,
+                height: EducationalMarkerStyle.ringDiameter
+            ),
+            materials: [EducationalMarkerStyle.ringMaterial(alpha: 1.0, tint: markerPalette.primary)]
         )
         ring.name = "\(name)-ring"
         ring.components.set(BillboardComponent())
         ring.components.set(DynamicLightShadowComponent(castsShadow: false))
         ring.components.set(PulseAnimationComponent(baseScale: 1, speed: 3.8, amplitude: 0.45, isActiveTarget: true))
         if receivesInput {
-            ring.components.set(CollisionComponent(shapes: [.generateSphere(radius: 0.04)]))
+            ring.components.set(CollisionComponent(shapes: [
+                .generateSphere(radius: EducationalMarkerStyle.ringTapTargetRadius)
+            ]))
             ring.components.set(InputTargetComponent())
         }
         root.addChild(ring)
 
         return root
-    }
-
-    private static func radarRingMaterial(alpha: Float) -> UnlitMaterial {
-        var material = UnlitMaterial()
-        if let texture = cachedRadarRingTexture ?? generateRadarRingTexture() {
-            cachedRadarRingTexture = texture
-            material.color = .init(
-                tint: UIColor.white.withAlphaComponent(CGFloat(alpha)),
-                texture: .init(texture)
-            )
-        } else {
-            material.color = .init(tint: UIColor.white.withAlphaComponent(CGFloat(alpha)))
-        }
-        material.blending = .transparent(opacity: .init(floatLiteral: alpha))
-        return material
-    }
-
-    private static func generateRadarRingTexture(
-        size: CGFloat = 256,
-        strokeWidthFraction: CGFloat = 0.1
-    ) -> TextureResource? {
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
-        let image = renderer.image { context in
-            let rect = CGRect(x: 0, y: 0, width: size, height: size)
-            context.cgContext.clear(rect)
-            let lineWidth = size * strokeWidthFraction
-            let ringRect = rect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2)
-            context.cgContext.setStrokeColor(UIColor.white.cgColor)
-            context.cgContext.setLineWidth(lineWidth)
-            context.cgContext.strokeEllipse(in: ringRect)
-        }
-        guard let cgImage = image.cgImage else { return nil }
-        return try? TextureResource(image: cgImage, withName: nil, options: .init(semantic: .color))
     }
 
     /// Dibuat sebagai anak dari marker, sehingga ikut berpindah bersamanya.
@@ -2320,11 +2351,12 @@ final class Level1ViewModel: ObservableObject {
         let length = simd_length(targetOffset)
         guard length > 0.001 else { return leader }
 
-        let material = UnlitMaterial(color: UIColor.white.withAlphaComponent(0.9))
+        let material = UnlitMaterial(color: markerPalette.primary.withAlphaComponent(0.9))
         let fractions: [Float] = [0.14, 0.26, 0.38, 0.50, 0.62, 0.74, 0.86]
 
         for fraction in fractions {
             let dash = ModelEntity(mesh: .generateSphere(radius: 0.0032), materials: [material])
+            dash.name = "level1-marker-connector-dash"
             dash.position = targetOffset * fraction
             dash.components.set(DynamicLightShadowComponent(castsShadow: false))
             leader.addChild(dash)

@@ -53,11 +53,11 @@ struct ExitLevelDialog: View {
                     Label("Kembali ke Menu", systemImage: "house.fill")
                         .font(.system(size: 17))
                         .fontWeight(.semibold)
-                        .foregroundColor(Color(hex: "9FA60C"))
+                        .foregroundColor(Color(hex: "FF383C"))
                         .frame(width: 272, height: 52)
                         .overlay(
                             Capsule()
-                                .stroke(Color(hex: "9FA60C"), lineWidth: 2)
+                                .stroke(Color(hex: "FF383C"), lineWidth: 2)
                         )
                 }
             }

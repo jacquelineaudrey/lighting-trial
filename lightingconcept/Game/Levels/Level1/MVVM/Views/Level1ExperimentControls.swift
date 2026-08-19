@@ -19,10 +19,9 @@ private enum Level1ExperimentControlMetrics {
     // MARK: Hand Gesture
     static let handWidth: CGFloat = 70
     static let handHeight: CGFloat = 140
-
-    static let handOffsetX: CGFloat = 56
-    static let handOffsetY: CGFloat = -60
-
+    // Setelah diputar 180 derajat, ujung telunjuk berada sekitar 48 pt di
+    // bawah pusat gambar. Offset ini membuat ujung jari tepat di pusat tombol.
+    static let buttonHandOffsetY: CGFloat = -48
     static let handRotation: Double = 180
 }
 
@@ -84,38 +83,47 @@ struct Level1ExperimentControls: View {
     }
 
     private var modeButtons: some View {
-        ZStack(alignment: .bottomLeading) {
-            HStack(spacing: 8) {
-                modeButton(icon: "cube.transparent.fill", isSelected: viewModel.activeExperimentPanel == .shape) {
-                    viewModel.showShapeControls()
-                }
-                modeButton(icon: "square.fill", isSelected: viewModel.activeExperimentPanel == .texture) {
-                    viewModel.showTextureControls()
+        HStack(spacing: 8) {
+            modeButton(icon: "cube.transparent.fill", isSelected: viewModel.activeExperimentPanel == .shape) {
+                viewModel.showShapeControls()
+            }
+            .overlay {
+                if shouldShowShapeButtonGesture {
+                    modeButtonGesture
                 }
             }
-            .padding(4)
-            .background(.ultraThinMaterial, in: Capsule())
 
-            if shouldShowModeGesture {
-                TouchGestureImage()
-                    .frame(
-                        width: Level1ExperimentControlMetrics.handWidth,
-                        height: Level1ExperimentControlMetrics.handHeight
-                    )
-                    .rotationEffect(.degrees(Level1ExperimentControlMetrics.handRotation))
-                    .offset(x: modeGestureOffsetX, y: Level1ExperimentControlMetrics.handOffsetY)
-                    .allowsHitTesting(false)
+            modeButton(icon: "square.fill", isSelected: viewModel.activeExperimentPanel == .texture) {
+                viewModel.showTextureControls()
+            }
+            .overlay {
+                if shouldShowTextureButtonGesture {
+                    modeButtonGesture
+                }
             }
         }
+        .padding(4)
+        .background(.ultraThinMaterial, in: Capsule())
     }
 
-    private var shouldShowModeGesture: Bool {
-        viewModel.activeExperimentPanel == nil
-            && (viewModel.showsTextureControlGesture || viewModel.showsShapeControlGesture)
+    private var shouldShowShapeButtonGesture: Bool {
+        viewModel.activeExperimentPanel == nil && viewModel.showsShapeControlGesture
     }
 
-    private var modeGestureOffsetX: CGFloat {
-        viewModel.showsTextureControlGesture ? Level1ExperimentControlMetrics.handOffsetX : -8
+    private var shouldShowTextureButtonGesture: Bool {
+        viewModel.activeExperimentPanel == nil && viewModel.showsTextureControlGesture
+    }
+
+    private var modeButtonGesture: some View {
+        TouchGestureImage()
+            .frame(
+                width: Level1ExperimentControlMetrics.handWidth,
+                height: Level1ExperimentControlMetrics.handHeight
+            )
+            .rotationEffect(.degrees(Level1ExperimentControlMetrics.handRotation))
+            .offset(y: Level1ExperimentControlMetrics.buttonHandOffsetY)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     private func modeButton(icon: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -284,12 +292,11 @@ private func pickerPanel<Content: View>(
                     )
                 )
                 .offset(
-                    x:
-                        Level1ExperimentControlMetrics.handOffsetX,
                     y:
-                        Level1ExperimentControlMetrics.handOffsetY
+                        Level1ExperimentControlMetrics.buttonHandOffsetY
                 )
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
     }
 }
@@ -496,8 +503,7 @@ private struct Level1ExperimentControlsPreviewState: View {
                         .degrees(Level1ExperimentControlMetrics.handRotation)
                     )
                     .offset(
-                        x: Level1ExperimentControlMetrics.handOffsetX,
-                        y: Level1ExperimentControlMetrics.handOffsetY
+                        y: Level1ExperimentControlMetrics.buttonHandOffsetY
                     )
                     .allowsHitTesting(false)
             }

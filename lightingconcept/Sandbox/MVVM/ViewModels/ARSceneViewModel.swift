@@ -31,7 +31,7 @@ final class ARSceneViewModel: ObservableObject {
 
     @Published var selectedConcept: ShadowConcept?
     @Published var selectedConceptTapLocation: CGPoint = .zero
-    /// Posisi WORLD dari marker (white mark) yang sedang dipilih. Dipakai
+    /// Posisi WORLD dari marker edukasi yang sedang dipilih. Dipakai
     /// Level 3 supaya Bayo bisa terbang mendekat ke titik yang dipencet, mirip
     /// cara Lumi menghampiri marker di Level 1. `nil` saat tidak ada yang dipilih.
     @Published var selectedConceptWorldPosition: SIMD3<Float>?
