@@ -5,12 +5,13 @@ struct MainMenuSettingsButton: View {
 
     var body: some View {
         Button(action: action) {
-            Label("Pengaturan", systemImage: "gearshape.fill")
-                .font(.title2.bold())
-                .foregroundStyle(.white)
-                .shadow(color: MainMenuLayout.outlineColor, radius: 0, x: 2, y: 2)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            OutlinedText(
+                Label("Pengaturan", systemImage: "gearshape.fill"),
+                foregroundStyle: .white,
+                outlineStyle: MainMenuLayout.outlineColor,
+                outlineWidth: MainMenuLayout.settingsOutlineWidth,
+                baseFontSize: MainMenuLayout.settingsFontSize
+            )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(.rect)
         }

@@ -7,19 +7,26 @@ struct Level3FlowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
+    let onReturnToLevelMenu: (() -> Void)?
+
+    init(onReturnToLevelMenu: (() -> Void)? = nil) {
+        self.onReturnToLevelMenu = onReturnToLevelMenu
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Level3ARContainerView(sceneViewModel: viewModel.arSceneViewModel, telemetryDelegate: viewModel)
+            Level3ARContainerView(viewModel: viewModel)
                 .ignoresSafeArea()
             
             overlay
-        }
-        .overlay(alignment: .topLeading) {
-            if viewModel.phase != .completed {
-                LevelBackButton { showsExitConfirmation = true }
-                    .padding(.leading, 16)
-                    .padding(.top, 12)
+
+            if viewModel.showsGuideOverlay {
+                LevelGuideOverlay(
+                    text: viewModel.narrationText,
+                    assetName: viewModel.guideOverlayAssetName,
+                    screenPosition: viewModel.guideOverlayScreenPosition,
+                    bottomPadding: guideBottomPadding
+                )
             }
         }
         .overlay(alignment: .top) {
@@ -31,47 +38,62 @@ struct Level3FlowView: View {
                     .allowsHitTesting(false)
             }
         }
-        .overlay(alignment: .topTrailing) {
-            if viewModel.phase == .review {
-                ZStack(alignment: .topTrailing) {
-                    Level3InfoMenu(
-                        isOpen: viewModel.isShadowInfoOpen,
-                        onInfoTap: viewModel.handleInfoButtonTap,
-                        onTypesTap: viewModel.handleShadowTypesMenuTap
-                    )
-
-                    if viewModel.shouldShowInfoGesture {
-                        Level3InfoGestureImage()
-                            .frame(width: 82, height: 82)
-                            .offset(infoGestureOffset)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .padding(.trailing, 18)
+        .overlay(alignment: .topLeading) {
+            if viewModel.phase != .completed,
+               viewModel.canGoBackToPreviousState {
+                LevelActionButton(
+                    title: "Ulangi Langkah",
+                    systemImage: "arrow.uturn.backward",
+                    role: .previousStep,
+                    isDisabled: viewModel.isTransitioning,
+                    action: viewModel.goBackToPreviousState
+                )
+                .padding(.leading, 16)
                 .padding(.top, 12)
             }
         }
-        .overlay {
-            if viewModel.showsFreezeSceneConfirmation {
-                Level3GreenConfirmationOverlay(
-                    title: "Scene akan di-freeze",
-                    message: "Pastikan objek dan bayangannya sudah terlihat jelas sebelum mulai menggambar.",
-                    confirmTitle: "Iya, lanjut",
-                    cancelTitle: "Sebentar",
-                    onConfirm: viewModel.confirmFreezeSceneAndStartDrawing,
-                    onCancel: viewModel.cancelFreezeSceneConfirmation
-                )
+        .overlay(alignment: .topTrailing) {
+            if viewModel.phase != .completed, viewModel.phase != .photoComparison {
+                VStack(alignment: .trailing, spacing: 12) {
+                    LevelActionButton(
+                        title: "Kembali ke Menu",
+                        systemImage: "house.fill",
+                        role: .menu,
+                        action: { showsExitConfirmation = true }
+                    )
+
+                    if viewModel.phase == .review {
+                        Level3InfoMenu(
+                            isOpen: viewModel.isShadowInfoOpen,
+                            areMarkersVisible: viewModel.areReviewMarkersVisible,
+                            showsGesture: viewModel.shouldShowInfoGesture,
+                            onInfoTap: viewModel.handleInfoButtonTap,
+                            onTypesTap: viewModel.handleShadowTypesMenuTap
+                        )
+                    }
+                }
+                .padding(.trailing, 16)
+                .padding(.top, 12)
             }
         }
-        .overlay(alignment: .top) {
-            if let message = viewModel.photoSaveMessage {
-                Level3GreenNotice(message: message, onDismiss: viewModel.clearPhotoSaveMessage)
-                    .padding(.top, 54)
-                    .padding(.horizontal, 20)
-            }
-        }
+        .gameDialog(
+            isPresented: viewModel.showsFreezeSceneConfirmation,
+            title: "Scene akan dibekukan",
+            message: "Pastikan objek dan bayangannya sudah terlihat jelas sebelum mulai menggambar.",
+            primaryTitle: "Iya, lanjut",
+            secondaryTitle: "Sebentar aku arahkan lagi",
+            primaryAction: viewModel.confirmFreezeSceneAndStartDrawing,
+            secondaryAction: viewModel.cancelFreezeSceneConfirmation
+        )
+        .gameDialog(
+            isPresented: viewModel.photoSaveMessage != nil,
+            title: "Foto Gambar",
+            message: viewModel.photoSaveMessage ?? "",
+            primaryTitle: "OK",
+            primaryAction: viewModel.clearPhotoSaveMessage
+        )
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
-            dismiss()
+            returnToLevelMenu()
         }
         .fullScreenCover(isPresented: $viewModel.showsDrawingCamera) {
             Level3DrawingCameraView(
@@ -81,15 +103,19 @@ struct Level3FlowView: View {
             .ignoresSafeArea()
         }
         .animation(reduceMotion ? nil : .easeInOut, value: viewModel.phase)
-        .animation(.easeInOut(duration: 0.2), value: viewModel.arSceneViewModel.selectedConcept)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: viewModel.arSceneViewModel.selectedConcept)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
         .task(id: viewModel.narrationID) {
+            guard viewModel.shouldSpeakNarration else {
+                narrator.stop()
+                return
+            }
             viewModel.narrationWillStart()
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
             narrator.speak(
                 viewModel.narrationText,
-                audioFileName: viewModel.narrationAudioFileName,
+                audioFileNames: viewModel.narrationAudioFileNames,
                 onCompletion: viewModel.narrationDidFinish
             )
         }
@@ -109,7 +135,7 @@ struct Level3FlowView: View {
             viewModel.narrationWillStart()
             narrator.speak(
                 viewModel.narrationText,
-                audioFileName: viewModel.narrationAudioFileName,
+                audioFileNames: viewModel.narrationAudioFileNames,
                 onCompletion: viewModel.narrationDidFinish
             )
         }
@@ -119,10 +145,15 @@ struct Level3FlowView: View {
         .navigationBarBackButtonHidden(true)
     }
 
-    private var infoGestureOffset: CGSize {
-        viewModel.isShadowInfoOpen
-            ? CGSize(width: -92, height: 50)
-            : CGSize(width: -20, height: 0)
+    private var guideBottomPadding: CGFloat {
+        switch viewModel.phase {
+        case .shapeComparison:
+            190
+        case .shadowTypesInteraction, .drawingPrompt:
+            112
+        default:
+            32
+        }
     }
 
     @ViewBuilder
@@ -130,7 +161,10 @@ struct Level3FlowView: View {
         switch viewModel.phase {
         case .onboarding:
             if !viewModel.arSceneViewModel.isObjectPlaced {
-                Level3DialogTapCatcher(action: viewModel.advanceOnboarding)
+                Level3DialogTapCatcher(
+                    isEnabled: viewModel.canAdvanceCurrentDialog,
+                    action: viewModel.advanceOnboarding
+                )
             } else {
                 EmptyView()
             }
@@ -151,10 +185,16 @@ struct Level3FlowView: View {
             EmptyView()
 
         case .shadowTrivia:
-            Level3DialogTapCatcher(action: viewModel.advanceShadowTrivia)
+            Level3DialogTapCatcher(
+                isEnabled: viewModel.canAdvanceCurrentDialog,
+                action: viewModel.advanceShadowTrivia
+            )
 
         case .closing:
-            Level3DialogTapCatcher(action: viewModel.advanceClosing)
+            Level3DialogTapCatcher(
+                isEnabled: viewModel.canAdvanceCurrentDialog,
+                action: viewModel.advanceClosing
+            )
 
         case .shadowTypesInteraction:
             Level3ShadowToggleButton(
@@ -173,7 +213,11 @@ struct Level3FlowView: View {
             }
 
         case .drawingPrompt:
-            Level3DialogTapCatcher(action: viewModel.requestFreezeSceneForDrawing)
+            Level3NextButton(
+                title: "Selanjutnya",
+                isDisabled: !viewModel.canAdvanceCurrentDialog,
+                action: viewModel.requestFreezeSceneForDrawing
+            )
 
         case .drawingReady:
             Level3FrozenDrawingOverlay(
@@ -200,70 +244,107 @@ struct Level3FlowView: View {
             )
 
         case .completed:
-            EndLevelView(
-                data: EndLevelViewModel.data(for: Level3Content.levelID),
-                onBack: dismiss.callAsFunction
-            )
-            .padding(.bottom, 24)
+            ZStack {
+                EndLevelView(
+                    data: EndLevelViewModel.data(for: Level3Content.levelID),
+                    onBack: returnToLevelMenu
+                )
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
         }
     }
 
     private func replayNarration() {
+        guard viewModel.shouldSpeakNarration else {
+            narrator.stop()
+            return
+        }
         viewModel.narrationWillStart()
         narrator.speak(
             viewModel.narrationText,
-            audioFileName: viewModel.narrationAudioFileName,
+            audioFileNames: viewModel.narrationAudioFileNames,
             onCompletion: viewModel.narrationDidFinish
         )
+    }
+
+    private func returnToLevelMenu() {
+        onReturnToLevelMenu?()
+        dismiss()
     }
 }
 
 private struct Level3DialogTapCatcher: View {
+    let isEnabled: Bool
     let action: () -> Void
 
     var body: some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .onTapGesture(perform: action)
+        LevelTapToAdvanceOverlay(
+            isEnabled: isEnabled,
+            showsCaption: false,
+            action: action
+        )
     }
 }
 
 private struct Level3InfoMenu: View {
     let isOpen: Bool
+    let areMarkersVisible: Bool
+    let showsGesture: Bool
     let onInfoTap: () -> Void
     let onTypesTap: () -> Void
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
-            Button(action: onInfoTap) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.black.opacity(0.72))
-                    .frame(width: 34, height: 34)
-                    .background(.thinMaterial, in: Circle())
-            }
-            .buttonStyle(.plain)
+            Button("Info Bayangan", systemImage: "info.circle", action: onInfoTap)
+                .labelStyle(.iconOnly)
+                .font(.title2.bold())
+                .foregroundStyle(Color(hex: "21415D"))
+                .frame(width: 52, height: 52)
+                .background(.thinMaterial, in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(Color(hex: "9FA60C").opacity(0.55), lineWidth: 2)
+                }
+                .buttonStyle(.plain)
+                .overlay {
+                    if showsGesture && !isOpen {
+                        Level3InfoGestureImage()
+                            .frame(width: 82, height: 82)
+                            .offset(x: -23, y: 23)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
 
             if isOpen {
                 VStack(alignment: .leading, spacing: 0) {
                     Button(action: onTypesTap) {
-                        Text("Jenis Bayangan")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.black.opacity(0.82))
+                        Text(areMarkersVisible ? "Tutup Mark" : "Buka Mark")
+                            .font(.headline)
+                            .foregroundStyle(Color(hex: "21415D"))
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 11)
+                    .overlay {
+                        if showsGesture {
+                            Level3InfoGestureImage()
+                                .frame(width: 82, height: 82)
+                                .offset(x: -23, y: 23)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                    }
 
                     Divider()
                         .padding(.horizontal, 14)
 
-                    Text("Garis Bayangan")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.black.opacity(0.32))
+                    Text("Jenis Bayangan")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                         .padding(.horizontal, 14)
@@ -303,87 +384,6 @@ private struct Level3InfoGestureImage: View {
     }
 }
 
-private struct Level3GreenConfirmationOverlay: View {
-    let title: String
-    let message: String
-    let confirmTitle: String
-    let cancelTitle: String
-    let onConfirm: () -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.35)
-                .ignoresSafeArea()
-
-            VStack(spacing: 14) {
-                Text(title)
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Color(hex: "313131"))
-
-                Text(message)
-                    .font(.system(size: 14, weight: .medium))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(Color(hex: "313131"))
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 10) {
-                    Button(cancelTitle, action: onCancel)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(Color(hex: "313131"))
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(Color.white.opacity(0.9), in: Capsule())
-
-                    Button(confirmTitle, action: onConfirm)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(Color(hex: "9FA60C"), in: Capsule())
-                }
-            }
-            .padding(22)
-            .frame(maxWidth: 360)
-            .background(Color(hex: "EFEBCF"), in: RoundedRectangle(cornerRadius: 35))
-            .overlay(
-                RoundedRectangle(cornerRadius: 35)
-                    .stroke(Color(hex: "D6CF91"), lineWidth: 2)
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-}
-
-private struct Level3GreenNotice: View {
-    let message: String
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(Color(hex: "1F8A55"))
-
-            Text(message)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color(hex: "1F5136"))
-                .lineLimit(2)
-
-            Button("OK", action: onDismiss)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Color(hex: "35A66B"), in: Capsule())
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color(hex: "DDF8E9"), in: Capsule())
-        .overlay(Capsule().stroke(Color(hex: "35A66B"), lineWidth: 1.5))
-    }
-}
-
 private struct Level3FrozenDrawingOverlay: View {
     let text: String
     let actionTitle: String
@@ -391,60 +391,30 @@ private struct Level3FrozenDrawingOverlay: View {
     let action: () -> Void
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            HStack(alignment: .bottom, spacing: 8) {
-                bayoImage
-                    .frame(width: 120, height: 148)
-                    .padding(.leading, 24)
-
-                Text(text)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.black)
-                    .multilineTextAlignment(.leading)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 14)
-                    .frame(minWidth: 230, maxWidth: 360, alignment: .leading)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(
-                        TrianglePointer()
-                            .fill(.ultraThinMaterial)
-                            .frame(width: 18, height: 16)
-                            .rotationEffect(.degrees(180))
-                            .offset(x: -14),
-                        alignment: .leading
-                    )
-                    .padding(.bottom, 42)
-
-                Spacer()
-            }
-
+        VStack {
+            Spacer()
             HStack {
                 Spacer()
-                Button(actionTitle, action: action)
-                    .font(.caption.bold())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .background(isActionDisabled ? Color.gray : Color.blue, in: Capsule())
-                    .disabled(isActionDisabled)
-                    .padding(.trailing, 24)
-                    .padding(.bottom, 34)
-            }
-        }
-        .padding(.bottom, 12)
-    }
+                VStack(alignment: .trailing, spacing: 10) {
+                    HStack(alignment: .bottom, spacing: 12) {
+                        LevelSpeechBubble(text: text)
+                            .frame(maxWidth: 420)
+                            .fixedSize(horizontal: false, vertical: true)
 
-    @ViewBuilder
-    private var bayoImage: some View {
-        if let image = UIImage(named: "bayoPointWink") ?? UIImage(named: "bayoPoint") ?? UIImage(named: "bayoIdle") {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-        } else {
-            Image(systemName: "person.crop.circle.fill")
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(Color(hex: "A86CE8"))
+                        LevelGuideCharacterImage(assetName: "bayoPointWink")
+                            .frame(width: 104, height: 144)
+                    }
+
+                    LevelActionButton(
+                        title: actionTitle,
+                        isDisabled: isActionDisabled,
+                        action: action
+                    )
+                    .padding(.trailing, 116)
+                }
+                .padding(.trailing, 42)
+                .padding(.bottom, 22)
+            }
         }
     }
 }
@@ -466,25 +436,24 @@ private struct Level3PhotoComparisonOverlay: View {
                     comparisonImage(title: "Gambar Kamu", image: userDrawingImage)
                 }
 
-                Button("Selesai", action: action)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .background(isActionDisabled ? Color.gray : Color(hex: "35A66B"), in: Capsule())
-                    .disabled(isActionDisabled)
+                LevelActionButton(
+                    title: "Selesai",
+                    systemImage: "checkmark",
+                    isDisabled: isActionDisabled,
+                    action: action
+                )
             }
-            .padding(22)
+            .padding(26)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
             .frame(maxWidth: 1080)
-            .padding(.horizontal, 28)
+            .padding(.horizontal, 32)
         }
     }
 
     private func comparisonImage(title: String, image: UIImage?) -> some View {
         VStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 18, weight: .bold))
+                .font(.title3.bold())
                 .foregroundStyle(.white)
 
             Group {
@@ -496,21 +465,10 @@ private struct Level3PhotoComparisonOverlay: View {
                     Color.white.opacity(0.18)
                 }
             }
-            .frame(width: 440, height: 360)
+            .frame(width: 480, height: 440)
             .background(Color.black.opacity(0.18))
             .clipped()
         }
-    }
-}
-
-private struct TrianglePointer: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.closeSubpath()
-        return path
     }
 }
 
@@ -557,21 +515,21 @@ private struct Level3DrawingCameraView: UIViewControllerRepresentable {
 
 private struct Level3NextButton: View {
     let title: String
+    var isDisabled = false
     let action: () -> Void
 
     var body: some View {
         HStack {
             Spacer()
-            Button(title, action: action)
-                .font(.caption.bold())
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(Color.blue, in: Capsule())
-                .buttonStyle(.plain)
+            LevelActionButton(
+                title: title,
+                systemImage: "arrow.right",
+                isDisabled: isDisabled,
+                action: action
+            )
         }
-        .padding(.trailing, 24)
-        .padding(.bottom, 34)
+        .padding(.trailing, 42)
+        .padding(.bottom, 36)
     }
 }
 
@@ -583,13 +541,12 @@ private struct Level3ShadowToggleButton: View {
         VStack {
             Spacer()
             HStack {
-                Button(title, action: action)
-                    .font(.caption.bold())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Color.orange, in: Capsule())
-                    .padding(.leading, 24)
+                LevelActionButton(
+                    title: title,
+                    systemImage: "eye.fill",
+                    action: action
+                )
+                .padding(.leading, 42)
 
                 Spacer()
             }
@@ -609,16 +566,18 @@ private struct Level3ShapeComparison: View {
                 .bold()
             HStack {
                 ForEach(Level3ViewModel.ComparisonShape.allCases) { shape in
-                    Button(shape.rawValue) {
-                        viewModel.chooseComparison(shape)
-                    }
-                    .buttonStyle(.borderedProminent)
+                    LevelActionButton(
+                        title: shape.rawValue,
+                        systemImage: shape == .cube ? "cube.fill" : "circle.fill",
+                        role: viewModel.selectedComparison == shape ? .primary : .secondary,
+                        action: { viewModel.chooseComparison(shape) }
+                    )
                 }
             }
             Text(viewModel.hasComparedShapes
-                 ? "Ketuk layar untuk melanjutkan."
+                 ? "Kedua bentuk sudah dibandingkan!"
                  : "Pilih kedua bentuk, lalu bandingkan bayangannya.")
-            .font(.subheadline)
+            .font(.headline)
             
             Level2ReplayNarrationButton(action: replayNarration)
         }

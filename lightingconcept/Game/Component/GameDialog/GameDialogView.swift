@@ -54,7 +54,7 @@ struct GameDialogView: View {
                             .font(.system(size: 17))
                             .fontWeight(.semibold)
                             .foregroundColor(.white)
-                            .frame(width: 292, height: 48)
+                            .frame(width: 292, height: 52)
                             .background(
                                 Capsule()
                                     .fill(Color(hex: "9FA60C"))
@@ -67,7 +67,7 @@ struct GameDialogView: View {
                                 .font(.system(size: 17))
                                 .fontWeight(.semibold)
                                 .foregroundColor(Color(hex: "C0392B"))
-                                .frame(width: 292, height: 48)
+                                .frame(width: 292, height: 52)
                                 .overlay(
                                     Capsule()
                                         .stroke(Color(hex: "C0392B"), lineWidth: 1)
@@ -152,7 +152,7 @@ extension View {
         .ignoresSafeArea()
         .gameDialog(
             isPresented: true,
-            title: "Scene akan di-freeze",
+            title: "Scene akan dibekukan",
             message: "Pastikan layarmu menangkap objek.",
             primaryTitle: "Iya, lanjut",
             secondaryTitle: "Sebentar aku arahkan lagi",

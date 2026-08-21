@@ -49,32 +49,59 @@ struct LevelBackButton: View {
 /// bikin anak merasa rugi/sedih. Progress diberitahukan lewat framing
 /// positif: "mulai petualangan baru" yang seru, bukan "kehilangan progress".
 struct LevelExitConfirmation: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var isPresented: Bool
     let onConfirm: () -> Void
 
     func body(content: Content) -> some View {
         content
             .overlay {
-                if isPresented {
-                    ZStack {
-                        Color.black.opacity(0.4)
-                            .ignoresSafeArea()
-                            .onTapGesture { isPresented = false }
+                ZStack {
+                    if isPresented {
+                        Button(action: dismissConfirmation) {
+                            Color.black.opacity(0.4)
+                                .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Tutup konfirmasi kembali ke menu")
+                        .transition(.opacity)
 
                         ExitLevelDialog(
-                            onStayTapped: {
-                                isPresented = false
-                            },
-                            onExitTapped: {
-                                isPresented = false
-                                onConfirm()
-                            }
+                            onStayTapped: dismissConfirmation,
+                            onExitTapped: confirmExit
                         )
+                        .transition(dialogTransition)
+                        .accessibilityAddTraits(.isModal)
                     }
-                    .transition(.opacity.combined(with: .scale))
                 }
+                .ignoresSafeArea()
+                .animation(overlayAnimation, value: isPresented)
             }
-            .animation(.easeInOut(duration: 0.2), value: isPresented)
+    }
+
+    private var overlayAnimation: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.14)
+            : .easeOut(duration: 0.22)
+    }
+
+    private var dialogTransition: AnyTransition {
+        if reduceMotion {
+            return .opacity
+        }
+        return .asymmetric(
+            insertion: .offset(y: 28).combined(with: .opacity),
+            removal: .offset(y: 12).combined(with: .opacity)
+        )
+    }
+
+    private func dismissConfirmation() {
+        isPresented = false
+    }
+
+    private func confirmExit() {
+        isPresented = false
+        onConfirm()
     }
 }
 

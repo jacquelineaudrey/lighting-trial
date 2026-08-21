@@ -4,10 +4,22 @@ enum Level3Content {
     static let levelID = 3
     static let levelTitle = "Jenis dan Bentuk Bayangan"
 
+    static let placementNarration = DialogLine(
+        characterName: "Bayo",
+        text: "Arahkan titik tengah layar ke meja atau lantai, lalu tekan tombol Taruh Benda di Tengah.",
+        audioFileName: "level-3/Arahkan titik tengah layar ke meja atau lantai, lalu tekan tombol Taruh Benda di Tengah.mp3"
+    )
+
+    static let completedNarration = DialogLine(
+        characterName: "Bayo",
+        text: "Level 3 selesai. Kamu hebat! Sekarang kamu bisa ke level berikutnya!",
+        audioFileName: "level-3/Level 3 selesai. Kamu hebat! Sekarang kamu bisa ke level berikutnya!.mp3"
+    )
+
     static let onboardingDialog = [
         DialogLine(characterName: "Bayo", text: "Hai Penjelajah Kecil! Namaku Bayo", audioFileName: "level-3/1 Hai Penjelajah Kecil! Namaku Bayo.mp3"),
         DialogLine(characterName: "Bayo", text: "Scan berhasil. Tap layar untuk menaruh objek."),
-        DialogLine(characterName: "Bayo", text: "Wah ada banyak titik putih, ayuk kita tekan satu per satu!", audioFileName: "level-3/2 Wah ada banyak titik putih, ayuk kita tekan satu per satu!.mp3")
+        DialogLine(characterName: "Bayo", text: "Wah ada banyak titik, ayuk kita tekan satu per satu!", audioFileName: "level-3/Wah ada banyak titik, ayuk kita tekan satu per satu!.mp3")
     ]
 
     static let shadowTrivia = [

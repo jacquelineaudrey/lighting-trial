@@ -23,6 +23,17 @@ enum Level3Phase: String, Codable, Equatable {
     case completed
 }
 
+enum Level3DevFlow: String, CaseIterable, Identifiable {
+    case onboarding = "Onboarding"
+    case shadowExplorationCube = "Marker Kubus"
+    case shadowExplorationSphere = "Marker Bola"
+    case review = "Tombol Info"
+    case drawingPrompt = "Mulai Gambar"
+    case completed = "Selesai"
+
+    var id: String { rawValue }
+}
+
 @MainActor
 @Observable
 final class Level3ViewModel: ARSceneTelemetryDelegate {
@@ -33,7 +44,8 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
 
     private static let fixedBeamSpreadDegrees: Float = 54
     private static let fixedLightIntensity: Float = 3_200
-    private static let requiredShadowConcepts: Set<ShadowConcept> = [.lightSide, .shadowSide, .castShadow, .reflectedLight]
+    private static let cubeRequiredShadowConcepts: Set<ShadowConcept> = [.lightSide, .shadowSide, .castShadow]
+    private static let sphereRequiredShadowConcepts: Set<ShadowConcept> = [.lightSide, .shadowSide, .castShadow, .reflectedLight]
 
     let arSceneViewModel = ARSceneViewModel()
     var lastMarkerTapTime: Date = Date.distantPast
@@ -53,9 +65,14 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     private(set) var hasComparedShapes = false
     private(set) var isNarrationComplete = false
     private(set) var markerNarrationTrigger = 0
+    private(set) var narrationRevision = 0
     @ObservationIgnored private var comparedShapes: Set<ComparisonShape> = []
+    @ObservationIgnored private var comparisonHistory: [ComparisonShape] = []
+    @ObservationIgnored private var visitedShadowConceptHistory: [ShadowConcept] = []
     private(set) var successFeedbackTrigger = 0
     private(set) var progressCelebration: LessonProgressCelebration?
+    private(set) var isTransitioning = false
+    private(set) var guideOverlayScreenPosition: CGPoint?
     
     private(set) var isShadowInfoOpen = false
     private(set) var hasSelectedShadowTypesMenu = false
@@ -73,17 +90,24 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     @ObservationIgnored private let progressStore: GameProgressStore
     @ObservationIgnored private var previousCameraForward = SIMD3<Float>(0, 0, -1)
     @ObservationIgnored private var resumePhaseAfterPlacement: Level3Phase?
+    @ObservationIgnored private var markerCompletionTask: Task<Void, Never>?
+    @ObservationIgnored private var transitionGateTask: Task<Void, Never>?
+    @ObservationIgnored private var discardsPendingFrozenSceneSnapshot = false
+    @ObservationIgnored private var drawingPhotoSaveRevision = 0
+    @ObservationIgnored private var lastExplainedShadowConcept: ShadowConcept?
+    @ObservationIgnored private var lastExplainedConceptWorldPosition: SIMD3<Float>?
+    @ObservationIgnored private var pendingHiddenShadowConcept: ShadowConcept?
+
+    private let transitionDebounceDuration = Duration.milliseconds(320)
     
     // MARK: - AR Guide (Bayo) State
+    @ObservationIgnored private weak var guideParent: Entity?
     @ObservationIgnored private var guideRoot: Entity?
     @ObservationIgnored private var guideCharacter: Entity?
     @ObservationIgnored private var guideCharacterAsset: CharacterGuideAsset?
     @ObservationIgnored private var guideCloud: Entity?
     @ObservationIgnored private var guideText: String?
     @ObservationIgnored private var guideNeedsPlacement = true
-    // Bayo terbang mengikuti kamera persis seperti Lumi di Level 1: titik tujuan
-    // ada di depan-kanan pemain, lalu Bayo meluncur halus ke sana tiap frame.
-    // Angka-angka ini menyamai Level1ViewModel supaya rasa "melayang"-nya sama.
     @ObservationIgnored private let guideForwardDistance: Float = 0.66
     @ObservationIgnored private let guideRightDistance: Float = 0.30
     @ObservationIgnored private let guideVerticalOffset: Float = -0.54
@@ -99,7 +123,6 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     init(progressStore: GameProgressStore? = nil) {
         self.progressStore = progressStore ?? .shared
         configureLearningScene()
-        setupGuideCharacterIfNeeded()
     }
 
     var currentOnboardingLine: DialogLine { Level3Content.onboardingDialog[onboardingIndex] }
@@ -118,16 +141,27 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         
         switch phase {
         case .onboarding: return currentOnboardingLine.text
-        case .placingScene: return "Arahkan titik tengah layar ke meja atau lantai, lalu tekan tombol Taruh Benda di Tengah."
+        case .placingScene: return Level3Content.placementNarration.text
         case .surfaceReady: return "Permukaan dan posisi benda sudah siap. Pilih Lanjut untuk mulai belajar, atau Scan Ulang untuk mengatur ulang permukaan."
-        case .shadowExploration: return hasCompletedShadowTask ? currentShadowTriviaLine.text : currentOnboardingLine.text
+        case .shadowExploration:
+            if let lastExplainedShadowConcept {
+                return text(for: lastExplainedShadowConcept)
+            }
+            if hasCompletedShadowTask {
+                return currentShadowTriviaLine.text
+            }
+            return markerRound == .cube ? currentOnboardingLine.text : currentShadowTriviaLine.text
         case .shadowTrivia: return currentShadowTriviaLine.text
         case .shadowTypesInteraction: return currentShadowTypesLine.text
         case .shapeComparison: return "Pilih kubus dan bola. Bandingkan bentuk bayangan yang dihasilkan keduanya."
         case .closing: return currentClosingLine.text
-        case .review: return currentReviewLine.text
+        case .review:
+            if let lastExplainedShadowConcept {
+                return text(for: lastExplainedShadowConcept)
+            }
+            return currentReviewLine.text
         case .drawingPrompt, .drawingReady, .photoPrompt, .photoComparison: return currentDrawingLine.text
-        case .completed: return "Level tiga selesai. Kamu hebat, Detektif Bayangan!"
+        case .completed: return Level3Content.completedNarration.text
         }
     }
     
@@ -138,17 +172,19 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         
         switch phase {
         case .onboarding: return currentOnboardingLine.audioFileName
+        case .placingScene: return Level3Content.placementNarration.audioFileName
         case .shadowTrivia: return currentShadowTriviaLine.audioFileName
         case .shadowTypesInteraction: return currentShadowTypesLine.audioFileName
         case .closing: return currentClosingLine.audioFileName
         case .review: return currentReviewLine.audioFileName
         case .drawingPrompt, .drawingReady, .photoPrompt, .photoComparison: return currentDrawingLine.audioFileName
+        case .completed: return Level3Content.completedNarration.audioFileName
         default: return nil
         }
     }
     
     private var currentGuideAsset: CharacterGuideAsset {
-        if arSceneViewModel.selectedConcept != nil {
+        if arSceneViewModel.selectedConcept != nil || lastExplainedShadowConcept != nil {
             return .bayoPoint
         }
         
@@ -180,18 +216,19 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     }
     
     var narrationID: String {
+        let revisionID = "revision-\(narrationRevision)"
         if phase == .shadowExploration,
            arSceneViewModel.selectedConcept == nil,
            visitedShadowConcepts.isEmpty,
            !hasCompletedShadowTask {
             switch markerRound {
             case .cube:
-                return "onboarding-\(Level3Content.onboardingDialog.count - 1)-\(shadowTriviaIndex)-\(shadowTypesIndex)-\(closingIndex)-\(reviewIndex)"
+                return "onboarding-\(Level3Content.onboardingDialog.count - 1)-\(shadowTriviaIndex)-\(shadowTypesIndex)-\(closingIndex)-\(reviewIndex)-\(drawingIndex)-\(revisionID)"
             case .sphere:
-                return "shadowTrivia-\(Level3Content.shadowTrivia.count - 1)-\(shadowTypesIndex)-\(closingIndex)-\(reviewIndex)"
+                return "shadowTrivia-\(onboardingIndex)-\(Level3Content.shadowTrivia.count - 1)-\(shadowTypesIndex)-\(closingIndex)-\(reviewIndex)-\(drawingIndex)-\(revisionID)"
             }
         }
-        return "\(phase)-\(onboardingIndex)-\(shadowTriviaIndex)-\(shadowTypesIndex)-\(closingIndex)-\(reviewIndex)-\(drawingIndex)"
+        return "\(phase)-\(onboardingIndex)-\(shadowTriviaIndex)-\(shadowTypesIndex)-\(closingIndex)-\(reviewIndex)-\(drawingIndex)-\(revisionID)"
     }
     
     func forceSyncGuideForConcept() {
@@ -226,9 +263,57 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         }
     }
 
-    var shadowProgress: Int { min(visitedShadowConcepts.count, Self.requiredShadowConcepts.count) }
-    var shadowConceptTargetCount: Int { Self.requiredShadowConcepts.count }
-    var canAdvanceCurrentDialog: Bool { isNarrationComplete && arSceneViewModel.selectedConcept == nil }
+    var shadowProgress: Int { min(visitedShadowConcepts.count, requiredShadowConcepts.count) }
+    var shadowConceptTargetCount: Int { requiredShadowConcepts.count }
+    var canAdvanceCurrentDialog: Bool {
+        !isTransitioning
+            && (isNarrationComplete || canSkipCompletedLevelDialog)
+            && arSceneViewModel.selectedConcept == nil
+    }
+
+    var showsGuideOverlay: Bool {
+        switch phase {
+        case .placingScene, .drawingReady, .photoPrompt, .photoComparison, .completed:
+            false
+        default:
+            true
+        }
+    }
+
+    var guideOverlayAssetName: String {
+        currentGuideAsset.rawValue
+    }
+
+    var narrationAudioFileNames: [String] {
+        guard let narrationAudioFileName else { return [] }
+        return [narrationAudioFileName].deduplicatedKeepingOrder()
+    }
+
+    var shouldSpeakNarration: Bool {
+        !(phase == .shadowExploration && arSceneViewModel.selectedConcept == nil && !hasCompletedShadowTask)
+    }
+
+    var areReviewMarkersVisible: Bool {
+        requiredShadowConcepts.isDisjoint(with: arSceneViewModel.hiddenShadowConcepts)
+    }
+
+    private var requiredShadowConcepts: Set<ShadowConcept> {
+        switch markerRound {
+        case .cube:
+            Self.cubeRequiredShadowConcepts
+        case .sphere:
+            Self.sphereRequiredShadowConcepts
+        }
+    }
+
+    private var canSkipCompletedLevelDialog: Bool {
+        progressStore.isLevelCompleted(Level3Content.levelID)
+    }
+
+    private func registerDialogSkipIfNeeded() {
+        guard canSkipCompletedLevelDialog, !isNarrationComplete else { return }
+        narrationRevision += 1
+    }
 
     func narrationWillStart() {
         isNarrationComplete = false
@@ -257,6 +342,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
 
     func advanceOnboarding() {
         guard phase == .onboarding, canAdvanceCurrentDialog else { return }
+        registerDialogSkipIfNeeded()
         if onboardingIndex == 0, !arSceneViewModel.isObjectPlaced {
             phase = .placingScene
         } else if onboardingIndex == 1, !arSceneViewModel.isObjectPlaced {
@@ -266,7 +352,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         } else {
             onboardingIndex += 1
         }
-        isNarrationComplete = false
+        isNarrationComplete = phase == .shadowExploration && canSkipCompletedLevelDialog
         syncShadowConceptSelectionAvailability()
         syncGuidePresentation()
     }
@@ -282,8 +368,6 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
             isNarrationComplete = false
             syncShadowConceptSelectionAvailability()
         }
-        
-        setupGuideCharacterIfNeeded()
         syncGuidePresentation()
     }
 
@@ -315,7 +399,13 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     }
 
     func sceneDidReset() {
+        markerCompletionTask?.cancel()
+        markerCompletionTask = nil
+        drawingPhotoSaveRevision += 1
+        discardsPendingFrozenSceneSnapshot = true
+        clearLastExplainedMarker()
         visitedShadowConcepts.removeAll()
+        visitedShadowConceptHistory.removeAll()
         hasCompletedShadowTask = false
         markerRound = .cube
         shadowVisible = false
@@ -328,7 +418,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         showsDrawingCamera = false
         showsFreezeSceneConfirmation = false
         isSavingDrawingPhoto = false
-        arSceneViewModel.hiddenShadowConcepts.removeAll()
+        resetHiddenShadowConceptsForCurrentRound()
         arSceneViewModel.isShadowConceptSelectionEnabled = false
         guideNeedsPlacement = true
         guideRoot?.isEnabled = false
@@ -396,33 +486,70 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     }
 
     func didSelectShadowConcept(_ concept: ShadowConcept) {
-        guard phase == .shadowExploration,
-              !hasCompletedShadowTask,
-              Self.requiredShadowConcepts.contains(concept),
-              !visitedShadowConcepts.contains(concept) else {
-            arSceneViewModel.selectedConcept = nil
+        guard !isTransitioning else { return }
+        if phase == .review, requiredShadowConcepts.contains(concept) {
+            lastExplainedShadowConcept = concept
+            lastExplainedConceptWorldPosition = arSceneViewModel.selectedConceptWorldPosition
+            arSceneViewModel.isShadowConceptSelectionEnabled = false
+            scheduleMarkerCompletionFallback(for: concept)
+            syncGuidePresentation()
             return
         }
+
+        guard phase == .shadowExploration,
+              !hasCompletedShadowTask,
+              requiredShadowConcepts.contains(concept),
+              !visitedShadowConcepts.contains(concept) else {
+            arSceneViewModel.selectedConcept = nil
+            arSceneViewModel.selectedConceptWorldPosition = nil
+            syncGuidePresentation()
+            return
+        }
+        hidePendingCompletedMarker()
         visitedShadowConcepts.insert(concept)
+        visitedShadowConceptHistory.append(concept)
+        lastExplainedShadowConcept = concept
+        lastExplainedConceptWorldPosition = arSceneViewModel.selectedConceptWorldPosition
         arSceneViewModel.isShadowConceptSelectionEnabled = false
+        scheduleMarkerCompletionFallback(for: concept)
         syncGuidePresentation()
     }
 
-    private func completeSelectedShadowConcept() {
-        guard phase == .shadowExploration,
-              let concept = arSceneViewModel.selectedConcept else {
+    private func completeSelectedShadowConcept(cancelsFallback: Bool = true) {
+        guard let concept = arSceneViewModel.selectedConcept else {
             syncShadowConceptSelectionAvailability()
             return
         }
 
-        arSceneViewModel.hiddenShadowConcepts.insert(concept)
+        if phase == .review {
+            if cancelsFallback {
+                markerCompletionTask?.cancel()
+                markerCompletionTask = nil
+            }
+            arSceneViewModel.selectedConcept = nil
+            arSceneViewModel.selectedConceptWorldPosition = nil
+            syncShadowConceptSelectionAvailability()
+            syncGuidePresentation()
+            return
+        }
+
+        guard phase == .shadowExploration else {
+            syncShadowConceptSelectionAvailability()
+            return
+        }
+
+        if cancelsFallback {
+            markerCompletionTask?.cancel()
+            markerCompletionTask = nil
+        }
+        pendingHiddenShadowConcept = concept
         arSceneViewModel.selectedConcept = nil
         arSceneViewModel.selectedConceptWorldPosition = nil
 
-        if Self.requiredShadowConcepts.isSubset(of: visitedShadowConcepts) {
+        if requiredShadowConcepts.isSubset(of: visitedShadowConcepts) {
             hasCompletedShadowTask = true
             successFeedbackTrigger += 1
-            arSceneViewModel.hiddenShadowConcepts.removeAll()
+            hidePendingCompletedMarker()
             switch markerRound {
             case .cube:
                 continueFromShadowTask()
@@ -435,16 +562,45 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         }
     }
 
+    private func scheduleMarkerCompletionFallback(for concept: ShadowConcept) {
+        markerCompletionTask?.cancel()
+        let delay = markerFallbackDelay(for: concept)
+        markerCompletionTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self,
+                  self.phase == .shadowExploration,
+                  self.arSceneViewModel.selectedConcept == concept else { return }
+            self.markerCompletionTask = nil
+            self.isNarrationComplete = true
+            self.completeSelectedShadowConcept(cancelsFallback: false)
+        }
+    }
+
+    private func markerFallbackDelay(for concept: ShadowConcept) -> Double {
+        let wordCount = Double(text(for: concept).split(separator: " ").count)
+        return max(wordCount * 0.40 + 0.8, 3.0)
+    }
+
     private func syncShadowConceptSelectionAvailability() {
-        arSceneViewModel.isShadowConceptSelectionEnabled = phase == .shadowExploration
-            && isNarrationComplete
-            && arSceneViewModel.selectedConcept == nil
-            && !hasCompletedShadowTask
+        arSceneViewModel.isShadowConceptSelectionEnabled =
+            (
+                phase == .shadowExploration
+                && isNarrationComplete
+                && arSceneViewModel.selectedConcept == nil
+                && !hasCompletedShadowTask
+            )
+            || (
+                phase == .review
+                && arSceneViewModel.selectedConcept == nil
+                && areReviewMarkersVisible
+            )
     }
 
     func continueFromShadowTask() {
         guard hasCompletedShadowTask else { return }
-        arSceneViewModel.hiddenShadowConcepts.removeAll()
+        markerCompletionTask?.cancel()
+        markerCompletionTask = nil
+        clearLastExplainedMarker()
         arSceneViewModel.selectedConcept = nil
         arSceneViewModel.selectedConceptWorldPosition = nil
         phase = .shadowTrivia
@@ -455,10 +611,14 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     }
 
     private func startSphereShadowTask() {
+        markerCompletionTask?.cancel()
+        markerCompletionTask = nil
+        clearLastExplainedMarker()
         markerRound = .sphere
         visitedShadowConcepts.removeAll()
+        visitedShadowConceptHistory.removeAll()
         hasCompletedShadowTask = false
-        arSceneViewModel.hiddenShadowConcepts.removeAll()
+        resetHiddenShadowConceptsForCurrentRound()
         arSceneViewModel.selectedConcept = nil
         arSceneViewModel.selectedConceptWorldPosition = nil
         chooseObjectTypeForShadowTypes(.sphere)
@@ -469,11 +629,17 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     }
 
     private func continueToInfoButtonGuide() {
-        arSceneViewModel.hiddenShadowConcepts.removeAll()
+        markerCompletionTask?.cancel()
+        markerCompletionTask = nil
+        clearLastExplainedMarker()
         arSceneViewModel.selectedConcept = nil
         arSceneViewModel.selectedConceptWorldPosition = nil
-        phase = .closing
-        closingIndex = 0
+        arSceneViewModel.hiddenShadowConcepts.removeAll()
+        arSceneViewModel.showShadowLabels = true
+        isShadowInfoOpen = false
+        arSceneViewModel.showShadowInformation = false
+        phase = .review
+        reviewIndex = Level3Content.reviewDialog.count - 1
         isNarrationComplete = false
         syncShadowConceptSelectionAvailability()
         syncGuidePresentation()
@@ -481,6 +647,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     
     func advanceShadowTrivia() {
         guard phase == .shadowTrivia, canAdvanceCurrentDialog else { return }
+        registerDialogSkipIfNeeded()
         if shadowTriviaIndex == Level3Content.shadowTrivia.count - 1 {
             startSphereShadowTask()
             return
@@ -520,11 +687,24 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
 
     func handleShadowTypesMenuTap() {
         guard phase == .review else { return }
-        arSceneViewModel.showShadowLabels.toggle()
+        toggleReviewMarkers()
         hasSelectedShadowTypesMenu = true
         if reviewIndex == 1, canAdvanceCurrentDialog {
             advanceReview()
         }
+    }
+
+    private func toggleReviewMarkers() {
+        if areReviewMarkersVisible {
+            arSceneViewModel.hiddenShadowConcepts.formUnion(requiredShadowConcepts)
+            arSceneViewModel.selectedConcept = nil
+            arSceneViewModel.selectedConceptWorldPosition = nil
+            clearLastExplainedMarker()
+        } else {
+            arSceneViewModel.hiddenShadowConcepts.subtract(requiredShadowConcepts)
+        }
+        syncShadowConceptSelectionAvailability()
+        syncGuidePresentation()
     }
 
     func closeShadowInfo() {
@@ -536,6 +716,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     
     func advanceShadowTypes() {
         guard phase == .shadowTypesInteraction, canAdvanceCurrentDialog else { return }
+        registerDialogSkipIfNeeded()
         if shadowTypesIndex == Level3Content.shadowTypesTrivia.count - 1 { phase = .shapeComparison } else { shadowTypesIndex += 1 }
         isNarrationComplete = false
         syncShadowConceptSelectionAvailability()
@@ -550,8 +731,11 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     }
 
     func chooseComparison(_ shape: ComparisonShape) {
+        guard !isTransitioning else { return }
         selectedComparison = shape
         comparedShapes.insert(shape)
+        comparisonHistory.removeAll { $0 == shape }
+        comparisonHistory.append(shape)
         hasComparedShapes = comparedShapes.count == ComparisonShape.allCases.count
         let target = shape.objectType
         arSceneViewModel.updateSelectedObject { object in
@@ -566,6 +750,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
 
     func finishShapeComparison() {
         guard phase == .shapeComparison, hasComparedShapes, canAdvanceCurrentDialog else { return }
+        registerDialogSkipIfNeeded()
         phase = .closing
         closingIndex = 0
         isNarrationComplete = false
@@ -585,6 +770,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
 
     func advanceClosing() {
         guard phase == .closing, canAdvanceCurrentDialog else { return }
+        registerDialogSkipIfNeeded()
         if closingIndex == Level3Content.closingDialog.count - 1 {
             phase = .review
             reviewIndex = 0
@@ -598,6 +784,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
 
     func advanceReview() {
         guard phase == .review, canAdvanceCurrentDialog else { return }
+        registerDialogSkipIfNeeded()
         if reviewIndex == Level3Content.reviewDialog.count - 1 {
             startDrawingPrompt()
         } else {
@@ -609,6 +796,10 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     }
 
     private func startDrawingPrompt() {
+        arSceneViewModel.hiddenShadowConcepts.formUnion(requiredShadowConcepts)
+        arSceneViewModel.selectedConcept = nil
+        arSceneViewModel.selectedConceptWorldPosition = nil
+        clearLastExplainedMarker()
         phase = .drawingPrompt
         drawingIndex = 0
         isNarrationComplete = false
@@ -620,6 +811,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
 
     func requestFreezeSceneForDrawing() {
         guard phase == .drawingPrompt, canAdvanceCurrentDialog else { return }
+        registerDialogSkipIfNeeded()
         showsFreezeSceneConfirmation = true
     }
 
@@ -634,6 +826,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         }
 
         showsFreezeSceneConfirmation = false
+        discardsPendingFrozenSceneSnapshot = false
         frozenSceneImage = nil
         arSceneViewModel.isViewFrozen = true
         arSceneViewModel.captureSnapshot()
@@ -646,6 +839,10 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     }
 
     func completeFrozenSceneSnapshot(_ image: UIImage?) {
+        if discardsPendingFrozenSceneSnapshot {
+            discardsPendingFrozenSceneSnapshot = false
+            return
+        }
         guard let image, frozenSceneImage == nil else { return }
         frozenSceneImage = image
         if phase == .drawingPrompt {
@@ -679,9 +876,13 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     func completeUserDrawingPhoto(_ image: UIImage) {
         showsDrawingCamera = false
         isSavingDrawingPhoto = true
+        drawingPhotoSaveRevision += 1
+        let saveRevision = drawingPhotoSaveRevision
         saveImageToPhotoLibrary(image) { [weak self] success, message in
             guard let self else { return }
             self.isSavingDrawingPhoto = false
+            guard self.drawingPhotoSaveRevision == saveRevision,
+                  self.phase == .photoPrompt else { return }
             guard success else {
                 self.photoSaveMessage = message
                 return
@@ -709,6 +910,282 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         successFeedbackTrigger += 1
         syncGuidePresentation()
     }
+
+    var canGoBackToPreviousState: Bool {
+        switch phase {
+        case .placingScene, .surfaceReady, .completed:
+            false
+        case .onboarding:
+            onboardingIndex > 0
+        default:
+            true
+        }
+    }
+
+    /// Mengulang aksi terakhir tanpa mereset AR session atau anchor scene.
+    func goBackToPreviousState() {
+        guard canGoBackToPreviousState, beginInteractionTransition() else { return }
+
+        cancelPendingMarkerCompletion()
+        drawingPhotoSaveRevision += 1
+        isSavingDrawingPhoto = false
+        showsFreezeSceneConfirmation = false
+        showsDrawingCamera = false
+        photoSaveMessage = nil
+        progressCelebration = nil
+
+        switch phase {
+        case .onboarding:
+            onboardingIndex -= 1
+
+        case .shadowExploration:
+            goBackFromShadowExploration()
+
+        case .shadowTrivia:
+            if shadowTriviaIndex > 0 {
+                shadowTriviaIndex -= 1
+                chooseObjectTypeForShadowTypes(.cube)
+            } else {
+                restoreLastMarkerAction(for: .cube)
+            }
+
+        case .shadowTypesInteraction:
+            if shadowTypesIndex > 0 {
+                shadowTypesIndex -= 1
+            } else {
+                restoreLastMarkerAction(for: .sphere)
+            }
+
+        case .shapeComparison:
+            goBackFromShapeComparison()
+
+        case .closing:
+            if closingIndex > 0 {
+                closingIndex -= 1
+            } else {
+                phase = .shapeComparison
+                hasComparedShapes = true
+                comparedShapes = Set(ComparisonShape.allCases)
+                comparisonHistory = ComparisonShape.allCases
+            }
+
+        case .review:
+            goBackFromReview()
+
+        case .drawingPrompt:
+            phase = .review
+            reviewIndex = Level3Content.reviewDialog.count - 1
+
+        case .drawingReady:
+            phase = .drawingPrompt
+            drawingIndex = 0
+            discardsPendingFrozenSceneSnapshot = frozenSceneImage == nil
+                && arSceneViewModel.isSavingSnapshot
+            frozenSceneImage = nil
+            arSceneViewModel.capturedSnapshotImage = nil
+            arSceneViewModel.isViewFrozen = false
+
+        case .photoPrompt:
+            phase = .drawingReady
+            drawingIndex = 3
+
+        case .photoComparison:
+            phase = .photoPrompt
+            drawingIndex = 6
+            userDrawingImage = nil
+
+        case .placingScene, .surfaceReady, .completed:
+            break
+        }
+
+        isNarrationComplete = phase == .shadowExploration
+        narrationRevision += 1
+        syncShadowConceptSelectionAvailability()
+        syncGuidePresentation()
+    }
+
+    private func goBackFromShadowExploration() {
+        if let selectedConcept = arSceneViewModel.selectedConcept {
+            visitedShadowConcepts.remove(selectedConcept)
+            visitedShadowConceptHistory.removeAll { $0 == selectedConcept }
+            arSceneViewModel.hiddenShadowConcepts.remove(selectedConcept)
+            arSceneViewModel.selectedConcept = nil
+            arSceneViewModel.selectedConceptWorldPosition = nil
+            clearLastExplainedMarker()
+            hasCompletedShadowTask = false
+            isNarrationComplete = true
+            return
+        }
+
+        if !visitedShadowConcepts.isEmpty {
+            undoLastVisitedMarker()
+            isNarrationComplete = true
+            return
+        }
+
+        switch markerRound {
+        case .cube:
+            phase = .onboarding
+            onboardingIndex = Level3Content.onboardingDialog.count - 1
+        case .sphere:
+            phase = .shadowTrivia
+            shadowTriviaIndex = Level3Content.shadowTrivia.count - 1
+        }
+    }
+
+    private func restoreLastMarkerAction(for round: ShadowMarkerRound) {
+        markerRound = round
+        phase = .shadowExploration
+        switch round {
+        case .cube:
+            chooseObjectTypeForShadowTypes(.cube)
+        case .sphere:
+            chooseObjectTypeForShadowTypes(.sphere)
+        }
+        hasCompletedShadowTask = false
+        undoLastVisitedMarker()
+        isNarrationComplete = true
+    }
+
+    private func undoLastVisitedMarker() {
+        let concept = visitedShadowConceptHistory.popLast() ?? visitedShadowConcepts.first
+        if let concept {
+            visitedShadowConcepts.remove(concept)
+            arSceneViewModel.hiddenShadowConcepts.remove(concept)
+        }
+        clearLastExplainedMarker()
+        arSceneViewModel.selectedConcept = nil
+        arSceneViewModel.selectedConceptWorldPosition = nil
+        resetHiddenConceptVisibilityKeepingProgress()
+    }
+
+    private func resetHiddenConceptVisibilityKeepingProgress() {
+        let unavailableConcepts: Set<ShadowConcept> = markerRound == .cube ? [.reflectedLight] : []
+        arSceneViewModel.hiddenShadowConcepts = visitedShadowConcepts.union(unavailableConcepts)
+    }
+
+    private func goBackFromShapeComparison() {
+        guard let lastShape = comparisonHistory.popLast() ?? comparedShapes.first else {
+            phase = .shadowTypesInteraction
+            shadowTypesIndex = Level3Content.shadowTypesTrivia.count - 1
+            return
+        }
+
+        comparedShapes.remove(lastShape)
+        hasComparedShapes = false
+        selectedComparison = comparisonHistory.last ?? ComparisonShape.allCases[0]
+        chooseObjectTypeForShadowTypes(selectedComparison.objectType)
+    }
+
+    private func goBackFromReview() {
+        if reviewIndex == Level3Content.reviewDialog.count - 1,
+           !hasSelectedShadowTypesMenu,
+           markerRound == .sphere,
+           hasCompletedShadowTask {
+            restoreLastMarkerAction(for: .sphere)
+            return
+        }
+
+        if reviewIndex == 0 {
+            phase = .closing
+            closingIndex = Level3Content.closingDialog.count - 1
+            closeShadowInfo()
+        } else if reviewIndex == 1 {
+            reviewIndex = 0
+            hasSelectedShadowTypesMenu = false
+            closeShadowInfo()
+        } else {
+            reviewIndex -= 1
+            // Action sebelumnya mengubah visibilitas marker. Kembalikan juga
+            // efek visualnya supaya tombol tersebut benar-benar dapat diulang.
+            toggleReviewMarkers()
+            hasSelectedShadowTypesMenu = false
+            isShadowInfoOpen = true
+            arSceneViewModel.showShadowInformation = true
+        }
+    }
+
+    private func cancelPendingMarkerCompletion() {
+        markerCompletionTask?.cancel()
+        markerCompletionTask = nil
+    }
+
+    private func beginInteractionTransition() -> Bool {
+        guard !isTransitioning else { return false }
+        isTransitioning = true
+        transitionGateTask?.cancel()
+        transitionGateTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: transitionDebounceDuration)
+            guard !Task.isCancelled else { return }
+            isTransitioning = false
+            transitionGateTask = nil
+        }
+        return true
+    }
+
+    #if DEBUG
+    func jumpToDevFlow(_ flow: Level3DevFlow) {
+        arSceneViewModel.selectedConcept = nil
+        arSceneViewModel.selectedConceptWorldPosition = nil
+        isShadowInfoOpen = false
+        arSceneViewModel.showShadowInformation = false
+        showsFreezeSceneConfirmation = false
+        showsDrawingCamera = false
+        isSavingDrawingPhoto = false
+        progressCelebration = nil
+
+        switch flow {
+        case .onboarding:
+            phase = .onboarding
+            onboardingIndex = 0
+            markerRound = .cube
+            visitedShadowConcepts.removeAll()
+            visitedShadowConceptHistory.removeAll()
+            hasCompletedShadowTask = false
+            isNarrationComplete = true
+            chooseObjectTypeForShadowTypes(.cube)
+        case .shadowExplorationCube:
+            phase = .shadowExploration
+            markerRound = .cube
+            visitedShadowConcepts.removeAll()
+            visitedShadowConceptHistory.removeAll()
+            hasCompletedShadowTask = false
+            isNarrationComplete = true
+            chooseObjectTypeForShadowTypes(.cube)
+        case .shadowExplorationSphere:
+            phase = .shadowExploration
+            markerRound = .sphere
+            visitedShadowConcepts.removeAll()
+            visitedShadowConceptHistory.removeAll()
+            hasCompletedShadowTask = false
+            isNarrationComplete = true
+            chooseObjectTypeForShadowTypes(.sphere)
+        case .review:
+            phase = .review
+            reviewIndex = 0
+            markerRound = .sphere
+            visitedShadowConcepts = Self.sphereRequiredShadowConcepts
+            hasCompletedShadowTask = true
+            isNarrationComplete = true
+            chooseObjectTypeForShadowTypes(.sphere)
+        case .drawingPrompt:
+            phase = .drawingPrompt
+            drawingIndex = 0
+            markerRound = .sphere
+            isNarrationComplete = true
+            chooseObjectTypeForShadowTypes(.sphere)
+        case .completed:
+            phase = .completed
+            markerRound = .sphere
+            isNarrationComplete = true
+        }
+
+        resetHiddenShadowConceptsForCurrentRound()
+        syncShadowConceptSelectionAvailability()
+        syncGuidePresentation()
+    }
+    #endif
 
     private func saveImageToPhotoLibrary(_ image: UIImage, completion: @escaping (Bool, String?) -> Void) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
@@ -742,7 +1219,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.showGroundProjection = true
         arSceneViewModel.showShadowLabels = true
         arSceneViewModel.showShadowInformation = false
-        arSceneViewModel.hiddenShadowConcepts.removeAll()
+        resetHiddenShadowConceptsForCurrentRound()
         arSceneViewModel.isShadowConceptSelectionEnabled = false
 
         arSceneViewModel.objectDirectManipulationLocked = true
@@ -775,16 +1252,40 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
             object.scale = 0.85
         }
     }
+
+    private func resetHiddenShadowConceptsForCurrentRound() {
+        arSceneViewModel.hiddenShadowConcepts = markerRound == .cube ? [.reflectedLight] : []
+    }
+
+    private func clearLastExplainedMarker() {
+        lastExplainedShadowConcept = nil
+        lastExplainedConceptWorldPosition = nil
+        pendingHiddenShadowConcept = nil
+    }
+
+    private func hidePendingCompletedMarker() {
+        guard let pendingHiddenShadowConcept else { return }
+        arSceneViewModel.hiddenShadowConcepts.insert(pendingHiddenShadowConcept)
+        self.pendingHiddenShadowConcept = nil
+    }
     
     // MARK: - AR Guide Character Logic (Bayo)
     
-    private func setupGuideCharacterIfNeeded() {
+    func attachGuideIfNeeded(to parent: Entity) {
+        if guideParent !== parent {
+            guideRoot?.removeFromParent()
+            guideRoot = nil
+            guideParent = parent
+            guideCharacter = nil
+            guideCharacterAsset = nil
+            guideCloud = nil
+            guideText = nil
+            guideNeedsPlacement = true
+        }
+
         guard guideRoot == nil else { return }
         let guide = Entity()
         guide.name = "Level 3 Guide - Bayo"
-        // Bayo dipasang di anchor DUNIA (lihat Level3ARContainerView), jadi di
-        // sini tidak ada offset kamera tetap. Posisi world-nya dihitung ulang
-        // tiap frame di `followGuide` supaya efek terbangnya seperti Lumi.
         guide.isEnabled = false
         let asset = currentGuideAsset
         if let character = CharacterGuideFactory.makeCharacter(asset: asset, width: 0.10, height: 0.14) {
@@ -792,20 +1293,56 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
             guideCharacter = character
             guideCharacterAsset = asset
         }
-        
-        arSceneViewModel.addEntityToScene(guide)
+        parent.addChild(guide)
         guideRoot = guide
     }
     
     private func updateGuidePosition(cameraPosition: SIMD3<Float>, cameraForward: SIMD3<Float>) {
-        // Forward diratakan ke bidang horizontal (buang komponen Y) supaya Bayo
-        // tetap melayang datar walau iPad dimiringkan ke atas/bawah.
-        let horizontalForward = SIMD3<Float>(cameraForward.x, 0, cameraForward.z)
+        guard let guide = guideRoot else { return }
+        let horizontalForward = SIMD2<Float>(cameraForward.x, cameraForward.z)
         let forwardLength = simd_length(horizontalForward)
-        let forward = forwardLength > 0.0001 ? horizontalForward / forwardLength : SIMD3<Float>(0, 0, -1)
-        // Rotasi -90° pada sumbu Y → arah "kanan" kamera di bidang horizontal.
-        let right = SIMD3<Float>(-forward.z, 0, forward.x)
-        followGuide(cameraPosition: cameraPosition, horizontalForward: forward, horizontalRight: right)
+        guard forwardLength > 0.0001 else { return }
+
+        let normalizedForward = horizontalForward / forwardLength
+        let forward3D = SIMD3<Float>(normalizedForward.x, 0, normalizedForward.y)
+        let right = SIMD3<Float>(-normalizedForward.y, 0, normalizedForward.x)
+        let defaultDestination = cameraPosition
+            + forward3D * guideForwardDistance
+            + right * guideRightDistance
+            + SIMD3<Float>(0, guideVerticalOffset, 0)
+        let destination: SIMD3<Float>
+        if let markerPosition = arSceneViewModel.selectedConceptWorldPosition ?? lastExplainedConceptWorldPosition {
+            destination = markerPosition + SIMD3<Float>(0.18, 0.08, 0.12)
+        } else {
+            destination = defaultDestination
+        }
+
+        if guideNeedsPlacement {
+            guide.position = destination
+            guideNeedsPlacement = false
+        } else {
+            guide.position += (destination - guide.position) * guideFollowLerp
+        }
+
+        guide.look(at: cameraPosition, from: guide.position, relativeTo: nil)
+        guideCloud?.position = defaultGuideCloudPosition
+        syncGuidePresentation()
+    }
+
+    var guideOverlayWorldPosition: SIMD3<Float>? {
+        guard showsGuideOverlay, !guideNeedsPlacement, let guideRoot else { return nil }
+        return guideRoot.position(relativeTo: nil)
+    }
+
+    func updateGuideOverlayScreenPosition(_ position: CGPoint?) {
+        switch (guideOverlayScreenPosition, position) {
+        case let (current?, next?) where hypot(current.x - next.x, current.y - next.y) < 1:
+            return
+        case (nil, nil):
+            return
+        default:
+            guideOverlayScreenPosition = position
+        }
     }
 
     private func updateGuidePosition(
@@ -814,97 +1351,13 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         cameraRight: SIMD3<Float>,
         cameraUp: SIMD3<Float>
     ) {
-        // Right/up dari telemetry sengaja tidak dipakai langsung: Bayo memakai
-        // forward yang sudah diratakan (seperti Lumi) agar posisinya stabil.
         updateGuidePosition(cameraPosition: cameraPosition, cameraForward: cameraForward)
-    }
-
-    /// Follow ala Lumi (Level 1): hitung titik tujuan di depan-kanan kamera,
-    /// luncurkan Bayo ke sana secara halus (efek "terbang"), tambahkan bob
-    /// vertikal kecil, lalu hadapkan Bayo ke pemain.
-    private func followGuide(
-        cameraPosition: SIMD3<Float>,
-        horizontalForward forward: SIMD3<Float>,
-        horizontalRight right: SIMD3<Float>
-    ) {
-        guard let guide = guideRoot else { return }
-
-        let time = Float(CACurrentMediaTime())
-        let bob = SIMD3<Float>(0, sin(time * 1.6) * 0.014, 0)
-
-        let destination: SIMD3<Float>
-        if arSceneViewModel.selectedConcept != nil,
-           let markerPosition = arSceneViewModel.selectedConceptWorldPosition {
-            // Bayo terbang menghampiri white mark yang dipencet (seperti Lumi
-            // mendekati marker di Level 1). Ia berdiri di sisi marker yang
-            // mengarah ke pemain supaya tidak menutupi titiknya.
-            let side: Float = simd_dot(markerPosition - cameraPosition, right) > 0 ? -1 : 1
-            destination = markerPosition
-                + right * (0.12 * side)
-                + SIMD3<Float>(0, 0.05, 0)
-                + bob
-        } else if shouldShowInfoGesture {
-            destination = cameraPosition
-                + forward * 0.58
-                + right * 0.48
-                + SIMD3<Float>(0, -0.08, 0)
-                + bob
-        } else {
-            destination = cameraPosition
-                + forward * guideForwardDistance
-                + right * guideRightDistance
-                + SIMD3<Float>(0, guideVerticalOffset, 0)
-                + bob
-        }
-
-        if guideNeedsPlacement {
-            // Frame pertama: snap langsung supaya Bayo tidak "terbang masuk"
-            // dari titik nol dunia.
-            guide.position = destination
-            guideNeedsPlacement = false
-            guide.isEnabled = shouldShowGuide
-            syncGuidePresentation()
-        } else {
-            guide.position += (destination - guide.position) * guideFollowLerp
-        }
-
-        guide.look(at: cameraPosition, from: guide.position, relativeTo: nil)
-        guideCloud?.position = defaultGuideCloudPosition
     }
 
     private func syncGuidePresentation() {
         guard let guide = guideRoot else { return }
-
-        guide.isEnabled = shouldShowGuide && !guideNeedsPlacement
-        syncGuideCharacterAsset()
-
-        let text = narrationText
-        guard guideText != text else { return }
-        guideText = text
-        guideCloud?.removeFromParent()
-
-        let speechLayout = guideSpeechLayout(for: text)
-        let cloud = CharacterGuideFactory.makeSpeechCloud(
-            text: speechLayout.text,
-            width: speechLayout.width,
-            height: speechLayout.height,
-            fontSize: 0.013,
-            textHorizontalInset: 0.025,
-            textVerticalInset: 0.030
-        )
-        cloud.name = "Bayo Speech Cloud"
-        cloud.position = defaultGuideCloudPosition
-        guide.addChild(cloud)
-        guideCloud = cloud
-    }
-    
-    private var shouldShowGuide: Bool {
-        switch phase {
-        case .placingScene, .drawingReady, .photoPrompt, .photoComparison, .completed:
-            return false
-        default:
-            return true
-        }
+        // Visual karakter dan bubble dirender SwiftUI supaya konsisten dengan Level 1.
+        guide.isEnabled = false
     }
     
     private func syncGuideCharacterAsset() {
@@ -945,5 +1398,12 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         let width = min(max(Float(longestLineCount) * 0.0064 + 0.10, 0.24), 0.56)
         let height = min(max(Float(lines.count) * 0.022 + 0.060, 0.082), 0.24)
         return (wrappedText, width, height)
+    }
+}
+
+private extension Array where Element: Hashable {
+    func deduplicatedKeepingOrder() -> [Element] {
+        var seen: Set<Element> = []
+        return filter { seen.insert($0).inserted }
     }
 }

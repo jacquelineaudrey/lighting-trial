@@ -1,44 +1,87 @@
+import ARKit
+import Combine
 import RealityKit
 import SwiftUI
 
 struct Level3ARContainerView: UIViewRepresentable {
-    @ObservedObject var sceneViewModel: ARSceneViewModel
-    let telemetryDelegate: any ARSceneTelemetryDelegate
+    let viewModel: Level3ViewModel
 
-    func makeCoordinator() -> ARSceneCoordinator {
-        ARSceneCoordinator(
-            viewModel: sceneViewModel,
-            gesturePolicy: .full,
-            lessonECSMode: .level3ShadowPresentation,
-            telemetryDelegate: telemetryDelegate
-        )
+    func makeCoordinator() -> Coordinator {
+        Coordinator(viewModel: viewModel)
     }
 
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
         context.coordinator.configure(arView: arView)
-
-        // Bayo dipasang di anchor DUNIA (bukan kamera). Dengan begitu posisi
-        // world-nya bisa di-update tiap frame oleh Level3ViewModel untuk
-        // "terbang" mengejar pemain dengan gerak halus, sama seperti Lumi di
-        // Level 1. Kalau dulu memakai AnchorEntity(.camera), Bayo akan menempel
-        // kaku di layar tanpa efek melayang.
-        let guideAnchor = AnchorEntity(world: .zero)
-        guideAnchor.name = "Level3WorldGuideAnchor"
-        arView.scene.addAnchor(guideAnchor)
-
         return arView
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {
         context.coordinator.requestSceneSynchronization()
+    }
 
-        guard let guideAnchor = uiView.scene.findEntity(named: "Level3WorldGuideAnchor") as? AnchorEntity else { return }
+    @MainActor
+    final class Coordinator {
+        private let viewModel: Level3ViewModel
+        private let arCoordinator: ARSceneCoordinator
+        private weak var arView: ARView?
+        private var guideAnchor: AnchorEntity?
+        private var sceneUpdateSubscription: (any Cancellable)?
 
-        for entity in sceneViewModel.additionalEntities {
-            if entity.parent == nil {
-                guideAnchor.addChild(entity)
+        init(viewModel: Level3ViewModel) {
+            self.viewModel = viewModel
+            self.arCoordinator = ARSceneCoordinator(
+                viewModel: viewModel.arSceneViewModel,
+                gesturePolicy: .full,
+                lessonECSMode: .level3ShadowPresentation,
+                telemetryDelegate: viewModel
+            )
+        }
+
+        func configure(arView: ARView) {
+            self.arView = arView
+            arCoordinator.configure(arView: arView)
+
+            let guideAnchor = AnchorEntity(world: .zero)
+            guideAnchor.name = "Level 3 Guide Root Anchor"
+            arView.scene.addAnchor(guideAnchor)
+            self.guideAnchor = guideAnchor
+            viewModel.attachGuideIfNeeded(to: guideAnchor)
+
+            sceneUpdateSubscription = arView.scene.subscribe(to: SceneEvents.Update.self) { [weak self, weak arView] _ in
+                guard let self, let arView else { return }
+                self.syncGuide(in: arView)
             }
+        }
+
+        func requestSceneSynchronization() {
+            arCoordinator.requestSceneSynchronization()
+            if let arView {
+                syncGuide(in: arView)
+            } else if let guideAnchor {
+                viewModel.attachGuideIfNeeded(to: guideAnchor)
+            }
+        }
+
+        private func syncGuide(in arView: ARView) {
+            guard let guideAnchor else { return }
+            viewModel.attachGuideIfNeeded(to: guideAnchor)
+
+            guard let cameraTransform = arView.session.currentFrame?.camera.transform else { return }
+            let cameraPosition = SIMD3<Float>(
+                cameraTransform.columns.3.x,
+                cameraTransform.columns.3.y,
+                cameraTransform.columns.3.z
+            )
+            let forward = -SIMD3<Float>(
+                cameraTransform.columns.2.x,
+                cameraTransform.columns.2.y,
+                cameraTransform.columns.2.z
+            )
+            viewModel.cameraDidUpdate(position: cameraPosition, forward: forward)
+
+            let guidePosition = viewModel.guideOverlayWorldPosition.flatMap(arView.project)
+            viewModel.updateGuideOverlayScreenPosition(guidePosition)
         }
     }
 }

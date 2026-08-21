@@ -13,9 +13,14 @@ struct Level1FlowView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var narrator = LessonAudioNarrator()
     @State private var showsExitConfirmation = false
+    let onReturnToLevelMenu: (() -> Void)?
     let onNextLevel: (() -> Void)?
 
-    init(onNextLevel: (() -> Void)? = nil) {
+    init(
+        onReturnToLevelMenu: (() -> Void)? = nil,
+        onNextLevel: (() -> Void)? = nil
+    ) {
+        self.onReturnToLevelMenu = onReturnToLevelMenu
         self.onNextLevel = onNextLevel
     }
 
@@ -29,11 +34,24 @@ struct Level1FlowView: View {
                 Level1OpeningOverlay(viewModel: viewModel)
             case .scanningSurface:
                 VStack {
-                    SurfaceScanInstruction(sceneViewModel: viewModel.arSceneViewModel)
+                    SurfaceScanInstruction(
+                        sceneViewModel: viewModel.arSceneViewModel,
+                        progressOverride: viewModel.roomScanProgress,
+                        title: "Scan Ruangan",
+                        guidanceText: viewModel.roomScanGuidanceText
+                    )
                     Spacer()
                 }
             case .surfaceReady:
-                EmptyView()
+                VStack {
+                    Spacer()
+                    SurfaceReadyOverlay(
+                        onContinue: viewModel.startLessonAfterRoomScan,
+                        onRescan: viewModel.rescanSurface,
+                        title: "Ruangan Siap",
+                        message: "Tempat yang aman untuk semua bentuk sudah ditemukan. Yuk, mulai bermain!"
+                    )
+                }
             case .lightShadowIntro:
                 Level1LightShadowOverlay(viewModel: viewModel)
             case .findingShapes:
@@ -55,14 +73,21 @@ struct Level1FlowView: View {
             case .completed:
                 EndLevelView(
                     data: EndLevelViewModel.data(for: Level1Content.levelID),
-                    onBack: dismiss.callAsFunction,
-                    onNext: onNextLevel
+                    onBack: returnToLevelMenu,
+                    onNext: onNextLevel,
+                    backTitle: "Kembali ke Menu"
                 )
                 .padding(.bottom, 24)
             }
 
             if viewModel.showsGuideOverlay {
-                Level1GuideOverlay(viewModel: viewModel)
+                LevelGuideOverlay(
+                    text: viewModel.narrationText,
+                    assetName: viewModel.guideOverlayAssetName,
+                    screenPosition: viewModel.guideOverlayScreenPosition,
+                    showsTapToContinueCaption: viewModel.showsTapToContinueCaption,
+                    bottomPadding: guideBottomPadding
+                )
             }
 
             if viewModel.showsPhotoComparisonPanel {
@@ -70,19 +95,32 @@ struct Level1FlowView: View {
             }
         }
         .overlay(alignment: .topLeading) {
-            if viewModel.phase != .completed {
-                LevelBackButton { showsExitConfirmation = true }
-                    .padding(.leading, 16)
-                    .padding(.top, 12)
+            if viewModel.phase != .completed,
+               !viewModel.showsPhotoComparisonPanel,
+               viewModel.canGoBackToPreviousState {
+                LevelActionButton(
+                    title: "Ulangi Langkah",
+                    systemImage: "arrow.uturn.backward",
+                    role: .previousStep,
+                    isDisabled: viewModel.isTransitioning,
+                    action: viewModel.goBackToPreviousState
+                )
+                .padding(.leading, 16)
+                .padding(.top, 12)
             }
         }
-        #if DEBUG
         .overlay(alignment: .topTrailing) {
-            Level1DevFlowMenu(viewModel: viewModel)
+            if viewModel.phase != .completed, !viewModel.showsPhotoComparisonPanel {
+                LevelActionButton(
+                    title: "Kembali ke Menu",
+                    systemImage: "house.fill",
+                    role: .menu,
+                    action: { showsExitConfirmation = true }
+                )
                 .padding(.trailing, 16)
                 .padding(.top, 12)
+            }
         }
-        #endif
         .overlay(alignment: .top) {
             if viewModel.showsObjectModeBadge {
                 Text("Kamu jadi objek!")
@@ -97,7 +135,7 @@ struct Level1FlowView: View {
         }
         .gameDialog(
             isPresented: viewModel.showsFreezeSceneConfirmation,
-            title: viewModel.isPreparingFrozenScene ? "Menyiapkan scene" : "Scene akan di-freeze",
+            title: viewModel.isPreparingFrozenScene ? "Menyiapkan scene" : "Scene akan dibekukan",
             message: "Pastikan layarmu menangkap objek.",
             primaryTitle: "Iya, lanjut",
             secondaryTitle: "Sebentar aku arahkan lagi",
@@ -114,7 +152,7 @@ struct Level1FlowView: View {
             primaryAction: viewModel.clearPhotoSaveMessage
         )
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
-            dismiss()
+            returnToLevelMenu()
         }
         .fullScreenCover(isPresented: $viewModel.showsDrawingCamera) {
             DrawingCameraView(
@@ -128,11 +166,18 @@ struct Level1FlowView: View {
         .task(id: viewModel.narrationID) {
             // Saat scanning, anak hanya melihat instruksi scan. Lumi dan
             // narasinya baru mulai setelah surface stabil dan scene siap.
-            guard viewModel.phase != .scanningSurface else {
+            guard viewModel.phase != .scanningSurface,
+                  viewModel.phase != .surfaceReady else {
                 narrator.stop()
                 return
             }
-            narrator.speak(viewModel.narrationText, audioFileName: viewModel.narrationAudioFileName)
+            let narrationID = viewModel.narrationID
+            viewModel.narrationWillStart(id: narrationID)
+            narrator.speak(
+                viewModel.narrationText,
+                audioFileName: viewModel.narrationAudioFileName,
+                onCompletion: { viewModel.narrationDidFinish(id: narrationID) }
+            )
         }
         .onAppear(perform: BackgroundMusicPlayer.shared.playGameplayMusic)
         .onDisappear {
@@ -141,58 +186,13 @@ struct Level1FlowView: View {
         }
         .navigationBarBackButtonHidden(true)
     }
-}
 
-private struct Level1GuideOverlay: View {
-    @ObservedObject var viewModel: Level1ViewModel
-
-    var body: some View {
-        GeometryReader { proxy in
-            guideContent
-                .position(overlayPosition(in: proxy.size))
-        }
-        .allowsHitTesting(false)
-        .transition(.opacity)
+    private func returnToLevelMenu() {
+        onReturnToLevelMenu?()
+        dismiss()
     }
 
-    private var guideContent: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            SpeechBubble(text: viewModel.narrationText, tail: .bottomTrailing)
-                .frame(maxWidth: 420)
-                .fixedSize(horizontal: false, vertical: true)
-
-            guideImage
-                .frame(width: 104, height: 144)
-        }
-    }
-
-    private func overlayPosition(in size: CGSize) -> CGPoint {
-        if let arPosition = viewModel.guideOverlayScreenPosition {
-            let x = min(max(arPosition.x, 280), size.width - 120)
-            let y = min(max(arPosition.y, 150), size.height - bottomPadding)
-            return CGPoint(x: x, y: y)
-        }
-
-        return CGPoint(x: size.width - 280, y: size.height - bottomPadding)
-    }
-
-    private var guideImage: some View {
-        Group {
-            if let image = UIImage(named: viewModel.guideOverlayAssetName) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-            } else {
-                Image(systemName: "sparkles")
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(.white)
-            }
-        }
-        .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
-    }
-
-    private var bottomPadding: CGFloat {
+    private var guideBottomPadding: CGFloat {
         switch viewModel.phase {
         case .textureExploration, .shapeChange, .drawingReady, .photoPrompt:
             132
@@ -201,29 +201,6 @@ private struct Level1GuideOverlay: View {
         }
     }
 }
-
-#if DEBUG
-private struct Level1DevFlowMenu: View {
-    @ObservedObject var viewModel: Level1ViewModel
-
-    var body: some View {
-        Menu {
-            ForEach(Level1DevFlow.allCases) { flow in
-                Button(flow.rawValue) {
-                    viewModel.jumpToDevFlow(flow)
-                }
-            }
-        } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 42, height: 42)
-                .background(Color.black.opacity(0.44), in: Circle())
-        }
-        .accessibilityLabel("Debug flow")
-    }
-}
-#endif
 
 private struct Level1OpeningOverlay: View {
     @ObservedObject var viewModel: Level1ViewModel
@@ -255,10 +232,11 @@ private struct Level1TextureTapPromptOverlay: View {
     var body: some View {
         GeometryReader { proxy in
             TouchGestureImage()
-                .frame(width: 82, height: 164)
-                .rotationEffect(.degrees(210))
+                .frame(width: 72, height: 166)
+                .rotationEffect(.degrees(-12))
                 .position(handPosition(in: proxy.size))
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
         .transition(.opacity)
     }
@@ -268,8 +246,10 @@ private struct Level1TextureTapPromptOverlay: View {
             ?? CGPoint(x: size.width * 0.5, y: size.height * 0.56)
 
         return CGPoint(
-            x: min(max(objectPosition.x - 58, 70), size.width - 70),
-            y: min(max(objectPosition.y + 62, 120), size.height - 90)
+            // Ujung telunjuk tetap menempel pada objek; badan tangan berada di
+            // bawah-kanannya agar objek tidak tertutup setelah ukurannya mengecil.
+            x: min(max(objectPosition.x + 13, 42), size.width - 42),
+            y: min(max(objectPosition.y + 60, 84), size.height - 84)
         )
     }
 }
@@ -304,27 +284,13 @@ private struct Level1ShapeChangeOverlay: View {
                     Spacer()
                     HStack {
                         Spacer()
-                        Level1PrimaryActionButton(title: "Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
+                        LevelActionButton(title: "Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
                             .padding(.trailing, 42)
                             .padding(.bottom, 36)
                     }
                 }
             }
         }
-    }
-}
-
-struct Level1PrimaryActionButton: View {
-    let title: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(title, action: action)
-            .font(.system(size: 15, weight: .bold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
-            .background(Color.blue, in: Capsule())
     }
 }
 
@@ -346,12 +312,11 @@ private struct Level1DrawingOverlay: View {
                             Level1OverlayGuideCharacter(assetName: viewModel.guideOverlayAssetName)
                                 .frame(width: 128, height: 150)
 
-                            Button("Aku Selesai Gambar", action: viewModel.finishDrawing)
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 10)
-                                .background(Color.blue, in: Capsule())
+                            LevelActionButton(
+                                title: "Aku Selesai Gambar",
+                                isDisabled: !viewModel.isNarrationComplete || viewModel.isTransitioning,
+                                action: viewModel.finishDrawing
+                            )
                                 .padding(.bottom, 18)
                         }
                     }
@@ -394,15 +359,14 @@ private struct Level1PhotoOverlay: View {
             Spacer()
             HStack {
                 Spacer()
-                Button(viewModel.isSavingDrawingPhoto ? "Menyimpan..." : "Foto Gambarku") {
-                    viewModel.captureDrawingPhoto()
-                }
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .background(Color.blue, in: Capsule())
-                .disabled(viewModel.isSavingDrawingPhoto)
+                LevelActionButton(
+                    title: viewModel.isSavingDrawingPhoto ? "Menyimpan..." : "Foto Gambarku",
+                    systemImage: "camera.fill",
+                    isDisabled: viewModel.isSavingDrawingPhoto
+                        || !viewModel.isNarrationComplete
+                        || viewModel.isTransitioning,
+                    action: viewModel.captureDrawingPhoto
+                )
                 .padding(.trailing, 42)
                 .padding(.bottom, 36)
             }
@@ -418,7 +382,12 @@ private struct Level1PhotoSavedOverlay: View {
             Spacer()
             HStack {
                 Spacer()
-                Level1PrimaryActionButton(title: "Lihat Gambar", action: viewModel.showPhotoComparisonPanel)
+                LevelActionButton(
+                    title: "Lihat Gambar",
+                    systemImage: "photo.on.rectangle.angled",
+                    isDisabled: !viewModel.isNarrationComplete || viewModel.isTransitioning,
+                    action: viewModel.showPhotoComparisonPanel
+                )
                     .padding(.trailing, 42)
                     .padding(.bottom, 36)
             }
@@ -442,12 +411,20 @@ private struct Level1PhotoComparisonOverlay: View {
                     comparisonImage(title: "Hasil Gambar Kamu", image: viewModel.userDrawingImage)
                 }
 
-                Button("Selesai", action: viewModel.completeLevelAfterPhotoComparison)
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 11)
-                    .background(Color.red, in: Capsule())
+                HStack(spacing: 14) {
+                    LevelActionButton(
+                        title: "Kembali",
+                        systemImage: "chevron.left",
+                        role: .secondary,
+                        action: viewModel.hidePhotoComparisonPanel
+                    )
+
+                    LevelActionButton(
+                        title: "Selesai",
+                        systemImage: "checkmark",
+                        action: viewModel.completeLevelAfterPhotoComparison
+                    )
+                }
             }
             .padding(26)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -539,34 +516,13 @@ private struct DrawingCameraView: UIViewControllerRepresentable {
     }
 }
 
-private struct SpeechBubble: View {
+private struct SpeechBubbleShape: Shape {
     enum Tail {
         case bottomLeading
         case bottomTrailing
     }
 
-    let text: String
-    var tail: Tail = .bottomTrailing
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 20, weight: .medium))
-            .foregroundStyle(Color(UIColor.darkGray))
-            .multilineTextAlignment(.center)
-            .lineLimit(4)
-            .minimumScaleFactor(0.82)
-            .padding(.horizontal, 30)
-            .padding(.vertical, 24)
-            .background {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(.white.opacity(0.95))
-            }
-            .shadow(color: .black.opacity(0.10), radius: 8, y: 3)
-    }
-}
-
-private struct SpeechBubbleShape: Shape {
-    let tail: SpeechBubble.Tail
+    let tail: Tail
 
     func path(in rect: CGRect) -> Path {
         var path = Path()

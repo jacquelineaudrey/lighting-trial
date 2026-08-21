@@ -19,10 +19,9 @@ private enum Level1ExperimentControlMetrics {
     // MARK: Hand Gesture
     static let handWidth: CGFloat = 70
     static let handHeight: CGFloat = 140
-
-    static let handOffsetX: CGFloat = 56
-    static let handOffsetY: CGFloat = -60
-
+    // Setelah diputar 180 derajat, ujung telunjuk berada sekitar 48 pt di
+    // bawah pusat gambar. Offset ini membuat ujung jari tepat di pusat tombol.
+    static let buttonHandOffsetY: CGFloat = -48
     static let handRotation: Double = 180
 }
 
@@ -61,11 +60,21 @@ struct Level1ExperimentControls: View {
                 Spacer()
 
                 if viewModel.canContinueToShapeSelection {
-                    Level1PrimaryActionButton(title: "Selanjutnya", action: viewModel.continueToShapeSelection)
+                    LevelActionButton(
+                        title: "Selanjutnya",
+                        systemImage: "arrow.right",
+                        isDisabled: viewModel.isTransitioning,
+                        action: viewModel.continueToShapeSelection
+                    )
                         .padding(.trailing, 42)
                         .padding(.bottom, 36)
                 } else if viewModel.canConfirmDrawingChoices {
-                    Level1PrimaryActionButton(title: "Aku Pilih Ini", action: viewModel.confirmDrawingChoices)
+                    LevelActionButton(
+                        title: "Aku Pilih Ini",
+                        systemImage: "checkmark",
+                        isDisabled: viewModel.isTransitioning,
+                        action: viewModel.confirmDrawingChoices
+                    )
                         .padding(.trailing, 42)
                         .padding(.bottom, 36)
                 }
@@ -74,38 +83,47 @@ struct Level1ExperimentControls: View {
     }
 
     private var modeButtons: some View {
-        ZStack(alignment: .bottomLeading) {
-            HStack(spacing: 8) {
-                modeButton(icon: "cube.transparent.fill", isSelected: viewModel.activeExperimentPanel == .shape) {
-                    viewModel.showShapeControls()
-                }
-                modeButton(icon: "square.fill", isSelected: viewModel.activeExperimentPanel == .texture) {
-                    viewModel.showTextureControls()
+        HStack(spacing: 8) {
+            modeButton(icon: "cube.transparent.fill", isSelected: viewModel.activeExperimentPanel == .shape) {
+                viewModel.showShapeControls()
+            }
+            .overlay {
+                if shouldShowShapeButtonGesture {
+                    modeButtonGesture
                 }
             }
-            .padding(4)
-            .background(.ultraThinMaterial, in: Capsule())
 
-            if shouldShowModeGesture {
-                TouchGestureImage()
-                    .frame(
-                        width: Level1ExperimentControlMetrics.handWidth,
-                        height: Level1ExperimentControlMetrics.handHeight
-                    )
-                    .rotationEffect(.degrees(Level1ExperimentControlMetrics.handRotation))
-                    .offset(x: modeGestureOffsetX, y: Level1ExperimentControlMetrics.handOffsetY)
-                    .allowsHitTesting(false)
+            modeButton(icon: "square.fill", isSelected: viewModel.activeExperimentPanel == .texture) {
+                viewModel.showTextureControls()
+            }
+            .overlay {
+                if shouldShowTextureButtonGesture {
+                    modeButtonGesture
+                }
             }
         }
+        .padding(4)
+        .background(.ultraThinMaterial, in: Capsule())
     }
 
-    private var shouldShowModeGesture: Bool {
-        viewModel.activeExperimentPanel == nil
-            && (viewModel.showsTextureControlGesture || viewModel.showsShapeControlGesture)
+    private var shouldShowShapeButtonGesture: Bool {
+        viewModel.activeExperimentPanel == nil && viewModel.showsShapeControlGesture
     }
 
-    private var modeGestureOffsetX: CGFloat {
-        viewModel.showsTextureControlGesture ? Level1ExperimentControlMetrics.handOffsetX : -8
+    private var shouldShowTextureButtonGesture: Bool {
+        viewModel.activeExperimentPanel == nil && viewModel.showsTextureControlGesture
+    }
+
+    private var modeButtonGesture: some View {
+        TouchGestureImage()
+            .frame(
+                width: Level1ExperimentControlMetrics.handWidth,
+                height: Level1ExperimentControlMetrics.handHeight
+            )
+            .rotationEffect(.degrees(Level1ExperimentControlMetrics.handRotation))
+            .offset(y: Level1ExperimentControlMetrics.buttonHandOffsetY)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     private func modeButton(icon: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -114,7 +132,7 @@ struct Level1ExperimentControls: View {
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(isSelected ? .white : .white.opacity(0.86))
                 .frame(width: 44, height: 44)
-                .background(isSelected ? Color.blue : Color.white.opacity(0.10), in: Circle())
+                .background(isSelected ? Color(hex: "9FA60C") : Color.white.opacity(0.10), in: Circle())
         }
         .buttonStyle(.plain)
     }
@@ -147,12 +165,7 @@ private struct Level1TexturePickerPanel: View {
                         HStack {
 
                             Text(texture.name)
-                                .font(
-                                    .system(
-                                        size: 14,
-                                        weight: .medium
-                                    )
-                                )
+                                .font(.body)
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
 
@@ -163,6 +176,7 @@ private struct Level1TexturePickerPanel: View {
                                 isSelected: index == selectedIndex
                             )
                         }
+                        .frame(minHeight: 44)
                         .frame(maxWidth: .infinity)
                         .contentShape(.rect)
                     }
@@ -201,12 +215,7 @@ private struct Level1ShapePickerPanel: View {
                         HStack {
 
                             Text(shape.displayName)
-                                .font(
-                                    .system(
-                                        size: 14,
-                                        weight: .medium
-                                    )
-                                )
+                                .font(.body)
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
 
@@ -217,6 +226,7 @@ private struct Level1ShapePickerPanel: View {
                                 isSelected: index == selectedIndex
                             )
                         }
+                        .frame(minHeight: 44)
                         .frame(maxWidth: .infinity)
                         .contentShape(.rect)
                     }
@@ -282,12 +292,11 @@ private func pickerPanel<Content: View>(
                     )
                 )
                 .offset(
-                    x:
-                        Level1ExperimentControlMetrics.handOffsetX,
                     y:
-                        Level1ExperimentControlMetrics.handOffsetY
+                        Level1ExperimentControlMetrics.buttonHandOffsetY
                 )
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
     }
 }
@@ -333,7 +342,7 @@ private struct TextureSwatch: View {
             }
             .overlay {
                 Circle()
-                    .stroke(isSelected ? Color.blue : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
+                    .stroke(isSelected ? Color(hex: "9FA60C") : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
             }
             .shadow(color: .black.opacity(0.16), radius: 2, y: 1)
     }
@@ -353,11 +362,11 @@ private struct ShapeSwatch: View {
             .overlay {
                 Image(systemName: shape.quizSymbolName)
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(isSelected ? Color.blue : Color.white.opacity(0.9))
+                    .foregroundStyle(isSelected ? Color(hex: "9FA60C") : Color.white.opacity(0.9))
             }
             .overlay {
                 Circle()
-                    .stroke(isSelected ? Color.blue : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
+                    .stroke(isSelected ? Color(hex: "9FA60C") : Color.white.opacity(0.24), lineWidth: isSelected ? 2 : 1)
             }
     }
 }
@@ -444,7 +453,7 @@ private struct Level1ExperimentControlsPreviewState: View {
 
                     } else if mode == .shape {
                         Level1ShapePickerPanel(
-                            shapes: Level1Content.checkpoints.map(\.shape),
+                            shapes: Level1Content.allShapes,
                             selectedIndex: selectedShapeIndex,
                             showsGesture: false
                         ) { index in
@@ -494,8 +503,7 @@ private struct Level1ExperimentControlsPreviewState: View {
                         .degrees(Level1ExperimentControlMetrics.handRotation)
                     )
                     .offset(
-                        x: Level1ExperimentControlMetrics.handOffsetX,
-                        y: Level1ExperimentControlMetrics.handOffsetY
+                        y: Level1ExperimentControlMetrics.buttonHandOffsetY
                     )
                     .allowsHitTesting(false)
             }
@@ -533,7 +541,7 @@ private struct Level1ExperimentControlsPreviewState: View {
                 .frame(width: 44, height: 44)
                 .background(
                     isSelected
-                        ? Color.blue
+                        ? Color(hex: "9FA60C")
                         : Color.white.opacity(0.10),
                     in: Circle()
                 )

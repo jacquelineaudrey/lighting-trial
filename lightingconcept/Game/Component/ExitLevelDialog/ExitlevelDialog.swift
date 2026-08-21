@@ -22,12 +22,12 @@ struct ExitLevelDialog: View {
                 .frame(width: 300, height: 240)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Keluar dari level?")
+                Text("Kembali ke menu?")
                     .font(.system(size: 17))
                     .fontWeight(.semibold)
                     .foregroundColor(Color(hex: "313131"))
 
-                Text("Progress kamu di level ini akan hilang lho!")
+                Text("Kamu bisa bermain lagi kapan saja.")
                     .font(.system(size: 17))
                     .fontWeight(.regular)
                     .foregroundColor(Color(hex: "313131"))
@@ -42,7 +42,7 @@ struct ExitLevelDialog: View {
                         .font(.system(size: 17))
                         .fontWeight(.semibold)
                         .foregroundColor(.white)
-                        .frame(width: 272, height: 48)
+                        .frame(width: 272, height: 52)
                         .background(
                             Capsule()
                                 .fill(Color(hex: "9FA60C"))
@@ -50,14 +50,14 @@ struct ExitLevelDialog: View {
                 }
 
                 Button(action: onExitTapped) {
-                    Text("Keluar")
+                    Label("Kembali ke Menu", systemImage: "house.fill")
                         .font(.system(size: 17))
                         .fontWeight(.semibold)
-                        .foregroundColor(Color(hex: "C0392B"))
-                        .frame(width: 272, height: 48)
+                        .foregroundColor(Color(hex: "FF383C"))
+                        .frame(width: 272, height: 52)
                         .overlay(
                             Capsule()
-                                .stroke(Color(hex: "C0392B"), lineWidth: 1)
+                                .stroke(Color(hex: "FF383C"), lineWidth: 2)
                         )
                 }
             }

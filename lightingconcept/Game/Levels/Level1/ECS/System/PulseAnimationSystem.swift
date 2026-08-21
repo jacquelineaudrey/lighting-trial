@@ -21,8 +21,11 @@ final class PulseAnimationSystem: System {
             guard let pulse = entity.components[PulseAnimationComponent.self],
                   pulse.isActiveTarget else { continue }
             
-            let pulseScale = 1.0 + pulse.amplitude * sin(time * pulse.speed)
-            entity.scale = SIMD3<Float>(pulseScale, pulse.baseScale, pulseScale)
+            // Pulse lembut dari ukuran dasar ke ukuran maksimum. Marker tidak
+            // lagi mengecil di bawah ukuran normal sehingga tetap mudah ditap.
+            let normalizedPulse = (sin(time * pulse.speed) + 1) * 0.5
+            let pulseScale = pulse.baseScale + pulse.amplitude * normalizedPulse
+            entity.scale = SIMD3<Float>(repeating: pulseScale)
         }
     }
 }

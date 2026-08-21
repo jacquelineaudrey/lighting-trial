@@ -31,6 +31,8 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     private(set) var isAdjustingIntensity = false
     private(set) var waitsForLightTap = false
     private(set) var isLookAroundMode = false
+    private(set) var isTransitioning = false
+    private(set) var guideOverlayScreenPosition: CGPoint?
 
     private(set) var beamSpreadDegrees: Float = 54
     private(set) var lightIntensity: Float = 3_200
@@ -38,6 +40,9 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     @ObservationIgnored private let progressStore: GameProgressStore
     @ObservationIgnored private var spreadGestureStart: Float?
     @ObservationIgnored private var intensityGestureStart: Float?
+    @ObservationIgnored private var spreadAdvanceTask: Task<Void, Never>?
+    @ObservationIgnored private var intensityAdvanceTask: Task<Void, Never>?
+    @ObservationIgnored private var transitionGateTask: Task<Void, Never>?
     @ObservationIgnored private weak var guideParent: Entity?
     @ObservationIgnored private var guideRoot: Entity?
     @ObservationIgnored private var guideCharacter: Entity?
@@ -47,6 +52,9 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     @ObservationIgnored private var guideNeedsPlacement = true
     @ObservationIgnored private weak var lightTapPromptParent: Entity?
     @ObservationIgnored private var lightTapPromptEntity: Entity?
+    @ObservationIgnored private var markerSurfaceTone: EducationalMarkerStyle.SurfaceTone = .medium
+
+    private let transitionDebounceDuration = Duration.milliseconds(320)
 
     private static var cachedLightTapRingTexture: TextureResource?
     private static var cachedLightTapDotTexture: TextureResource?
@@ -115,6 +123,14 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         "\(phase.rawValue)-\(onboardingIndex)-\(spreadTutorialIndex)-\(intensityTutorialIndex)-\(missionIndex)-\(closingIndex)-\(narrationAudioFileNames.joined(separator: "|"))"
     }
 
+    var showsGuideOverlay: Bool {
+        currentGuideLine != nil
+    }
+
+    var guideOverlayAssetName: String {
+        currentGuideAsset.rawValue
+    }
+
     var narrationText: String {
         switch phase {
         case .onboarding:
@@ -147,7 +163,8 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     var canAdjustSpread: Bool {
-        switch phase {
+        guard !isTransitioning else { return false }
+        return switch phase {
         case .spreadTutorial, .spreadFreeExploration:
             !isLookAroundMode
         case .mission:
@@ -158,7 +175,8 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     var canAdjustIntensity: Bool {
-        switch phase {
+        guard !isTransitioning else { return false }
+        return switch phase {
         case .intensityTutorial:
             !isLookAroundMode
         case .mission:
@@ -178,7 +196,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
 
 
     func advanceOnboarding() {
-        guard phase == .onboarding else { return }
+        guard phase == .onboarding, !isTransitioning else { return }
         if onboardingIndex == 0, !arSceneViewModel.isObjectPlaced {
             phase = .placingScene
         } else if onboardingIndex == 1 {
@@ -190,7 +208,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     func continueAfterSurfaceCheck() {
-        guard phase == .surfaceReady else { return }
+        guard phase == .surfaceReady, !isTransitioning else { return }
         if arSceneViewModel.isObjectPlaced {
             startSpreadTutorial()
         } else {
@@ -204,7 +222,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     func advanceSpreadTutorial() {
-        guard phase == .spreadTutorial else { return }
+        guard phase == .spreadTutorial, !isTransitioning else { return }
         if spreadTutorialIndex == Level2Content.spreadTutorial.count - 1 {
             phase = .spreadFreeIntro
         } else {
@@ -213,29 +231,29 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     func advanceSpreadFreeIntro() {
-        guard phase == .spreadFreeIntro else { return }
+        guard phase == .spreadFreeIntro, !isTransitioning else { return }
         phase = .spreadFreeInstructions
     }
 
     func dismissSpreadFreeInstructions() {
-        guard phase == .spreadFreeInstructions else { return }
+        guard phase == .spreadFreeInstructions, !isTransitioning else { return }
         phase = .spreadFreeExploration
         isLookAroundMode = false
     }
 
     func finishSpreadFreeExploration() {
-        guard phase == .spreadFreeExploration else { return }
+        guard phase == .spreadFreeExploration, !isTransitioning else { return }
         phase = .intensityTransition
     }
 
     func advanceIntensityTransition() {
-        guard phase == .intensityTransition else { return }
+        guard phase == .intensityTransition, !isTransitioning else { return }
         phase = .intensityTutorial
         intensityTutorialIndex = 0
     }
 
     func advanceIntensityTutorial() {
-        guard phase == .intensityTutorial else { return }
+        guard phase == .intensityTutorial, !isTransitioning else { return }
         if intensityTutorialIndex == Level2Content.intensityTutorial.count - 1 {
             phase = .mission
             missionIndex = 0
@@ -245,7 +263,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     func advanceMission() {
-        guard phase == .mission else { return }
+        guard phase == .mission, !isTransitioning else { return }
         switch missionIndex {
         case 0, 2, 4:
             missionIndex += 1
@@ -258,7 +276,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     func advanceClosing() {
-        guard phase == .closing else { return }
+        guard phase == .closing, !isTransitioning else { return }
         if closingIndex == Level2Content.closingDialog.count - 1 {
             phase = .review
         } else {
@@ -267,7 +285,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     func finishReview() {
-        guard phase == .review else { return }
+        guard phase == .review, !isTransitioning else { return }
         phase = .completed
         progressStore.markLevelCompleted(Level2Content.levelID)
     }
@@ -304,6 +322,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     func cameraDidUpdate(position: SIMD3<Float>) {}
 
     func lightDidSelect() {
+        guard !isTransitioning else { return }
         if phase == .onboarding, onboardingIndex == 2, waitsForLightTap {
             waitsForLightTap = false
             isLookAroundMode = false
@@ -322,6 +341,12 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         guard canSelectLightForControl else { return }
         isLookAroundMode = false
         successFeedbackTrigger += 1
+    }
+
+    func markerSurfaceToneDidChange(_ tone: EducationalMarkerStyle.SurfaceTone) {
+        guard markerSurfaceTone != tone else { return }
+        markerSurfaceTone = tone
+        refreshLightTapPromptMaterials()
     }
 
     func syncLightTapPrompt(in parent: Entity) {
@@ -401,6 +426,22 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         syncGuidePresentation()
     }
 
+    var guideOverlayWorldPosition: SIMD3<Float>? {
+        guard showsGuideOverlay, !guideNeedsPlacement, let guideRoot else { return nil }
+        return guideRoot.position(relativeTo: nil)
+    }
+
+    func updateGuideOverlayScreenPosition(_ position: CGPoint?) {
+        switch (guideOverlayScreenPosition, position) {
+        case let (current?, next?) where hypot(current.x - next.x, current.y - next.y) < 1:
+            return
+        case (nil, nil):
+            return
+        default:
+            guideOverlayScreenPosition = position
+        }
+    }
+
 
     func fingerTouchDidChange(count: Int) {
         activeTouchCount = count
@@ -458,6 +499,124 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     func adjustIntensity(by delta: Float) {
         guard canAdjustIntensity else { return }
         setIntensity(lightIntensity + delta)
+    }
+
+    var canGoBackToPreviousState: Bool {
+        switch phase {
+        case .placingScene, .surfaceReady, .completed:
+            false
+        case .onboarding:
+            onboardingIndex > 0
+        default:
+            true
+        }
+    }
+
+    /// Mengulang satu aksi pembelajaran tanpa menghapus anchor atau memulai
+    /// ulang tracking AR yang sudah berjalan.
+    func goBackToPreviousState() {
+        guard canGoBackToPreviousState, beginInteractionTransition() else { return }
+
+        cancelPendingTutorialAdvances()
+        activeTouchCount = 0
+        isAdjustingIntensity = false
+        spreadGestureStart = nil
+        intensityGestureStart = nil
+        isLookAroundMode = false
+
+        switch phase {
+        case .onboarding:
+            onboardingIndex -= 1
+            waitsForLightTap = onboardingIndex == 2
+
+        case .spreadTutorial:
+            if spreadTutorialIndex == 0 {
+                phase = .onboarding
+                onboardingIndex = Level2Content.onboardingDialog.count - 1
+                waitsForLightTap = true
+            } else {
+                spreadTutorialIndex -= 1
+                prepareSpreadActionForReplay(at: spreadTutorialIndex)
+            }
+
+        case .spreadFreeIntro:
+            phase = .spreadTutorial
+            spreadTutorialIndex = Level2Content.spreadTutorial.count - 1
+
+        case .spreadFreeInstructions:
+            phase = .spreadFreeIntro
+
+        case .spreadFreeExploration:
+            phase = .spreadFreeInstructions
+
+        case .intensityTransition:
+            phase = .spreadFreeExploration
+
+        case .intensityTutorial:
+            if intensityTutorialIndex == 0 {
+                phase = .intensityTransition
+            } else {
+                intensityTutorialIndex -= 1
+                prepareIntensityActionForReplay(at: intensityTutorialIndex)
+            }
+
+        case .mission:
+            goBackFromMission()
+
+        case .closing:
+            if closingIndex > 0 {
+                closingIndex -= 1
+            } else {
+                phase = .mission
+                missionIndex = Level2Content.mission.count - 1
+            }
+
+        case .review:
+            phase = .closing
+            closingIndex = Level2Content.closingDialog.count - 1
+
+        case .placingScene, .surfaceReady, .completed:
+            break
+        }
+    }
+
+    private func goBackFromMission() {
+        switch missionIndex {
+        case 0:
+            phase = .intensityTutorial
+            intensityTutorialIndex = Level2Content.intensityTutorial.count - 1
+        case 2:
+            // Hasil misi lebar-terang kembali menjadi tugas yang harus
+            // dilakukan, dengan nilai netral agar tidak langsung selesai lagi.
+            missionIndex = 1
+            restoreLightSettings(beamSpread: 54, intensity: 3_200)
+        case 4:
+            // Sama untuk misi sempit-redup: pemain perlu mengulang gesturnya.
+            missionIndex = 3
+            restoreLightSettings(beamSpread: 54, intensity: 3_200)
+        default:
+            missionIndex = max(missionIndex - 1, 0)
+        }
+    }
+
+    private func prepareSpreadActionForReplay(at index: Int) {
+        switch index {
+        case 1, 3:
+            hasReachedWideSpread = false
+            restoreBeamSpread(54)
+        case 2, 6:
+            hasReachedNarrowSpread = false
+            restoreBeamSpread(54)
+        default:
+            break
+        }
+    }
+
+    private func prepareIntensityActionForReplay(at index: Int) {
+        guard index == 1 || index == 2 else { return }
+        hasReachedDimIntensity = false
+        hasReachedBrightIntensity = false
+        restoreIntensity(3_200)
     }
 
     private func startSpreadTutorial() {
@@ -519,29 +678,8 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
 
     private func syncGuidePresentation() {
         guard let guide = guideRoot else { return }
-        guard let line = currentGuideLine, !guideNeedsPlacement else {
-            guide.isEnabled = false
-            return
-        }
-
-        guide.isEnabled = true
-        syncGuideCharacterAsset()
-        guard guideText != line.text else { return }
-        guideText = line.text
-        guideCloud?.removeFromParent()
-        let speechLayout = guideSpeechLayout(for: line.text)
-        let cloud = CharacterGuideFactory.makeSpeechCloud(
-            text: speechLayout.text,
-            width: speechLayout.width,
-            height: speechLayout.height,
-            fontSize: 0.013,
-            textHorizontalInset: 0.025,
-            textVerticalInset: 0.030
-        )
-        cloud.name = "Lumi Level 2 Speech Cloud"
-        cloud.position = SIMD3<Float>(0.22, 0.14, 0)
-        guide.addChild(cloud)
-        guideCloud = cloud
+        // Visual karakter dan bubble dirender SwiftUI supaya konsisten dengan Level 1.
+        guide.isEnabled = false
     }
 
     private func syncGuideCharacterAsset() {
@@ -588,10 +726,14 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     private func makeLightTapPromptEntity() -> Entity {
         let root = Entity()
         root.name = "level2-light-tap-prompt"
+        let palette = EducationalMarkerStyle.palette(for: markerSurfaceTone)
 
         let dot = ModelEntity(
-            mesh: .generatePlane(width: 0.034, height: 0.034),
-            materials: [Self.lightTapDotMaterial(alpha: 1.0)]
+            mesh: .generatePlane(
+                width: EducationalMarkerStyle.promptDotDiameter,
+                height: EducationalMarkerStyle.promptDotDiameter
+            ),
+            materials: [Self.lightTapDotMaterial(alpha: 1.0, tint: palette.primary)]
         )
         dot.name = "level2-light-tap-prompt-center"
         dot.components.set(BillboardComponent())
@@ -602,8 +744,11 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         root.addChild(dot)
 
         let ring = ModelEntity(
-            mesh: .generatePlane(width: 0.07, height: 0.07),
-            materials: [Self.lightTapRingMaterial(alpha: 1.0)]
+            mesh: .generatePlane(
+                width: EducationalMarkerStyle.promptRingDiameter,
+                height: EducationalMarkerStyle.promptRingDiameter
+            ),
+            materials: [Self.lightTapRingMaterial(alpha: 1.0, tint: palette.primary)]
         )
         ring.name = "level2-light-tap-prompt-ring"
         ring.components.set(BillboardComponent())
@@ -618,25 +763,36 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         return root
     }
 
-    private static func lightTapRingMaterial(alpha: Float) -> UnlitMaterial {
+    private func refreshLightTapPromptMaterials() {
+        guard let lightTapPromptEntity else { return }
+        let palette = EducationalMarkerStyle.palette(for: markerSurfaceTone)
+        if let dot = lightTapPromptEntity.findEntity(named: "level2-light-tap-prompt-center") as? ModelEntity {
+            dot.model?.materials = [Self.lightTapDotMaterial(alpha: 1.0, tint: palette.primary)]
+        }
+        if let ring = lightTapPromptEntity.findEntity(named: "level2-light-tap-prompt-ring") as? ModelEntity {
+            ring.model?.materials = [Self.lightTapRingMaterial(alpha: 1.0, tint: palette.primary)]
+        }
+    }
+
+    private static func lightTapRingMaterial(alpha: Float, tint: UIColor) -> UnlitMaterial {
         var material = UnlitMaterial()
         if let texture = cachedLightTapRingTexture ?? generateLightTapRingTexture() {
             cachedLightTapRingTexture = texture
-            material.color = .init(tint: UIColor.white.withAlphaComponent(CGFloat(alpha)), texture: .init(texture))
+            material.color = .init(tint: tint.withAlphaComponent(CGFloat(alpha)), texture: .init(texture))
         } else {
-            material.color = .init(tint: UIColor.white.withAlphaComponent(CGFloat(alpha)))
+            material.color = .init(tint: tint.withAlphaComponent(CGFloat(alpha)))
         }
         material.blending = .transparent(opacity: .init(floatLiteral: alpha))
         return material
     }
 
-    private static func lightTapDotMaterial(alpha: Float) -> UnlitMaterial {
+    private static func lightTapDotMaterial(alpha: Float, tint: UIColor) -> UnlitMaterial {
         var material = UnlitMaterial()
         if let texture = cachedLightTapDotTexture ?? generateLightTapDotTexture() {
             cachedLightTapDotTexture = texture
-            material.color = .init(tint: UIColor.white.withAlphaComponent(CGFloat(alpha)), texture: .init(texture))
+            material.color = .init(tint: tint.withAlphaComponent(CGFloat(alpha)), texture: .init(texture))
         } else {
-            material.color = .init(tint: UIColor.systemRed.withAlphaComponent(CGFloat(alpha)))
+            material.color = .init(tint: tint.withAlphaComponent(CGFloat(alpha)))
         }
         material.blending = .transparent(opacity: .init(floatLiteral: alpha))
         return material
@@ -666,7 +822,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
             let rect = CGRect(x: 0, y: 0, width: size, height: size)
             context.cgContext.clear(rect)
             let dotRect = rect.insetBy(dx: size * 0.12, dy: size * 0.12)
-            context.cgContext.setFillColor(UIColor.systemRed.cgColor)
+            context.cgContext.setFillColor(UIColor.white.cgColor)
             context.cgContext.fillEllipse(in: dotRect)
             context.cgContext.setStrokeColor(UIColor.white.cgColor)
             context.cgContext.setLineWidth(size * 0.08)
@@ -677,6 +833,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     private func resetInteractionProgress() {
+        cancelPendingTutorialAdvances()
         hasReachedNarrowSpread = false
         hasReachedWideSpread = false
         hasReachedDimIntensity = false
@@ -791,6 +948,25 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         evaluateMissionProgress()
     }
 
+    private func restoreLightSettings(beamSpread: Float, intensity: Float) {
+        hasReachedNarrowSpread = false
+        hasReachedWideSpread = false
+        hasReachedDimIntensity = false
+        hasReachedBrightIntensity = false
+        restoreBeamSpread(beamSpread)
+        restoreIntensity(intensity)
+    }
+
+    private func restoreBeamSpread(_ value: Float) {
+        beamSpreadDegrees = value
+        arSceneViewModel.updateSelectedLight { $0.beamOuterAngleDegrees = value }
+    }
+
+    private func restoreIntensity(_ value: Float) {
+        lightIntensity = value
+        arSceneViewModel.updateSelectedLight { $0.intensity = value }
+    }
+
     private func handleSpreadMilestone(_ value: Float) {
         guard phase == .spreadTutorial else { return }
         switch spreadTutorialIndex {
@@ -829,20 +1005,49 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     private func advanceSpreadTutorialAfterDelay(from index: Int, delay: TimeInterval) {
-        Task { @MainActor [weak self] in
+        spreadAdvanceTask?.cancel()
+        spreadAdvanceTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard let self, self.phase == .spreadTutorial, self.spreadTutorialIndex == index else { return }
+            guard let self, !Task.isCancelled,
+                  self.phase == .spreadTutorial,
+                  self.spreadTutorialIndex == index else { return }
             if index == 0, self.activeTouchCount < 2 { return }
+            self.spreadAdvanceTask = nil
             self.advanceSpreadTutorial()
         }
     }
 
     private func advanceIntensityTutorialAfterDelay(from index: Int, delay: TimeInterval) {
-        Task { @MainActor [weak self] in
+        intensityAdvanceTask?.cancel()
+        intensityAdvanceTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard self?.phase == .intensityTutorial, self?.intensityTutorialIndex == index else { return }
-            self?.advanceIntensityTutorial()
+            guard let self, !Task.isCancelled,
+                  self.phase == .intensityTutorial,
+                  self.intensityTutorialIndex == index else { return }
+            self.intensityAdvanceTask = nil
+            self.advanceIntensityTutorial()
         }
+    }
+
+    private func cancelPendingTutorialAdvances() {
+        spreadAdvanceTask?.cancel()
+        spreadAdvanceTask = nil
+        intensityAdvanceTask?.cancel()
+        intensityAdvanceTask = nil
+    }
+
+    private func beginInteractionTransition() -> Bool {
+        guard !isTransitioning else { return false }
+        isTransitioning = true
+        transitionGateTask?.cancel()
+        transitionGateTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: transitionDebounceDuration)
+            guard !Task.isCancelled else { return }
+            isTransitioning = false
+            transitionGateTask = nil
+        }
+        return true
     }
 }
 

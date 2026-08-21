@@ -22,6 +22,8 @@ final class BackgroundMusicPlayer {
     private var currentTrack = Track.menu
     private var loadedTrack: Track?
     private var targetVolume: Float
+    private var trackTransitionTask: Task<Void, Never>?
+    private var isPlaybackRequested = false
 
     private(set) var menuVolume: Double
     private(set) var gameplayVolume: Double
@@ -42,7 +44,10 @@ final class BackgroundMusicPlayer {
     }
 
     func play() {
+        isPlaybackRequested = true
         configureAudioSession()
+
+        guard trackTransitionTask == nil else { return }
 
         preparePlayerIfNeeded(for: currentTrack)
 
@@ -52,6 +57,7 @@ final class BackgroundMusicPlayer {
     }
 
     func pause() {
+        isPlaybackRequested = false
         player?.pause()
     }
 
@@ -85,26 +91,68 @@ final class BackgroundMusicPlayer {
         let didChangeTrack = currentTrack != track
         currentTrack = track
         targetVolume = Float(Self.clamped(volume))
+        isPlaybackRequested = true
         configureAudioSession()
 
-        if didChangeTrack {
-            player?.stop()
-            player = nil
-            loadedTrack = nil
+        guard didChangeTrack else {
+            if trackTransitionTask == nil {
+                startCurrentTrack(fadesIn: false)
+            }
+            return
         }
 
-        preparePlayerIfNeeded(for: track)
+        trackTransitionTask?.cancel()
+
+        guard let previousPlayer = player, previousPlayer.isPlaying else {
+            resetLoadedPlayer()
+            startCurrentTrack(fadesIn: false)
+            return
+        }
+
+        previousPlayer.setVolume(0, fadeDuration: Self.volumeTransitionDuration)
+        trackTransitionTask = Task { [weak self, weak previousPlayer] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self else { return }
+
+            previousPlayer?.stop()
+            if self.player === previousPlayer {
+                self.player = nil
+                self.loadedTrack = nil
+            }
+            self.trackTransitionTask = nil
+            self.startCurrentTrack(fadesIn: true)
+        }
+    }
+
+    private func startCurrentTrack(fadesIn: Bool) {
+        preparePlayerIfNeeded(for: currentTrack)
 
         guard let player else { return }
-        player.volume = targetVolume
+        player.volume = fadesIn ? 0 : targetVolume
 
-        if !player.isPlaying {
+        if isPlaybackRequested, !player.isPlaying {
             player.play()
         }
+        if fadesIn, isPlaybackRequested {
+            player.setVolume(targetVolume, fadeDuration: Self.volumeTransitionDuration)
+        }
+    }
+
+    private func resetLoadedPlayer() {
+        player?.stop()
+        player = nil
+        loadedTrack = nil
+        trackTransitionTask = nil
     }
 
     private func preparePlayerIfNeeded(for track: Track) {
         guard player == nil || loadedTrack != track else { return }
+
+        if loadedTrack != track {
+            player?.stop()
+            player = nil
+            loadedTrack = nil
+        }
 
         guard let musicURL = Bundle.main.url(
             forResource: track.rawValue,

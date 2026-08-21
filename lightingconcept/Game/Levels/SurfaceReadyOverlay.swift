@@ -3,20 +3,23 @@ import SwiftUI
 /// Instruksi dan progres scan yang identik di seluruh level AR.
 struct SurfaceScanInstruction: View {
     @ObservedObject var sceneViewModel: ARSceneViewModel
+    var progressOverride: Double? = nil
+    var title = "Scan"
+    var guidanceText: String? = nil
     @State private var fallbackProgress = 0.08
 
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
-                Image(systemName: sceneViewModel.surfaceState == .found ? "checkmark.viewfinder" : "viewfinder")
+                Image(systemName: isComplete ? "checkmark.viewfinder" : "viewfinder")
                     .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(sceneViewModel.surfaceState == .found ? .green : .cyan)
+                    .foregroundStyle(isComplete ? .green : .cyan)
                     .frame(width: 44, height: 44)
                     .background(.thinMaterial, in: Circle())
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text(sceneViewModel.surfaceState == .found ? "Siap" : "Scan")
+                        Text(isComplete ? "Siap" : title)
                             .font(.headline.weight(.bold))
                         Spacer()
                         Text("\(Int(scanProgress * 100))%")
@@ -25,7 +28,7 @@ struct SurfaceScanInstruction: View {
                     }
 
                     ProgressView(value: scanProgress)
-                        .tint(sceneViewModel.surfaceState == .found ? .green : .cyan)
+                        .tint(isComplete ? .green : .cyan)
 
                     HStack(spacing: 8) {
                         scanDot(isActive: scanProgress >= 0.25)
@@ -33,6 +36,13 @@ struct SurfaceScanInstruction: View {
                         scanDot(isActive: scanProgress >= 0.85)
                     }
                     .accessibilityHidden(true)
+
+                    if let guidanceText {
+                        Text(guidanceText)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             .padding(14)
@@ -46,14 +56,25 @@ struct SurfaceScanInstruction: View {
     }
 
     private var scanProgress: Double {
+        if let progressOverride {
+            return min(max(progressOverride, 0), 1)
+        }
+
         switch sceneViewModel.surfaceState {
         case .found, .placed:
-            1
+            return 1
         case .scanning:
-            sceneViewModel.isLiDARAvailable
+            return sceneViewModel.isLiDARAvailable
                 ? Double(sceneViewModel.lidarPlacementProgress)
                 : fallbackProgress
         }
+    }
+
+    private var isComplete: Bool {
+        if progressOverride != nil {
+            return scanProgress >= 0.999
+        }
+        return sceneViewModel.surfaceState == .found || sceneViewModel.surfaceState == .placed
     }
 
     private func scanDot(isActive: Bool) -> some View {
@@ -75,13 +96,15 @@ struct SurfaceScanInstruction: View {
 struct SurfaceReadyOverlay: View {
     let onContinue: () -> Void
     let onRescan: () -> Void
+    var title = "Permukaan Siap"
+    var message = "Permukaan sudah ditemukan. Mau lanjut untuk menaruh benda, atau scan ulang permukaannya?"
 
     var body: some View {
         VStack(spacing: 14) {
-            Label("Permukaan Siap", systemImage: "checkmark.viewfinder")
+            Label(title, systemImage: "checkmark.viewfinder")
                 .font(.title3.bold())
 
-            Text("Permukaan sudah ditemukan. Mau lanjut untuk menaruh benda, atau scan ulang permukaannya?")
+            Text(message)
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
 
@@ -94,6 +117,7 @@ struct SurfaceReadyOverlay: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
             }
+            .tint(Color(hex: "9FA60C"))
         }
         .padding(20)
         .frame(maxWidth: 620)

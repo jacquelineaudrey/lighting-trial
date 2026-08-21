@@ -31,7 +31,7 @@ final class ARSceneViewModel: ObservableObject {
 
     @Published var selectedConcept: ShadowConcept?
     @Published var selectedConceptTapLocation: CGPoint = .zero
-    /// Posisi WORLD dari marker (white mark) yang sedang dipilih. Dipakai
+    /// Posisi WORLD dari marker edukasi yang sedang dipilih. Dipakai
     /// Level 3 supaya Bayo bisa terbang mendekat ke titik yang dipencet, mirip
     /// cara Lumi menghampiri marker di Level 1. `nil` saat tidak ada yang dipilih.
     @Published var selectedConceptWorldPosition: SIMD3<Float>?
@@ -126,18 +126,34 @@ final class ARSceneViewModel: ObservableObject {
     }
 
     func updateLiDARScan(meshCount: Int, faceCount: Int) {
-        isLiDARAvailable = true
-        lidarScannedMeshCount = meshCount
-        lidarScannedFaceCount = faceCount
         let meshProgress = min(Float(meshCount) / 6, 1)
         let faceProgress = min(Float(faceCount) / 1500, 1)
-        lidarScanProgress = min(meshProgress * 0.45 + faceProgress * 0.55, 1)
+        let newProgress = min(meshProgress * 0.45 + faceProgress * 0.55, 1)
+
+        if !isLiDARAvailable {
+            isLiDARAvailable = true
+        }
+        if lidarScannedMeshCount != meshCount {
+            lidarScannedMeshCount = meshCount
+        }
+        if lidarScannedFaceCount != faceCount {
+            lidarScannedFaceCount = faceCount
+        }
+        if abs(lidarScanProgress - newProgress) >= 0.005 {
+            lidarScanProgress = newProgress
+        }
     }
 
     func resetLiDARScan() {
-        lidarScanProgress = 0
-        lidarScannedMeshCount = 0
-        lidarScannedFaceCount = 0
+        if lidarScanProgress != 0 {
+            lidarScanProgress = 0
+        }
+        if lidarScannedMeshCount != 0 {
+            lidarScannedMeshCount = 0
+        }
+        if lidarScannedFaceCount != 0 {
+            lidarScannedFaceCount = 0
+        }
     }
 
     var selectedLight: LightConfiguration {

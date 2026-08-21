@@ -7,9 +7,12 @@ struct Level2ReplayNarrationButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button("Dengarkan Lagi", systemImage: "speaker.wave.2.fill", action: action)
-            .buttonStyle(.bordered)
-            .controlSize(.large)
+        LevelActionButton(
+            title: "Dengarkan Lagi",
+            systemImage: "speaker.wave.2.fill",
+            role: .secondary,
+            action: action
+        )
             .accessibilityHint("Memutar ulang petunjuk kegiatan")
     }
 }
@@ -49,12 +52,16 @@ struct Level2DialogOverlay: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text(line.characterName).font(.headline).foregroundStyle(.blue)
+            Text(line.characterName)
+                .font(.headline)
+                .foregroundStyle(Color(hex: "9FA60C"))
             Text(line.text).font(.title3).bold().multilineTextAlignment(.center)
             Level2ReplayNarrationButton(action: replayNarration)
-            Button(buttonTitle, action: action)
-                .font(.title3).bold().buttonStyle(.borderedProminent)
-                .controlSize(.large).frame(maxWidth: .infinity)
+            LevelActionButton(
+                title: buttonTitle,
+                systemImage: "arrow.right",
+                action: action
+            )
         }
         .padding(24)
         .background(.thinMaterial, in: .rect(cornerRadius: 28))
@@ -71,8 +78,11 @@ struct Level2PlacementOverlay: View {
         VStack(spacing: 12) {
             SurfaceScanInstruction(sceneViewModel: sceneViewModel)
             Text(guidanceText).font(.headline).multilineTextAlignment(.center)
-            Button("Taruh Benda di Tengah", systemImage: "cube.fill", action: sceneViewModel.placeSceneAtScreenCenter)
-                .buttonStyle(.borderedProminent).controlSize(.large)
+            LevelActionButton(
+                title: "Taruh Benda di Tengah",
+                systemImage: "cube.fill",
+                action: sceneViewModel.placeSceneAtScreenCenter
+            )
                 .accessibilityHint("Menaruh benda pada permukaan di tengah layar")
             if let placementFeedback = sceneViewModel.placementFeedback {
                 Label(placementFeedback, systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
@@ -101,16 +111,13 @@ struct Level2MascotDialogOverlay: View {
     let line: Level2OverlayLine
     var buttonTitle: String = "Lanjut"
     var showsButton: Bool = false
-    var buttonTint: Color = .blue
     var advancesOnTap: Bool = true
     let action: () -> Void
 
     var body: some View {
         ZStack {
             if advancesOnTap {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: action)
+                LevelTapToAdvanceOverlay(showsCaption: false, action: action)
             }
 
             if showsButton {
@@ -118,12 +125,11 @@ struct Level2MascotDialogOverlay: View {
                     Spacer()
                     HStack {
                         Spacer()
-                        Button(buttonTitle, action: action)
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 12)
-                            .background(buttonTint, in: Capsule())
+                        LevelActionButton(
+                            title: buttonTitle,
+                            systemImage: "arrow.right",
+                            action: action
+                        )
                             .padding(.trailing, 42)
                             .padding(.bottom, 36)
                     }
@@ -192,12 +198,11 @@ struct Level2FreeExploreInstructionsOverlay: View {
                     )
                 }
 
-                Button("Oke, Sudah Ingat!", action: action)
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 12)
-                    .background(Color.blue, in: Capsule())
+                LevelActionButton(
+                    title: "Oke, Sudah Ingat!",
+                    systemImage: "checkmark",
+                    action: action
+                )
             }
             .padding(44)
             .frame(maxWidth: 840)
@@ -216,12 +221,11 @@ struct Level2FreeExploreOverlay: View {
             Spacer()
             HStack(alignment: .bottom) {
                 Spacer()
-                Button("Selanjutnya", action: action)
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 12)
-                    .background(Color.blue, in: Capsule())
+                LevelActionButton(
+                    title: "Selanjutnya",
+                    systemImage: "arrow.right",
+                    action: action
+                )
                     .padding(.trailing, 42)
                     .padding(.bottom, 36)
             }
@@ -273,7 +277,6 @@ struct Level2MissionOverlay: View {
             line: line,
             buttonTitle: "Selesai",
             showsButton: missionIndex == 5,
-            buttonTint: .red,
             advancesOnTap: missionIndex != 1 && missionIndex != 3 && missionIndex != 5,
             action: action
         )
@@ -533,7 +536,12 @@ struct Level2ReviewOverlay: View {
                 Label(point, systemImage: "star.fill").font(.headline).foregroundStyle(.primary)
             }
             Level2ReplayNarrationButton(action: replayNarration).frame(maxWidth: .infinity)
-            Button("Selesaikan Level 2", action: onFinish).buttonStyle(.borderedProminent).controlSize(.large).frame(maxWidth: .infinity)
+            LevelActionButton(
+                title: "Selesaikan Level 2",
+                systemImage: "checkmark",
+                action: onFinish
+            )
+            .frame(maxWidth: .infinity)
         }
         .padding(22).background(.thinMaterial, in: .rect(cornerRadius: 24))
         .padding(.horizontal, 16).padding(.bottom, 28)
@@ -549,17 +557,22 @@ struct Level2CompletedOverlay: View {
             Text("🏆").font(.largeTitle.scaled(by: 1.7)).accessibilityHidden(true)
             Text("Level 2 Selesai!").font(.title).bold()
             Text("Kamu hebat, Detektif Cahaya!").font(.title3).bold().multilineTextAlignment(.center)
-            Button(onNext == nil ? "Kembali ke Menu" : "Selanjutnya") {
-                if let onNext {
-                    onNext()
-                } else {
-                    onFinish()
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            LevelActionButton(
+                title: onNext == nil ? "Kembali ke Menu" : "Selanjutnya",
+                systemImage: onNext == nil ? "house.fill" : "arrow.right",
+                role: onNext == nil ? .menu : .primary,
+                action: finish
+            )
         }
         .padding(24).background(.thinMaterial, in: .rect(cornerRadius: 28))
         .padding(.horizontal, 24).padding(.bottom, 48)
+    }
+
+    private func finish() {
+        if let onNext {
+            onNext()
+        } else {
+            onFinish()
+        }
     }
 }
