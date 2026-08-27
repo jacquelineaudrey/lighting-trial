@@ -203,6 +203,7 @@ final class SceneObjectSystem: System {
     private static func enableDynamicShadows(on entity: Entity) {
         if entity is ModelEntity {
             entity.components.set(DynamicLightShadowComponent(castsShadow: true))
+            entity.components.set(GroundingShadowComponent(castsShadow: false, receivesShadow: false))
         }
         for child in entity.children {
             enableDynamicShadows(on: child)
@@ -335,6 +336,7 @@ extension SceneObjectSystem {
         entity.position.y = height / 2
         entity.generateCollisionShapes(recursive: false)
         entity.components.set(DynamicLightShadowComponent(castsShadow: true))
+        entity.components.set(GroundingShadowComponent(castsShadow: false, receivesShadow: false))
         return entity
     }
 

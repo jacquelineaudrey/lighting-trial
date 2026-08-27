@@ -19,16 +19,16 @@ struct AudioSettingsView: View {
             HStack(spacing: 16) {
                 Label("Pengaturan", systemImage: "gearshape.fill")
                     .font(.largeTitle.bold())
-                    .foregroundStyle(Color(red: 92 / 255, green: 61 / 255, blue: 36 / 255))
+                    .foregroundStyle(Color(hex: "313131"))
 
                 Spacer()
 
                 Button("Tutup", systemImage: "xmark", action: dismiss)
                     .labelStyle(.iconOnly)
                     .font(.title2.bold())
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color(hex: "313131"))
                     .frame(width: 48, height: 48)
-                    .background(Color(red: 151 / 255, green: 91 / 255, blue: 45 / 255), in: .circle)
+                    .glassEffect(.regular, in: .circle)
                     .contentShape(.circle)
                     .buttonStyle(.plain)
             }
@@ -52,20 +52,19 @@ struct AudioSettingsView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 42)
                 .padding(.vertical, 14)
-                .background(Color(red: 151 / 255, green: 91 / 255, blue: 45 / 255), in: .capsule)
+                .background(Color(hex: "9FA60C"), in: .capsule)
                 .buttonStyle(.plain)
         }
         .padding(30)
         .frame(maxWidth: 640)
         .background(
-            Color(red: 222 / 255, green: 184 / 255, blue: 125 / 255),
+            Color(hex: "EBE9CE"),
             in: .rect(cornerRadius: 32)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 32)
-                .stroke(Color(red: 92 / 255, green: 61 / 255, blue: 36 / 255), lineWidth: 5)
+                .stroke(Color(hex: "D6CF91"), lineWidth: 5)
         }
-        .shadow(color: .black.opacity(0.3), radius: 24, y: 12)
         .padding(32)
         .onChange(of: menuVolume) { _, newVolume in
             BackgroundMusicPlayer.shared.updateMenuVolume(newVolume)
@@ -76,7 +75,7 @@ struct AudioSettingsView: View {
     }
 }
 
-#Preview {
+#Preview(traits: .landscapeLeft) {
     AudioSettingsView {}
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.black.opacity(0.45))

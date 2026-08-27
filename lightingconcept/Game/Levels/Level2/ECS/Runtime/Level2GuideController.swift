@@ -35,10 +35,14 @@ final class Level2GuideController {
         self.anchor = anchor
         self.guide = guide
         cameraSubscription = AnyCancellable(arView.scene.subscribe(to: SceneEvents.Update.self) { [weak self, weak arView] _ in
-            guard let transform = arView?.session.currentFrame?.camera.transform else { return }
-            Task { @MainActor in
-                self?.placeIfNeeded(cameraTransform: transform)
+            guard let self else { return }
+            guard self.needsPlacement else {
+                self.cameraSubscription?.cancel()
+                self.cameraSubscription = nil
+                return
             }
+            guard let transform = arView?.session.currentFrame?.camera.transform else { return }
+            self.placeIfNeeded(cameraTransform: transform)
         })
     }
 

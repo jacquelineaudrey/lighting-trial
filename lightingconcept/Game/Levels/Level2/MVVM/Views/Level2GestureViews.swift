@@ -1,32 +1,18 @@
 import SwiftUI
 import UIKit
 
-struct Level2TouchPoint: Identifiable, Equatable {
-    let id: Int
-    let location: CGPoint
-}
-
 /// Gesture SwiftUI hanya menerjemahkan input user ke ViewModel. Perubahan
 /// entity/lampu tetap disinkronkan oleh ARSceneCoordinator + ECS RealityKit.
+/// Indikator sentuhan dirender langsung di UIKit layer untuk performa maksimum (0% SwiftUI overhead).
 struct Level2GestureLayer: View {
     let viewModel: Level2ViewModel
-    @State private var touchPoints: [Level2TouchPoint] = []
 
     var body: some View {
         if viewModel.gestureMode != .none {
-            ZStack {
-                Level2TouchCaptureView(
-                    mode: viewModel.gestureMode,
-                    viewModel: viewModel,
-                    touchPoints: $touchPoints
-                )
-
-                ForEach(touchPoints) { point in
-                    Level2FingerPulse()
-                        .position(point.location)
-                        .allowsHitTesting(false)
-                }
-            }
+            Level2TouchCaptureView(
+                mode: viewModel.gestureMode,
+                viewModel: viewModel
+            )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityLabel)
             .accessibilityValue(accessibilityValue)
@@ -79,38 +65,9 @@ struct Level2GestureLayer: View {
     }
 }
 
-private struct Level2FingerPulse: View {
-    @State private var isPulsing = false
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(.white.opacity(0.45), lineWidth: 1)
-                .frame(width: 56, height: 56)
-                .scaleEffect(isPulsing ? 1.25 : 0.82)
-                .opacity(isPulsing ? 0.15 : 0.85)
-
-            Circle()
-                .stroke(.white.opacity(0.7), lineWidth: 1)
-                .frame(width: 42, height: 42)
-
-            Circle()
-                .fill(Color.red)
-                .frame(width: 28, height: 28)
-                .overlay(Circle().stroke(.white, lineWidth: 2))
-        }
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.9).repeatForever(autoreverses: false)) {
-                isPulsing = true
-            }
-        }
-    }
-}
-
 private struct Level2TouchCaptureView: UIViewRepresentable {
     let mode: Level2GestureMode
     let viewModel: Level2ViewModel
-    @Binding var touchPoints: [Level2TouchPoint]
 
     func makeUIView(context: Context) -> Level2TouchCaptureUIView {
         let view = Level2TouchCaptureUIView()
@@ -123,21 +80,17 @@ private struct Level2TouchCaptureView: UIViewRepresentable {
     func updateUIView(_ uiView: Level2TouchCaptureUIView, context: Context) {
         context.coordinator.mode = mode
         context.coordinator.viewModel = viewModel
-        context.coordinator.touchPoints = $touchPoints
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(mode: mode, viewModel: viewModel, touchPoints: $touchPoints)
+        Coordinator(mode: mode, viewModel: viewModel)
     }
 
     final class Coordinator: NSObject {
         var mode: Level2GestureMode
         var viewModel: Level2ViewModel
-        var touchPoints: Binding<[Level2TouchPoint]>
 
         private var activeTouches: [UITouch: CGPoint] = [:]
-        private var touchIDs: [UITouch: Int] = [:]
-        private var nextTouchID = 0
         private var spreadStartDistance: CGFloat?
         private var intensityStartY: CGFloat?
         private var movedDuringCurrentTouch = false
@@ -146,49 +99,47 @@ private struct Level2TouchCaptureView: UIViewRepresentable {
         private let hapticGenerator = UIImpactFeedbackGenerator(style: .light)
         private let gestureStartHapticGenerator = UIImpactFeedbackGenerator(style: .medium)
 
-        init(mode: Level2GestureMode, viewModel: Level2ViewModel, touchPoints: Binding<[Level2TouchPoint]>) {
+        init(mode: Level2GestureMode, viewModel: Level2ViewModel) {
             self.mode = mode
             self.viewModel = viewModel
-            self.touchPoints = touchPoints
         }
 
-        func touchesBegan(_ touches: Set<UITouch>, in view: UIView) {
+        func touchesBegan(_ touches: Set<UITouch>, in view: Level2TouchCaptureUIView) {
             guard mode != .none else { return }
             hapticGenerator.prepare()
             gestureStartHapticGenerator.prepare()
             for touch in touches {
-                activeTouches[touch] = touch.location(in: view)
-                touchIDs[touch] = nextTouchID
-                nextTouchID += 1
+                let location = touch.location(in: view)
+                activeTouches[touch] = location
+                view.updateTouchIndicator(for: touch, at: location, active: true)
                 hapticGenerator.impactOccurred(intensity: 0.75)
             }
             if activeTouches.count == touches.count {
                 movedDuringCurrentTouch = false
             }
-            syncTouchPoints(in: view)
             viewModel.fingerTouchDidChange(count: activeTouches.count)
             beginGestureIfNeeded(in: view)
         }
 
-        func touchesMoved(_ touches: Set<UITouch>, in view: UIView) {
+        func touchesMoved(_ touches: Set<UITouch>, in view: Level2TouchCaptureUIView) {
             guard mode != .none else { return }
             for touch in touches {
-                activeTouches[touch] = touch.location(in: view)
+                let location = touch.location(in: view)
+                activeTouches[touch] = location
+                view.updateTouchIndicator(for: touch, at: location, active: true)
             }
             movedDuringCurrentTouch = true
-            syncTouchPoints(in: view)
             beginGestureIfNeeded(in: view)
             updateGesture()
         }
 
-        func touchesEnded(_ touches: Set<UITouch>, in view: UIView) {
+        func touchesEnded(_ touches: Set<UITouch>, in view: Level2TouchCaptureUIView) {
             let shouldEnterLookAround = activeTouches.count == 1
                 && touches.count == 1
                 && spreadStartDistance == nil
                 && intensityStartY == nil
                 && !movedDuringCurrentTouch
-            remove(touches)
-            syncTouchPoints(in: view)
+            remove(touches, in: view)
             viewModel.fingerTouchDidChange(count: activeTouches.count)
             endGestureIfNeeded()
             if shouldEnterLookAround {
@@ -197,9 +148,8 @@ private struct Level2TouchCaptureView: UIViewRepresentable {
             beginGestureIfNeeded(in: view)
         }
 
-        func touchesCancelled(_ touches: Set<UITouch>, in view: UIView) {
-            remove(touches)
-            syncTouchPoints(in: view)
+        func touchesCancelled(_ touches: Set<UITouch>, in view: Level2TouchCaptureUIView) {
+            remove(touches, in: view)
             viewModel.fingerTouchDidChange(count: activeTouches.count)
             endGestureIfNeeded()
         }
@@ -275,20 +225,13 @@ private struct Level2TouchCaptureView: UIViewRepresentable {
             hapticGenerator.prepare()
         }
 
-        private func remove(_ touches: Set<UITouch>) {
+        private func remove(_ touches: Set<UITouch>, in view: Level2TouchCaptureUIView) {
             for touch in touches {
                 activeTouches[touch] = nil
-                touchIDs[touch] = nil
+                view.removeTouchIndicator(for: touch)
             }
             if activeTouches.isEmpty {
-                nextTouchID = 0
                 movedDuringCurrentTouch = false
-            }
-        }
-
-        private func syncTouchPoints(in view: UIView) {
-            touchPoints.wrappedValue = activeTouches.map { touch, location in
-                Level2TouchPoint(id: touchIDs[touch] ?? touch.hash, location: location)
             }
         }
 
@@ -310,6 +253,7 @@ private struct Level2TouchCaptureView: UIViewRepresentable {
 
 private final class Level2TouchCaptureUIView: UIView {
     weak var coordinator: Level2TouchCaptureView.Coordinator?
+    private var touchIndicatorViews: [UITouch: UIView] = [:]
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         coordinator?.touchesBegan(touches, in: self)
@@ -326,4 +270,45 @@ private final class Level2TouchCaptureUIView: UIView {
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         coordinator?.touchesCancelled(touches, in: self)
     }
+
+    func updateTouchIndicator(for touch: UITouch, at location: CGPoint, active: Bool) {
+        let indicatorView: UIView
+        if let existing = touchIndicatorViews[touch] {
+            indicatorView = existing
+        } else {
+            let created = createIndicatorView()
+            addSubview(created)
+            touchIndicatorViews[touch] = created
+            indicatorView = created
+        }
+        indicatorView.center = location
+    }
+
+    func removeTouchIndicator(for touch: UITouch) {
+        if let view = touchIndicatorViews.removeValue(forKey: touch) {
+            view.removeFromSuperview()
+        }
+    }
+
+    private func createIndicatorView() -> UIView {
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
+        container.isUserInteractionEnabled = false
+
+        let outerRing = UIView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
+        outerRing.layer.cornerRadius = 22
+        outerRing.layer.borderWidth = 1.5
+        outerRing.layer.borderColor = UIColor.white.withAlphaComponent(0.7).cgColor
+        outerRing.backgroundColor = .clear
+        container.addSubview(outerRing)
+
+        let dot = UIView(frame: CGRect(x: 8, y: 8, width: 28, height: 28))
+        dot.layer.cornerRadius = 14
+        dot.layer.borderWidth = 2
+        dot.layer.borderColor = UIColor.white.cgColor
+        dot.backgroundColor = .systemRed
+        container.addSubview(dot)
+
+        return container
+    }
 }
+

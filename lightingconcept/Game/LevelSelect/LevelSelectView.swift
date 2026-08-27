@@ -57,9 +57,6 @@ struct LevelSelectView: View {
                         )
                         .position(LevelMapLayout.position(for: levelID, isOpen: isLevelOpen))
                     }
-
-                    LevelMapBackButton(action: closeLevelSelect)
-                        .position(LevelMapLayout.backButtonCenter)
                 }
                 .frame(width: LevelMapLayout.canvasSize.width,
                        height: LevelMapLayout.canvasSize.height)
@@ -88,6 +85,11 @@ struct LevelSelectView: View {
             }
         }
         .ignoresSafeArea()
+        .overlay(alignment: .topLeading) {
+            LevelMapBackButton(action: closeLevelSelect)
+                .padding(.leading, 16)
+                .padding(.top, 12)
+        }
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: $startLevel1) {
             Level1FlowView(
@@ -196,7 +198,7 @@ private struct LevelSelectDimmingBackdrop: View {
     }
 }
 
-#Preview {
+#Preview(traits: .landscapeLeft) {
     NavigationStack {
         LevelSelectView()
     }

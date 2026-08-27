@@ -9,6 +9,9 @@ final class Level3ShadowPresentationSystem: System {
     func update(context: SceneUpdateContext) {
         for entity in context.entities(matching: Self.query, updatingSystemWhen: .rendering) {
             guard let presentation = entity.components[Level3ShadowPresentationComponent.self] else { continue }
+            if entity.components[DynamicLightShadowComponent.self]?.castsShadow == presentation.castsShadow {
+                continue
+            }
             entity.components.set(DynamicLightShadowComponent(castsShadow: presentation.castsShadow))
         }
     }

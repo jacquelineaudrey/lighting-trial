@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 import ARKit
 import RealityKit
 import UIKit
@@ -44,7 +45,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private var usesSceneReconstruction = false
 
     private var isSynchronizationScheduled = false
-    private var lastSceneSignature: SceneUpdateSignature?
+    private var lastObjectsSignature: SceneObjectsSyncSignature?
+    private var lastLightsSignature: SceneLightsSyncSignature?
+    private var lastLessonECSSignature: LessonECSSignature?
     private var lastOverlaySignature: SceneOverlayUpdateSignature?
     private var lastShadowInfoSignature: ShadowInfoUpdateSignature?
     private var lastResetSceneFlag = false
@@ -58,6 +61,43 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private weak var selectedConceptEntity: Entity?
     private var hasLoggedLiDARMeshOcclusion = false
     nonisolated(unsafe) private var lastDispatchedCameraTelemetryTimestamp: TimeInterval = 0
+
+    // MARK: - Rotate-only light drag (Level 3 / Level 4)
+    // `syncLights()`/`SceneLightSystem.synchronize` only ever read the
+    // committed `viewModel.lights` array, so they can't see the transient
+    // yaw/pitch written mid-drag — without this, the real spotlight (and its
+    // cast shadow) stay frozen while only the overlay ray tracks the finger.
+    private weak var cachedRotatingLightEntity: Entity?
+    private var lastRotateOverlayYawDegrees: Float?
+    private var lastRotateOverlayPitchDegrees: Float?
+
+    // Level 3's object has a real-time `SpotLightComponent.Shadow`. While the
+    // learner is actively rotating the light, RealityKit re-renders that
+    // shadow map on every frame the emitter's orientation changes — that GPU
+    // work happens inside RealityKit/Metal, outside our call stack entirely,
+    // and is the dominant cost of this gesture (see profiling notes on
+    // `rotateSelection`). We suppress it for the duration of the drag and
+    // restore it the instant the finger lifts, same as we already defer the
+    // overlay rebuild — the shadow reappearing one frame late is
+    // imperceptible, but it removes the per-frame shadow-map cost during the
+    // highest-frequency part of the gesture.
+    private var isSuppressingObjectShadowDuringLightDrag = false
+
+    // Level 2's overlay (the light rays) recolors itself based on intensity
+    // (see `ProjectionLineRenderer`'s rayAlpha), so it legitimately needs
+    // rebuilding as intensity changes — but `applyTransientLightToECS` runs
+    // every single RealityKit frame, and the intensity gate upstream in
+    // `Level2ViewModel.setIntensity` only requires a ~1-unit change (out of
+    // a ~6000-unit range) before writing. That's a far finer step than
+    // anyone can actually see, so the overlay was rebuilding on nearly every
+    // frame of a drag. These track the last intensity/angle we actually
+    // rebuilt the overlay for, so we can gate that rebuild to a perceptible
+    // step — same idea as the 0.15° threshold Level 3 uses for its
+    // light-direction drag — while still writing the light's real
+    // brightness every frame so the spotlight itself stays fully responsive.
+    private var lastLevel2OverlayIntensity: Float?
+    private var lastLevel2OverlayOuterAngle: Float?
+    private var lastLevel2RayOverlayUpdateTimestamp: CFTimeInterval = 0
 
     init(
         viewModel: ARSceneViewModel,
@@ -80,9 +120,13 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         arView.renderOptions.insert(.disablePersonOcclusion)
         if viewModel.usesLiDARSceneReconstruction {
             arView.environment.sceneUnderstanding.options.insert(.occlusion)
-            arView.environment.sceneUnderstanding.options.insert(.collision)
             arView.environment.sceneUnderstanding.options.insert(.receivesLighting)
-            arView.environment.sceneUnderstanding.options.insert(.physics)
+            if viewModel.usesLiDARPhysicsInteraction {
+                arView.environment.sceneUnderstanding.options.insert(.collision)
+                arView.environment.sceneUnderstanding.options.insert(.physics)
+            }
+        } else {
+            arView.environment.sceneUnderstanding.options = []
         }
 
         arView.session.delegate = self
@@ -100,6 +144,67 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             self.isSynchronizationScheduled = false
             self.synchronizeScene()
         }
+    }
+
+    private weak var cachedSpotlightEntity: Entity?
+
+    /// Direct ECS write for transient light changes during gesture drags.
+    /// Bypasses `synchronizeScene` entirely — no SwiftUI view tree evaluation,
+    /// no signature diffing. Called per-frame while user is dragging intensity
+    /// or beam-spread. Only writes the component when values actually changed.
+    func applyTransientLightToECS() {
+        guard viewModel.hasTransientLight,
+              case .level2LightControl = lessonECSMode,
+              let anchor = sceneAnchor else {
+            lastLevel2OverlayIntensity = nil
+            lastLevel2OverlayOuterAngle = nil
+            return
+        }
+        let light = viewModel.selectedLight
+        let entity: Entity
+        if let cached = cachedSpotlightEntity, cached.parent != nil {
+            entity = cached
+        } else if let found = SceneLightSystem.entityWithLightID(viewModel.selectedLightID, in: anchor) {
+            cachedSpotlightEntity = found
+            entity = found
+        } else {
+            return
+        }
+        let next = Level2LightControlComponent(
+            intensity: light.intensity,
+            outerAngleInDegrees: light.effectiveOuterAngleDegrees,
+            isEnabled: light.type == .spot
+        )
+        guard entity.components[Level2LightControlComponent.self] != next else { return }
+        entity.components.set(next)
+
+        // Level 2 keeps `showLightRays` off outside the spread tutorial, so
+        // most of the time none of the drawn overlay elements (direction ray,
+        // ground projection, projection lines) read `intensity` at all — only
+        // `showLightRays` does. But that toggle is left ON by
+        // `startSpreadTutorial()` and never turned back off before the
+        // intensity phases run, so during real play `showLightRays` usually
+        // *is* true while the player is dragging intensity. For that case,
+        // measure distance-since-last-rebuild (not frame-to-frame delta —
+        // that was the actual bug: reassigning `lastLevel2OverlayIntensity`
+        // on every call made the >=40 threshold nearly meaningless) and also
+        // cap the rebuild rate to ~24/sec so a fast drag can't hammer
+        // `updateEducationalOverlays()` on every touch sample.
+        let outerAngleMoved = lastLevel2OverlayOuterAngle.map { abs($0 - next.outerAngleInDegrees) >= 0.3 } ?? true
+        var intensityMoved = false
+        if viewModel.showLightRays,
+           lastLevel2OverlayIntensity.map({ abs($0 - next.intensity) >= 40 }) ?? true {
+            let now = CACurrentMediaTime()
+            if now - lastLevel2RayOverlayUpdateTimestamp >= (1.0 / 24.0) {
+                lastLevel2RayOverlayUpdateTimestamp = now
+                intensityMoved = true
+            }
+        }
+        guard intensityMoved || outerAngleMoved else { return }
+        lastLevel2OverlayIntensity = next.intensity
+        lastLevel2OverlayOuterAngle = next.outerAngleInDegrees
+        updateEducationalOverlays()
+        lastOverlaySignature = currentOverlaySignature()
     }
 
     func synchronizeScene() {
@@ -132,12 +237,20 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
         guard sceneAnchor != nil else { return }
 
-        let sceneSignature = currentSceneSignature()
-        if sceneSignature != lastSceneSignature {
+        // Objects and lights are diffed independently: dragging a light's
+        // intensity/spread only changes SceneLightsSyncSignature, so it no
+        // longer forces a full re-diff of every object in the scene.
+        let objectsSignature = currentObjectsSignature()
+        if objectsSignature != lastObjectsSignature {
             syncObjects()
-            syncLights()
             receiverManager.updateSurfaceTexture(viewModel.selectedTexture)
-            lastSceneSignature = currentSceneSignature()
+            lastObjectsSignature = currentObjectsSignature()
+        }
+
+        let lightsSignature = currentLightsSignature()
+        if lightsSignature != lastLightsSignature {
+            syncLights()
+            lastLightsSignature = currentLightsSignature()
         }
 
         let overlaySignature = currentOverlaySignature()
@@ -146,10 +259,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             lastOverlaySignature = overlaySignature
         }
 
-        let shadowInfoSignature = currentShadowInfoSignature()
-        if shadowInfoSignature != lastShadowInfoSignature {
-            updateShadowInfo()
-            lastShadowInfoSignature = shadowInfoSignature
+        if viewModel.showShadowInformation {
+            let shadowInfoSignature = currentShadowInfoSignature()
+            if shadowInfoSignature != lastShadowInfoSignature {
+                updateShadowInfo()
+                lastShadowInfoSignature = shadowInfoSignature
+            }
         }
 
         synchronizeLessonECS()
@@ -446,7 +561,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             // Dragging upward raises the light; 500 points spans one metre.
             let height = clamped(startHeight - Float(translation.y) / 500, -0.2, 2.0)
             viewModel.updateSelectedLight { $0.position.y = height }
-            synchronizeScene()
+            requestSceneSynchronization()
         case .ended, .cancelled, .failed:
             verticalLightPanStartHeight = nil
         default:
@@ -458,31 +573,111 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     /// untuk lampu, sapuan horizontal mengubah yaw dan sapuan vertikal mengubah
     /// pitch. Tidak ada posisi yang disentuh di fungsi ini.
     private func rotateSelection(from gesture: UIPanGestureRecognizer, in arView: ARView) {
-        guard gesture.state == .changed else { return }
-        let translation = gesture.translation(in: arView)
-        gesture.setTranslation(.zero, in: arView)
+        let state = gesture.state
+        guard state == .began || state == .changed || state == .ended || state == .cancelled || state == .failed else { return }
 
-        // RealityKit memakai local -Z sebagai arah maju: yaw positif justru
-        // mengarahkan sorot ke kiri pada layar. Level 2 memilih mapping yang
-        // natural: geser kanan = sorot kanan.
-        let yawSensitivity: Float = viewModel.lightDirectionFollowsGesture ? -0.35 : 0.35
-        let yawDelta = Float(translation.x) * yawSensitivity
-        switch viewModel.interactionMode {
-        case .moveObject:
-            viewModel.updateSelectedObject { object in
-                object.yawDegrees += yawDelta
+        if state == .began {
+            if viewModel.interactionMode == .moveLight {
+                setObjectShadowSuppressed(true)
             }
-        case .moveLight:
-            let pitchDelta = Float(-translation.y) * 0.25
-            viewModel.updateSelectedLight { light in
-                light.yawDegrees += yawDelta
-                // Batas ini menjaga lampu tetap mengarah ke permukaan, bukan
-                // berputar melewati atas atau tepat sejajar dengan lantai.
-                light.pitchDegrees = clamped(light.pitchDegrees + pitchDelta, -85, -5)
-            }
+            return
         }
 
-        synchronizeScene()
+        if state == .changed {
+            let translation = gesture.translation(in: arView)
+            gesture.setTranslation(.zero, in: arView)
+
+            let yawSensitivity: Float = viewModel.lightDirectionFollowsGesture ? -0.35 : 0.35
+            let yawDelta = Float(translation.x) * yawSensitivity
+            switch viewModel.interactionMode {
+            case .moveObject:
+                viewModel.updateSelectedObject { object in
+                    object.yawDegrees += yawDelta
+                }
+                synchronizeScene()
+            case .moveLight:
+                let pitchDelta = Float(-translation.y) * 0.25
+                // Use the transient buffer — no @Published mutation, no SwiftUI re-render.
+                let current = viewModel.selectedLight
+                let nextYaw = current.yawDegrees + yawDelta
+                let nextPitch = clamped(current.pitchDegrees + pitchDelta, -85, -5)
+                viewModel.updateSelectedLightTransient(
+                    yawDegrees: nextYaw,
+                    pitchDegrees: nextPitch
+                )
+                // Cheap, targeted write straight to the real light entity's
+                // orientation. `syncLights()` reads the committed array only,
+                // so it can't reflect this transient value mid-drag — without
+                // this the actual spotlight (and its shadow) sit frozen while
+                // only the overlay ray follows the finger.
+                applyTransientLightOrientationToECS()
+
+                // Overlay rebuild (projection lines + shadow labels) is the
+                // expensive part of this loop, so only pay for it once the
+                // angle has moved enough to matter instead of on every touch
+                // delta.
+                let yawMoved = lastRotateOverlayYawDegrees.map { abs($0 - nextYaw) >= 0.15 } ?? true
+                let pitchMoved = lastRotateOverlayPitchDegrees.map { abs($0 - nextPitch) >= 0.15 } ?? true
+                if yawMoved || pitchMoved {
+                    lastRotateOverlayYawDegrees = nextYaw
+                    lastRotateOverlayPitchDegrees = nextPitch
+                    updateEducationalOverlays()
+                    lastOverlaySignature = currentOverlaySignature()
+                }
+                lastLightsSignature = currentLightsSignature()
+            }
+        } else {
+            // Gesture ended/cancelled: commit transient state and do a full sync once.
+            lastRotateOverlayYawDegrees = nil
+            lastRotateOverlayPitchDegrees = nil
+            setObjectShadowSuppressed(false)
+            viewModel.commitSelectedLightState()
+            synchronizeScene()
+        }
+    }
+
+    /// Toggles the selected object's real-time shadow independently of
+    /// `synchronizeLessonECS()`'s normal signature-gated path, so it can be
+    /// flipped off the instant a light-rotate drag begins and back on the
+    /// instant it ends. Scoped to `.level3ShadowPresentation` — Level 3 is
+    /// the only place `directManipulationRotatesOnly` is active today — so a
+    /// future level reusing this gesture path doesn't silently inherit it.
+    private func setObjectShadowSuppressed(_ suppressed: Bool) {
+        guard lessonECSMode == .level3ShadowPresentation,
+              suppressed != isSuppressingObjectShadowDuringLightDrag,
+              let object = objectEntity(id: viewModel.selectedObjectID) else { return }
+        isSuppressingObjectShadowDuringLightDrag = suppressed
+        let castsShadow = suppressed ? false : viewModel.showGroundProjection
+        object.components.set(Level3ShadowPresentationComponent(castsShadow: castsShadow))
+        // Keep the signature-gated path in `synchronizeLessonECS()` from
+        // immediately fighting this write on the next full sync.
+        lastLessonECSSignature = nil
+    }
+
+    /// Rotates the real RealityKit light entity to match the transient
+    /// yaw/pitch during a rotate-only drag (Level 3 / Level 4). Bypasses
+    /// `SceneLightSystem.synchronize`'s full diff/collision pass entirely —
+    /// it only ever touches orientation, and skips the write when it hasn't
+    /// actually changed.
+    private func applyTransientLightOrientationToECS() {
+        guard let anchor = sceneAnchor else { return }
+        let light = viewModel.selectedLight
+        let entity: Entity
+        if let cached = cachedRotatingLightEntity, cached.parent != nil {
+            entity = cached
+        } else if let found = SceneLightSystem.entityWithLightID(light.id, in: anchor) {
+            cachedRotatingLightEntity = found
+            entity = found
+        } else {
+            return
+        }
+        guard let emitter = entity.children.first(where: { $0.name == "Light Emitter" }) else { return }
+        let nextOrientation = SceneLightSystem.orientation(
+            yawDegrees: light.yawDegrees,
+            pitchDegrees: light.pitchDegrees
+        )
+        guard emitter.orientation != nextOrientation else { return }
+        emitter.orientation = nextOrientation
     }
 
     private func raycastPlane(from point: CGPoint) -> ARRaycastResult? {
@@ -531,7 +726,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         updateEducationalOverlays()
         updateShadowInfo()
         synchronizeLessonECS()
-        lastSceneSignature = currentSceneSignature()
+        lastObjectsSignature = currentObjectsSignature()
+        lastLightsSignature = currentLightsSignature()
         lastOverlaySignature = currentOverlaySignature()
         lastShadowInfoSignature = currentShadowInfoSignature()
 
@@ -588,7 +784,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         SceneObjectSystem.applyTransform(to: objectEntity, configuration: updatedObject)
         updateEducationalOverlays()
         updateShadowInfo()
-        lastSceneSignature = currentSceneSignature()
+        lastObjectsSignature = currentObjectsSignature()
         lastOverlaySignature = currentOverlaySignature()
         lastShadowInfoSignature = currentShadowInfoSignature()
         if logWhenMoved {
@@ -630,7 +826,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             light.position.x = clamped(localPosition.x, -0.9, 0.9)
             light.position.z = clamped(localPosition.z, -0.9, 0.9)
         }
-        synchronizeScene()
+        requestSceneSynchronization()
         viewModel.collisionWarning = collisionWarning
         if logWhenMoved {
             viewModel.debugLog("Selected light moved")
@@ -646,7 +842,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             lastTexture: &lastTexture,
             reportImportedDimensions: { [weak self] id, dimensions in
                 self?.viewModel.updateImportedModelDimensions(id: id, dimensions: dimensions)
-                self?.lastSceneSignature = nil
+                self?.lastObjectsSignature = nil
                 self?.lastOverlaySignature = nil
                 self?.lastShadowInfoSignature = nil
             },
@@ -673,6 +869,19 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     /// when SwiftUI asks for a scene synchronization.
     private func synchronizeLessonECS() {
         guard let anchor = sceneAnchor else { return }
+        if case .none = lessonECSMode { return }
+
+        let selectedLight = viewModel.selectedLight
+        let signature = LessonECSSignature(
+            selectedLightID: viewModel.selectedLightID,
+            lightIntensity: selectedLight.intensity,
+            lightOuterAngleDegrees: selectedLight.effectiveOuterAngleDegrees,
+            lightType: selectedLight.type,
+            selectedObjectID: viewModel.selectedObjectID,
+            castsShadow: viewModel.showGroundProjection
+        )
+        guard signature != lastLessonECSSignature else { return }
+        lastLessonECSSignature = signature
 
         switch lessonECSMode {
         case .none:
@@ -931,7 +1140,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
         updateEducationalOverlays()
         updateShadowInfo()
-        lastSceneSignature = currentSceneSignature()
+        lastObjectsSignature = currentObjectsSignature()
         lastOverlaySignature = currentOverlaySignature()
         lastShadowInfoSignature = currentShadowInfoSignature()
         viewModel.debugLog("Object position reset")
@@ -943,12 +1152,18 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             anchor.removeFromParent()
         }
         sceneAnchor = nil
+        cachedSpotlightEntity = nil
         lastTexture = nil
         telemetryDelegate?.sceneDidReset()
         receiverManager.reset()
         projectionRenderer.clear()
         annotationManager.clear()
-        lastSceneSignature = nil
+        lastObjectsSignature = nil
+        lastLightsSignature = nil
+        // The scene anchor (and every entity on it) is gone, so the next
+        // placeScene() must be free to rewrite lesson-ECS components even if
+        // the light/object values happen to match what was there before.
+        lastLessonECSSignature = nil
         lastOverlaySignature = nil
         lastShadowInfoSignature = nil
         viewModel.isObjectPlaced = false
@@ -1049,11 +1264,16 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
-    private func currentSceneSignature() -> SceneUpdateSignature {
-        SceneUpdateSignature(
+    private func currentObjectsSignature() -> SceneObjectsSyncSignature {
+        SceneObjectsSyncSignature(
             objects: viewModel.objects,
             selectedObjectID: viewModel.selectedObjectID,
-            selectedTexture: viewModel.selectedTexture,
+            selectedTexture: viewModel.selectedTexture
+        )
+    }
+
+    private func currentLightsSignature() -> SceneLightsSyncSignature {
+        SceneLightsSyncSignature(
             lights: viewModel.lights,
             selectedLightID: viewModel.selectedLightID
         )
@@ -1071,7 +1291,9 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             selectedLightPitchDegrees: selectedLight.pitchDegrees,
             selectedLightBeamSpread: selectedLight.beamSpread,
             selectedLightOuterAngleDegrees: selectedLight.beamOuterAngleDegrees,
-            selectedLightIntensity: selectedLight.intensity,
+            // Intensity does NOT drive overlay geometry — only direction/position
+            // does. Excluding it means a brightness drag never triggers a
+            // projection-line rebuild, which was one of the heaviest sync paths.
             showLightDirection: viewModel.showLightDirection,
             showLightRays: viewModel.showLightRays,
             showProjectionLines: viewModel.showProjectionLines,
@@ -1153,7 +1375,6 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
         guard frame.timestamp - lastDispatchedCameraTelemetryTimestamp >= (1.0 / 30.0) else { return }
         lastDispatchedCameraTelemetryTimestamp = frame.timestamp
-        let updatedMarkerSurfaceTone = markerSurfaceToneEstimator.updatedTone(for: frame)
 
         let cameraTransform = frame.camera.transform
         let cameraPosition = SIMD3<Float>(
@@ -1179,8 +1400,10 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
         Task { @MainActor in
             guard !self.viewModel.isViewFrozen else { return }
+            guard self.lessonECSMode != .level2LightControl || self.viewModel.showShadowLabels else { return }
 
-            if let updatedMarkerSurfaceTone {
+            if self.viewModel.showShadowLabels,
+               let updatedMarkerSurfaceTone = self.markerSurfaceToneEstimator.updatedTone(for: frame) {
                 self.annotationManager.setSurfaceTone(updatedMarkerSurfaceTone)
                 self.telemetryDelegate?.markerSurfaceToneDidChange(updatedMarkerSurfaceTone)
             }

@@ -48,30 +48,38 @@ final class SceneLightSystem: System {
             let selected = light.id == selectedLightID
 
             if let entity = entityWithLightID(light.id, in: anchor) {
-                let virtualResolution = CollisionSystem.resolvedPosition(
-                    in: anchor,
-                    candidatePosition: light.position,
-                    movingRadius: lightObstacleRadius,
-                    excludingID: light.id
-                )
-                light.position = virtualResolution.position
+                let previousConfiguration = entity.components[SceneLightComponent.self]?.configuration
 
-                if light.position != requestedLight.position {
-                    updateLightPosition(light.id, light.position)
-                }
+                // Collision resolution (up to 4 convex-cast passes against every
+                // obstacle) is only meaningful when the light actually moved.
+                // Dragging intensity/beam-spread on a stationary light must not
+                // pay this cost on every frame of the gesture.
+                if previousConfiguration?.position != light.position {
+                    let virtualResolution = CollisionSystem.resolvedPosition(
+                        in: anchor,
+                        candidatePosition: light.position,
+                        movingRadius: lightObstacleRadius,
+                        excludingID: light.id
+                    )
+                    light.position = virtualResolution.position
 
-                if selected, virtualResolution.didCollide {
-                    selectedCollisionWarning = "Light stopped by another virtual object."
+                    if light.position != requestedLight.position {
+                        updateLightPosition(light.id, light.position)
+                    }
+
+                    if selected, virtualResolution.didCollide {
+                        selectedCollisionWarning = "Light stopped by another virtual object."
+                    }
                 }
 
                 entity.components.set(SceneLightComponent(configuration: light, isSelected: selected))
                 CollisionSystem.setObstacle(on: entity, id: light.id, radius: lightObstacleRadius)
-                applyLightConfiguration(to: entity, configuration: light, selected: selected)
+                applyLightConfiguration(to: entity, configuration: light, selected: selected, previousConfiguration: previousConfiguration)
             } else {
                 let root = makeLightEntity(configuration: light, selected: selected)
                 root.components.set(SceneLightComponent(configuration: light, isSelected: selected))
                 CollisionSystem.setObstacle(on: root, id: light.id, radius: lightObstacleRadius)
-                applyLightConfiguration(to: root, configuration: light, selected: selected)
+                applyLightConfiguration(to: root, configuration: light, selected: selected, previousConfiguration: nil)
                 anchor.addChild(root)
                 debugLog("Light creation: \(light.name)")
             }
@@ -154,26 +162,38 @@ final class SceneLightSystem: System {
     private static func applyLightConfiguration(
         to root: Entity,
         configuration: LightConfiguration,
-        selected: Bool
+        selected: Bool,
+        previousConfiguration: LightConfiguration?
     ) {
         guard let light = root.children.first(where: { $0.name == "Light Emitter" }),
               let fillLight = root.children.first(where: { $0.name == "Light Fill" }),
               let marker = root.children.first(where: { $0.name == "Light Marker" }) as? ModelEntity else { return }
 
-        light.components.remove(PointLightComponent.self)
-        light.components.remove(SpotLightComponent.self)
-        light.components.remove(SpotLightComponent.Shadow.self)
-        fillLight.components.remove(PointLightComponent.self)
+        if let prev = previousConfiguration, prev == configuration {
+            return
+        }
+
+        // Only remove+rebuild the light components when the light type itself
+        // changed (point <-> spot). Otherwise mutate the existing component's
+        // fields in place, so an intensity/beam-spread drag doesn't reallocate
+        // three RealityKit components per light on every frame.
+        let typeChanged = previousConfiguration?.type != configuration.type
+        if typeChanged {
+            light.components.remove(PointLightComponent.self)
+            light.components.remove(SpotLightComponent.self)
+            light.components.remove(SpotLightComponent.Shadow.self)
+            fillLight.components.remove(PointLightComponent.self)
+        }
 
         switch configuration.type {
         case .point:
-            var component = PointLightComponent()
+            var component = light.components[PointLightComponent.self] ?? PointLightComponent()
             component.color = configuration.color.uiColor
             component.intensity = configuration.intensity
             component.attenuationRadius = 6
             light.components.set(component)
         case .spot:
-            var component = SpotLightComponent()
+            var component = light.components[SpotLightComponent.self] ?? SpotLightComponent()
             component.color = configuration.color.uiColor
             component.intensity = configuration.intensity
             component.attenuationRadius = 8
@@ -181,13 +201,15 @@ final class SceneLightSystem: System {
             component.outerAngleInDegrees = configuration.effectiveOuterAngleDegrees
             light.components.set(component)
 
-            var shadow = SpotLightComponent.Shadow()
-            shadow.zNear = .fixed(0.01)
-            shadow.zFar = .fixed(8)
-            shadow.depthBias = 0.004
-            light.components.set(shadow)
+            if typeChanged {
+                var shadow = SpotLightComponent.Shadow()
+                shadow.zNear = .fixed(0.01)
+                shadow.zFar = .fixed(8)
+                shadow.depthBias = 0.004
+                light.components.set(shadow)
+            }
 
-            var fill = PointLightComponent()
+            var fill = fillLight.components[PointLightComponent.self] ?? PointLightComponent()
             fill.color = configuration.color.uiColor
             fill.intensity = configuration.intensity * 0.08
             fill.attenuationRadius = 1.0

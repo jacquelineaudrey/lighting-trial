@@ -95,27 +95,19 @@ struct Level1FlowView: View {
             }
         }
         .overlay(alignment: .topLeading) {
-            if viewModel.phase != .completed,
-               !viewModel.showsPhotoComparisonPanel,
-               viewModel.canGoBackToPreviousState {
-                LevelActionButton(
-                    title: "Ulangi Langkah",
-                    systemImage: "arrow.uturn.backward",
-                    role: .previousStep,
-                    isDisabled: viewModel.isTransitioning,
-                    action: viewModel.goBackToPreviousState
-                )
-                .padding(.leading, 16)
-                .padding(.top, 12)
+            if viewModel.phase != .completed, !viewModel.showsPhotoComparisonPanel {
+                LevelBackButton(action: { showsExitConfirmation = true })
+                    .padding(.leading, 16)
+                    .padding(.top, 12)
             }
         }
         .overlay(alignment: .topTrailing) {
-            if viewModel.phase != .completed, !viewModel.showsPhotoComparisonPanel {
-                LevelActionButton(
-                    title: "Kembali ke Menu",
-                    systemImage: "house.fill",
-                    role: .menu,
-                    action: { showsExitConfirmation = true }
+            if viewModel.phase != .completed,
+               !viewModel.showsPhotoComparisonPanel,
+               viewModel.canGoBackToPreviousState {
+                LevelRepeatStepButton(
+                    isDisabled: viewModel.isTransitioning,
+                    action: viewModel.goBackToPreviousState
                 )
                 .padding(.trailing, 16)
                 .padding(.top, 12)
@@ -179,7 +171,10 @@ struct Level1FlowView: View {
                 onCompletion: { viewModel.narrationDidFinish(id: narrationID) }
             )
         }
-        .onAppear(perform: BackgroundMusicPlayer.shared.playGameplayMusic)
+        .onAppear {
+            viewModel.onNarrationSkipRequested = { narrator.stop() }
+            BackgroundMusicPlayer.shared.playGameplayMusic()
+        }
         .onDisappear {
             narrator.stop()
             BackgroundMusicPlayer.shared.playMenuMusic()
@@ -314,8 +309,11 @@ private struct Level1DrawingOverlay: View {
 
                             LevelActionButton(
                                 title: "Aku Selesai Gambar",
-                                isDisabled: !viewModel.isNarrationComplete || viewModel.isTransitioning,
-                                action: viewModel.finishDrawing
+                                isDisabled: viewModel.isTransitioning,
+                                action: {
+                                    viewModel.skipNarrationIfNeeded()
+                                    viewModel.finishDrawing()
+                                }
                             )
                                 .padding(.bottom, 18)
                         }
@@ -362,10 +360,11 @@ private struct Level1PhotoOverlay: View {
                 LevelActionButton(
                     title: viewModel.isSavingDrawingPhoto ? "Menyimpan..." : "Foto Gambarku",
                     systemImage: "camera.fill",
-                    isDisabled: viewModel.isSavingDrawingPhoto
-                        || !viewModel.isNarrationComplete
-                        || viewModel.isTransitioning,
-                    action: viewModel.captureDrawingPhoto
+                    isDisabled: viewModel.isSavingDrawingPhoto || viewModel.isTransitioning,
+                    action: {
+                        viewModel.skipNarrationIfNeeded()
+                        viewModel.captureDrawingPhoto()
+                    }
                 )
                 .padding(.trailing, 42)
                 .padding(.bottom, 36)
@@ -385,8 +384,11 @@ private struct Level1PhotoSavedOverlay: View {
                 LevelActionButton(
                     title: "Lihat Gambar",
                     systemImage: "photo.on.rectangle.angled",
-                    isDisabled: !viewModel.isNarrationComplete || viewModel.isTransitioning,
-                    action: viewModel.showPhotoComparisonPanel
+                    isDisabled: viewModel.isTransitioning,
+                    action: {
+                        viewModel.skipNarrationIfNeeded()
+                        viewModel.showPhotoComparisonPanel()
+                    }
                 )
                     .padding(.trailing, 42)
                     .padding(.bottom, 36)

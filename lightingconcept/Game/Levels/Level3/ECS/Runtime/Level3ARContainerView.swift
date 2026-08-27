@@ -48,8 +48,12 @@ struct Level3ARContainerView: UIViewRepresentable {
             self.guideAnchor = guideAnchor
             viewModel.attachGuideIfNeeded(to: guideAnchor)
 
+            var lastFrameUpdateTimestamp: CFTimeInterval = 0
             sceneUpdateSubscription = arView.scene.subscribe(to: SceneEvents.Update.self) { [weak self, weak arView] _ in
                 guard let self, let arView else { return }
+                let now = CACurrentMediaTime()
+                guard now - lastFrameUpdateTimestamp >= (1.0 / 30.0) else { return }
+                lastFrameUpdateTimestamp = now
                 self.syncGuide(in: arView)
             }
         }

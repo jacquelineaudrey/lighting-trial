@@ -56,10 +56,19 @@ struct Level2ARContainerView: UIViewRepresentable {
             let tapRecognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
             arView.addGestureRecognizer(tapRecognizer)
 
+            var lastFrameUpdateTimestamp: CFTimeInterval = 0
             sceneUpdateSubscription = arView.scene.subscribe(to: SceneEvents.Update.self) { [weak self, weak arView] _ in
                 guard let self, let arView else { return }
-                self.syncGuide(in: arView)
-                self.syncLightPrompt(in: arView)
+                let now = CACurrentMediaTime()
+                // Throttle guide/prompt position sync to 30 FPS.
+                if now - lastFrameUpdateTimestamp >= (1.0 / 30.0) {
+                    lastFrameUpdateTimestamp = now
+                    self.syncGuide(in: arView)
+                    self.syncLightPrompt(in: arView)
+                }
+                // ECS transient light write runs every RealityKit frame during
+                // a gesture drag — fast but cheap since it skips equal-value writes.
+                self.arCoordinator.applyTransientLightToECS()
             }
         }
 

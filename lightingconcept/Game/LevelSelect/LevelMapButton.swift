@@ -41,7 +41,7 @@ struct LevelMapButton: View {
     }
 
     private var artworkSize: CGSize {
-        usesOpenArtwork ? LevelMapLayout.openArtworkSize : LevelMapLayout.lockedArtworkSize
+        usesOpenArtwork ? LevelMapLayout.openArtworkSize : LevelMapLayout.lockedArtworkSize(for: levelID)
     }
 
     private var accessibilityValue: String {

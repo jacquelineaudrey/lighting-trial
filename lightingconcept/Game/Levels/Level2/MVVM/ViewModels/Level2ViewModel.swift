@@ -32,6 +32,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     private(set) var waitsForLightTap = false
     private(set) var isLookAroundMode = false
     private(set) var isTransitioning = false
+    private(set) var isNarrationComplete = false
     private(set) var guideOverlayScreenPosition: CGPoint?
 
     private(set) var beamSpreadDegrees: Float = 54
@@ -71,8 +72,9 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     var currentClosingLine: DialogLine { Level2Content.closingDialog[closingIndex] }
 
     var intensityPercentage: Int {
+        let current = _transientIntensity ?? lightIntensity
         let range = Self.maximumIntensity - Self.minimumIntensity
-        return Int(((lightIntensity - Self.minimumIntensity) / range * 100).rounded())
+        return Int(((current - Self.minimumIntensity) / range * 100).rounded())
     }
 
     var topModeTitle: String? {
@@ -162,6 +164,25 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         }
     }
 
+    var showsTapToContinueCaption: Bool {
+        guard !isTransitioning else { return false }
+
+        switch phase {
+        case .onboarding:
+            return !waitsForLightTap
+        case .spreadTutorial:
+            return true
+        case .spreadFreeIntro, .intensityTransition, .closing:
+            return true
+        case .intensityTutorial:
+            return intensityTutorialIndex != 0
+        case .mission:
+            return missionIndex != 1 && missionIndex != 3 && missionIndex != 5
+        default:
+            return false
+        }
+    }
+
     var canAdjustSpread: Bool {
         guard !isTransitioning else { return false }
         return switch phase {
@@ -194,6 +215,14 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         return .none
     }
 
+
+    func narrationWillStart() {
+        isNarrationComplete = false
+    }
+
+    func narrationDidFinish() {
+        isNarrationComplete = true
+    }
 
     func advanceOnboarding() {
         guard phase == .onboarding, !isTransitioning else { return }
@@ -432,8 +461,14 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     func updateGuideOverlayScreenPosition(_ position: CGPoint?) {
+        guard showsGuideOverlay else {
+            if guideOverlayScreenPosition != nil {
+                guideOverlayScreenPosition = nil
+            }
+            return
+        }
         switch (guideOverlayScreenPosition, position) {
-        case let (current?, next?) where hypot(current.x - next.x, current.y - next.y) < 1:
+        case let (current?, next?) where hypot(current.x - next.x, current.y - next.y) < 4:
             return
         case (nil, nil):
             return
@@ -455,9 +490,12 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         }
     }
 
+    @ObservationIgnored private var _transientBeamSpread: Float?
+
     func beginSpreadGesture() {
         guard canAdjustSpread else { return }
         spreadGestureStart = beamSpreadDegrees
+        _transientBeamSpread = beamSpreadDegrees
     }
 
     func updateSpreadGesture(magnification: Float) {
@@ -466,7 +504,12 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     }
 
     func endSpreadGesture() {
+        if let committed = _transientBeamSpread {
+            beamSpreadDegrees = committed
+        }
+        _transientBeamSpread = nil
         spreadGestureStart = nil
+        arSceneViewModel.commitSelectedLightState()
         if phase == .spreadTutorial, spreadTutorialIndex == 1, !hasReachedWideSpread {
             spreadTutorialIndex = 0
         }
@@ -477,10 +520,13 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         setBeamSpread(beamSpreadDegrees + delta)
     }
 
+    @ObservationIgnored private var _transientIntensity: Float?
+
     func beginIntensityGesture() {
         guard canAdjustIntensity else { return }
         isAdjustingIntensity = true
         intensityGestureStart = lightIntensity
+        _transientIntensity = lightIntensity
         if phase == .intensityTutorial, intensityTutorialIndex == 1 {
             advanceIntensityTutorialAfterDelay(from: intensityTutorialIndex, delay: 0.35)
         }
@@ -493,7 +539,12 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
 
     func endIntensityGesture() {
         isAdjustingIntensity = false
+        if let committed = _transientIntensity {
+            lightIntensity = committed
+        }
+        _transientIntensity = nil
         intensityGestureStart = nil
+        arSceneViewModel.commitSelectedLightState()
     }
 
     func adjustIntensity(by delta: Float) {
@@ -877,8 +928,9 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.selectedObjectType = .cube
         arSceneViewModel.objectScale = 0.85
         arSceneViewModel.requiresLiDARScanBeforePlacement = false
-        arSceneViewModel.usesLiDARSceneReconstruction = true
-        arSceneViewModel.usesRealisticEnvironmentLighting = true
+        arSceneViewModel.usesLiDARSceneReconstruction = false
+        arSceneViewModel.usesLiDARPhysicsInteraction = false
+        arSceneViewModel.usesRealisticEnvironmentLighting = false
         arSceneViewModel.showLightDirection = true
         arSceneViewModel.showLightRays = false
         arSceneViewModel.showProjectionLines = false
@@ -922,9 +974,14 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
             Self.minimumBeamAngle,
             Self.maximumBeamAngle
         )
-        guard nextValue != beamSpreadDegrees else { return }
-        beamSpreadDegrees = nextValue
-        arSceneViewModel.updateSelectedLight { $0.beamOuterAngleDegrees = nextValue }
+        let current = _transientBeamSpread ?? beamSpreadDegrees
+        guard abs(nextValue - current) >= 0.2 else { return }
+        if _transientBeamSpread != nil {
+            _transientBeamSpread = nextValue
+        } else {
+            beamSpreadDegrees = nextValue
+        }
+        arSceneViewModel.updateSelectedLightTransient(beamOuterAngleDegrees: nextValue)
 
         if nextValue <= 34 { hasReachedNarrowSpread = true }
         if nextValue >= 78 { hasReachedWideSpread = true }
@@ -938,9 +995,21 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
             Self.minimumIntensity,
             Self.maximumIntensity
         )
-        guard nextValue != lightIntensity else { return }
-        lightIntensity = nextValue
-        arSceneViewModel.updateSelectedLight { $0.intensity = nextValue }
+        let current = _transientIntensity ?? lightIntensity
+        // Coarser than the 1-unit gate this used to have: with the ×18
+        // drag scale, virtually every touch sample cleared "1.0 unit moved,"
+        // so almost every finger movement was writing a fresh value into the
+        // real RealityKit spotlight — each write forces a shadow-map
+        // refresh. 24 units (~0.4% of the 450–6500 range) is well below what
+        // the eye or the displayed percentage (steps of ~60 units) can
+        // notice, but cuts the write rate substantially.
+        guard abs(nextValue - current) >= 24 else { return }
+        if _transientIntensity != nil {
+            _transientIntensity = nextValue
+        } else {
+            lightIntensity = nextValue
+        }
+        arSceneViewModel.updateSelectedLightTransient(intensity: nextValue)
 
         if nextValue <= 1_200 { hasReachedDimIntensity = true }
         if nextValue >= 5_400 { hasReachedBrightIntensity = true }
