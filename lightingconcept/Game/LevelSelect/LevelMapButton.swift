@@ -28,7 +28,6 @@ struct LevelMapButton: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .disabled(!isUnlocked)
             .accessibilityLabel("Level \(levelID), \(title)")
             .accessibilityValue(accessibilityValue)
             .accessibilityHint(accessibilityHint)
@@ -42,7 +41,7 @@ struct LevelMapButton: View {
     }
 
     private var artworkSize: CGSize {
-        usesOpenArtwork ? LevelMapLayout.openArtworkSize : LevelMapLayout.lockedArtworkSize
+        usesOpenArtwork ? LevelMapLayout.openArtworkSize : LevelMapLayout.lockedArtworkSize(for: levelID)
     }
 
     private var accessibilityValue: String {

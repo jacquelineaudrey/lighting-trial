@@ -158,6 +158,10 @@ final class Level1ViewModel: ObservableObject {
     private var activeNarrationID: String?
     private var transitionGateTask: Task<Void, Never>?
 
+    /// Set by the flow view so tap-driven actions can stop the narrator
+    /// right away when the player taps to skip before it finishes.
+    var onNarrationSkipRequested: (() -> Void)?
+
     private let hapticGenerator = UINotificationFeedbackGenerator()
     private let preferredCheckpointSpacing: Float = 1.1
     private let minimumCheckpointSpacing: Float = 0.78
@@ -744,6 +748,7 @@ final class Level1ViewModel: ObservableObject {
 
     func handleTap(on entity: Entity?) {
         guard !isTransitioning else { return }
+        skipNarrationIfNeeded()
 
         if let target = radarTarget(for: entity) {
             tapRadarTarget(target)
@@ -761,7 +766,7 @@ final class Level1ViewModel: ObservableObject {
     /// aktif, tap kosong sengaja tidak melakukan apa-apa sampai marker itu
     /// sendiri disentuh.
     private func advanceNarrativeFromWorldTap() {
-        guard isNarrationComplete, beginInteractionTransition() else { return }
+        guard beginInteractionTransition() else { return }
 
         switch phase {
         case .onboarding:
@@ -906,7 +911,6 @@ final class Level1ViewModel: ObservableObject {
 
     func tapRadarTarget(_ target: Level1RadarTarget) {
         guard phase == .lightShadowIntro,
-              isNarrationComplete,
               currentLightShadowInstruction.radarTarget == target else { return }
         triggerSuccessFeedback()
         selectedRadarTarget = target
@@ -940,7 +944,7 @@ final class Level1ViewModel: ObservableObject {
     }
 
     func objectTappedForTexture() {
-        guard phase == .textureTapPrompt, isNarrationComplete else { return }
+        guard phase == .textureTapPrompt else { return }
         showsObjectModeBadge = true
         activeExperimentPanel = nil
         hasOpenedTextureControls = false
@@ -1100,8 +1104,16 @@ final class Level1ViewModel: ObservableObject {
         isNarrationComplete = true
     }
 
+    /// Stops narration audio still playing and marks it complete, so a tap
+    /// can skip straight to the action instead of waiting for it to finish.
+    func skipNarrationIfNeeded() {
+        guard !isNarrationComplete else { return }
+        onNarrationSkipRequested?()
+        isNarrationComplete = true
+    }
+
     var showsTapToContinueCaption: Bool {
-        guard isNarrationComplete, !isTransitioning else { return false }
+        guard !isTransitioning else { return false }
 
         switch phase {
         case .onboarding:

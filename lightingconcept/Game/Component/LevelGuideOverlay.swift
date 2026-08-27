@@ -10,21 +10,16 @@ struct LevelGuideOverlay: View {
 
     var body: some View {
         GeometryReader { proxy in
-            VStack(alignment: .trailing, spacing: 8) {
-                HStack(alignment: .bottom, spacing: 12) {
-                    LevelSpeechBubble(text: text)
-                        .frame(maxWidth: 420)
-                        .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .bottom, spacing: 12) {
+                LevelSpeechBubble(
+                    text: text,
+                    showsTapToContinueCaption: showsTapToContinueCaption
+                )
+                .frame(maxWidth: 420)
+                .fixedSize(horizontal: false, vertical: true)
 
-                    LevelGuideCharacterImage(assetName: assetName)
-                        .frame(width: 104, height: 144)
-                }
-
-                if showsTapToContinueCaption {
-                    LevelTapToContinueCaption()
-                        .padding(.trailing, 116)
-                        .transition(.opacity)
-                }
+                LevelGuideCharacterImage(assetName: assetName)
+                    .frame(width: 104, height: 144)
             }
             .position(overlayPosition(in: proxy.size))
         }

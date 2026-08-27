@@ -265,10 +265,23 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
 
     var shadowProgress: Int { min(visitedShadowConcepts.count, requiredShadowConcepts.count) }
     var shadowConceptTargetCount: Int { requiredShadowConcepts.count }
+    // Tidak lagi menunggu narasi selesai: pemain boleh menekan langsung
+    // dari awal bubble muncul untuk skip narasi dan lanjut.
     var canAdvanceCurrentDialog: Bool {
-        !isTransitioning
-            && (isNarrationComplete || canSkipCompletedLevelDialog)
-            && arSceneViewModel.selectedConcept == nil
+        !isTransitioning && arSceneViewModel.selectedConcept == nil
+    }
+
+    var showsTapToContinueCaption: Bool {
+        guard canAdvanceCurrentDialog else { return false }
+
+        switch phase {
+        case .onboarding:
+            return !arSceneViewModel.isObjectPlaced
+        case .shadowTrivia, .closing:
+            return true
+        default:
+            return false
+        }
     }
 
     var showsGuideOverlay: Bool {
@@ -1211,6 +1224,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.objectScale = 0.85
         arSceneViewModel.requiresLiDARScanBeforePlacement = false
         arSceneViewModel.usesLiDARSceneReconstruction = false
+        arSceneViewModel.usesLiDARPhysicsInteraction = false
         arSceneViewModel.usesRealisticEnvironmentLighting = false
         
         arSceneViewModel.showLightDirection = true
@@ -1335,8 +1349,14 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     }
 
     func updateGuideOverlayScreenPosition(_ position: CGPoint?) {
+        guard showsGuideOverlay else {
+            if guideOverlayScreenPosition != nil {
+                guideOverlayScreenPosition = nil
+            }
+            return
+        }
         switch (guideOverlayScreenPosition, position) {
-        case let (current?, next?) where hypot(current.x - next.x, current.y - next.y) < 1:
+        case let (current?, next?) where hypot(current.x - next.x, current.y - next.y) < 4:
             return
         case (nil, nil):
             return

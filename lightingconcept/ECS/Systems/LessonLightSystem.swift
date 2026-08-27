@@ -10,8 +10,13 @@ final class LessonLightSystem: System {
         for entity in context.scene.performQuery(Self.query) {
             guard let lesson = entity.components[LessonLightComponent.self],
                   var spotlight = entity.components[SpotLightComponent.self] else { continue }
-            spotlight.intensity = lesson.enabled ? lesson.intensity : 0
-            spotlight.outerAngleInDegrees = lesson.outerAngleDegrees
+            let targetIntensity: Float = lesson.enabled ? lesson.intensity : 0
+            let targetOuterAngle = lesson.outerAngleDegrees
+            if spotlight.intensity == targetIntensity && spotlight.outerAngleInDegrees == targetOuterAngle {
+                continue
+            }
+            spotlight.intensity = targetIntensity
+            spotlight.outerAngleInDegrees = targetOuterAngle
             entity.components.set(spotlight)
         }
     }

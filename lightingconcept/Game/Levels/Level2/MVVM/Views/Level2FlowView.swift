@@ -34,7 +34,7 @@ struct Level2FlowView: View {
                     line: viewModel.currentOnboardingLine,
                     buttonTitle: onboardingButtonTitle,
                     advancesOnTap: !viewModel.waitsForLightTap,
-                    action: viewModel.advanceOnboarding
+                    action: advanceDialog(viewModel.advanceOnboarding)
                 )
             case .placingScene:
                 Level2PlacementOverlay(
@@ -51,12 +51,12 @@ struct Level2FlowView: View {
                     step: viewModel.currentSpreadTutorialStep,
                     activeTouchCount: viewModel.activeTouchCount,
                     beamSpreadDegrees: viewModel.beamSpreadDegrees,
-                    action: viewModel.advanceSpreadTutorial
+                    action: advanceDialog(viewModel.advanceSpreadTutorial)
                 )
             case .spreadFreeIntro:
                 Level2MascotDialogOverlay(
                     line: Level2Content.spreadFreeIntro,
-                    action: viewModel.advanceSpreadFreeIntro
+                    action: advanceDialog(viewModel.advanceSpreadFreeIntro)
                 )
             case .spreadFreeInstructions:
                 Level2FreeExploreInstructionsOverlay(action: viewModel.dismissSpreadFreeInstructions)
@@ -65,7 +65,7 @@ struct Level2FlowView: View {
             case .intensityTransition:
                 Level2MascotDialogOverlay(
                     line: Level2Content.intensityTransition,
-                    action: viewModel.advanceIntensityTransition
+                    action: advanceDialog(viewModel.advanceIntensityTransition)
                 )
             case .intensityTutorial:
                 Level2IntensityTutorialOverlay(
@@ -73,19 +73,19 @@ struct Level2FlowView: View {
                     intensityPercentage: viewModel.intensityPercentage,
                     showsBrightnessControl: viewModel.isAdjustingIntensity,
                     advancesOnTap: viewModel.intensityTutorialIndex != 0,
-                    action: viewModel.advanceIntensityTutorial
+                    action: advanceDialog(viewModel.advanceIntensityTutorial)
                 )
             case .mission:
                 Level2MissionOverlay(
                     line: viewModel.currentMissionLine,
                     missionIndex: viewModel.missionIndex,
-                    action: viewModel.advanceMission
+                    action: advanceDialog(viewModel.advanceMission)
                 )
             case .closing:
                 Level2MascotDialogOverlay(
                     line: Level2OverlayLine(text: viewModel.currentClosingLine.text, mascot: .idle),
                     buttonTitle: closingButtonTitle,
-                    action: viewModel.advanceClosing
+                    action: advanceDialog(viewModel.advanceClosing)
                 )
             case .review:
                 Level2ReviewOverlay(
@@ -109,6 +109,7 @@ struct Level2FlowView: View {
                     text: viewModel.narrationText,
                     assetName: viewModel.guideOverlayAssetName,
                     screenPosition: viewModel.guideOverlayScreenPosition,
+                    showsTapToContinueCaption: viewModel.showsTapToContinueCaption,
                     bottomPadding: guideBottomPadding
                 )
             }
@@ -124,29 +125,21 @@ struct Level2FlowView: View {
             }
         }
         .overlay(alignment: .topLeading) {
-            if viewModel.phase != .completed,
-               viewModel.canGoBackToPreviousState {
-                LevelActionButton(
-                    title: "Ulangi Langkah",
-                    systemImage: "arrow.uturn.backward",
-                    role: .previousStep,
-                    isDisabled: viewModel.isTransitioning,
-                    action: viewModel.goBackToPreviousState
-                )
-                .padding(.leading, 16)
-                .padding(.top, 12)
+            if viewModel.phase != .completed {
+                LevelBackButton(action: { showsExitConfirmation = true })
+                    .padding(.leading, 16)
+                    .padding(.top, 12)
             }
         }
         .overlay(alignment: .topTrailing) {
-            if viewModel.phase != .completed {
-                LevelActionButton(
-                    title: "Kembali ke Menu",
-                    systemImage: "house.fill",
-                    role: .menu,
-                    action: { showsExitConfirmation = true }
+            if viewModel.phase != .completed,
+               viewModel.canGoBackToPreviousState {
+                LevelRepeatStepButton(
+                    isDisabled: viewModel.isTransitioning,
+                    action: viewModel.goBackToPreviousState
                 )
-                    .padding(.trailing, 16)
-                    .padding(.top, 12)
+                .padding(.trailing, 16)
+                .padding(.top, 12)
             }
         }
         .overlay(alignment: .top) {
@@ -172,11 +165,13 @@ struct Level2FlowView: View {
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: viewModel.topModeTitle)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
         .task(id: viewModel.narrationID) {
+            viewModel.narrationWillStart()
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
             narrator.speak(
                 viewModel.narrationText,
-                audioFileNames: viewModel.narrationAudioFileNames
+                audioFileNames: viewModel.narrationAudioFileNames,
+                onCompletion: viewModel.narrationDidFinish
             )
         }
         .onAppear(perform: BackgroundMusicPlayer.shared.playGameplayMusic)
@@ -200,6 +195,18 @@ struct Level2FlowView: View {
         viewModel.closingIndex == Level2Content.closingDialog.count - 1
             ? "Lihat Rangkuman"
             : "Lanjut"
+    }
+
+    /// Membungkus aksi lanjut dialog supaya ketukan pertama otomatis
+    /// menghentikan narasi yang masih berjalan sebelum melanjutkan.
+    private func advanceDialog(_ advance: @escaping () -> Void) -> () -> Void {
+        {
+            if !viewModel.isNarrationComplete {
+                narrator.stop()
+                viewModel.narrationDidFinish()
+            }
+            advance()
+        }
     }
 
     private func replayNarration() {

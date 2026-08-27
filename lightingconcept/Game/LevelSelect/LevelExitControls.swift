@@ -7,6 +7,36 @@
 
 import SwiftUI
 
+// MARK: - Tombol ikon bulat bergaya glass (dipakai untuk kembali & ulangi langkah)
+
+/// Tombol ikon bulat generik dengan latar `.thinMaterial` ("glass"), dipakai
+/// di layar level AR untuk aksi navigasi ringkas (kembali, ulangi langkah, dst)
+/// yang tidak butuh label teks.
+///
+/// Mengikuti HIG: ukuran tap target 52x52pt — di atas minimum HIG 44x44pt,
+/// dibesarkan sedikit karena target penggunanya anak-anak.
+struct LevelGlassIconButton: View {
+    let systemImage: String
+    var iconColor: Color = Color.black
+    var isDisabled = false
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(iconColor)
+                .frame(width: 48, height: 48)
+                .background(.thinMaterial, in: Circle())
+                .shadow(radius: 3, y: 1)
+        }
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.55 : 1)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
 // MARK: - Tombol kembali (back) khas layar level AR
 
 /// Tombol "kembali" custom untuk layar level AR (Level 1, Level 4, dst).
@@ -20,23 +50,35 @@ import SwiftUI
 /// Mengikuti HIG: ikon "chevron.left" (pola standar tombol kembali di iOS),
 /// ditaruh di pojok kiri-atas (leading edge, area yang biasa dipakai navigasi
 /// mundur), dengan latar `.thinMaterial` supaya tetap kebaca di atas video AR
-/// apa pun warnanya. Ukuran tap target 52x52pt — di atas minimum HIG 44x44pt,
-/// dibesarkan sedikit karena target penggunanya anak-anak (konsisten dengan
-/// `ThumbNavButton` 96pt di `Level1FlowView` untuk kontrol yang lebih sering
-/// dipakai; back button ini aksi jarang-dipakai jadi tidak perlu sebesar itu).
+/// apa pun warnanya.
 struct LevelBackButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: "chevron.left")
-                .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(.primary)
-                .frame(width: 52, height: 52)
-                .background(.thinMaterial, in: Circle())
-                .shadow(radius: 3, y: 1)
-        }
-        .accessibilityLabel("Kembali ke menu")
+        LevelGlassIconButton(
+            systemImage: "chevron.left",
+            accessibilityLabel: "Kembali ke menu",
+            action: action
+        )
+    }
+}
+
+// MARK: - Tombol ulangi langkah (repeat/undo) khas layar level AR
+
+/// Tombol "ulangi langkah" (undo satu state) untuk layar level AR.
+/// Sama gayanya dengan `LevelBackButton` — ikon bulat glass tanpa teks —
+/// supaya kedua tombol navigasi di layar level terasa konsisten.
+struct LevelRepeatStepButton: View {
+    var isDisabled = false
+    let action: () -> Void
+
+    var body: some View {
+        LevelGlassIconButton(
+            systemImage: "arrow.uturn.backward",
+            isDisabled: isDisabled,
+            accessibilityLabel: "Ulangi langkah sebelumnya",
+            action: action
+        )
     }
 }
 

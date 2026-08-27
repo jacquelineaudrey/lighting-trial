@@ -23,7 +23,7 @@ final class ShadowReceiverManager {
         receiver.name = usesFlatFallback ? "Stable volumetric shadow receiver fallback" : "Stable AR shadow receiver"
         receiver.position.y = -0.004
         receiver.components.set(DynamicLightShadowComponent(castsShadow: false))
-        receiver.components.set(GroundingShadowComponent(castsShadow: false, receivesShadow: true))
+        receiver.components.set(GroundingShadowComponent(castsShadow: false, receivesShadow: false))
         anchor.addChild(receiver)
         shadowReceiver = receiver
 

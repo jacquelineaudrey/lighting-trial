@@ -25,6 +25,7 @@ struct Level3FlowView: View {
                     text: viewModel.narrationText,
                     assetName: viewModel.guideOverlayAssetName,
                     screenPosition: viewModel.guideOverlayScreenPosition,
+                    showsTapToContinueCaption: viewModel.showsTapToContinueCaption,
                     bottomPadding: guideBottomPadding
                 )
             }
@@ -39,28 +40,21 @@ struct Level3FlowView: View {
             }
         }
         .overlay(alignment: .topLeading) {
-            if viewModel.phase != .completed,
-               viewModel.canGoBackToPreviousState {
-                LevelActionButton(
-                    title: "Ulangi Langkah",
-                    systemImage: "arrow.uturn.backward",
-                    role: .previousStep,
-                    isDisabled: viewModel.isTransitioning,
-                    action: viewModel.goBackToPreviousState
-                )
-                .padding(.leading, 16)
-                .padding(.top, 12)
+            if viewModel.phase != .completed, viewModel.phase != .photoComparison {
+                LevelBackButton(action: { showsExitConfirmation = true })
+                    .padding(.leading, 16)
+                    .padding(.top, 12)
             }
         }
         .overlay(alignment: .topTrailing) {
-            if viewModel.phase != .completed, viewModel.phase != .photoComparison {
-                VStack(alignment: .trailing, spacing: 12) {
-                    LevelActionButton(
-                        title: "Kembali ke Menu",
-                        systemImage: "house.fill",
-                        role: .menu,
-                        action: { showsExitConfirmation = true }
-                    )
+            if viewModel.phase != .completed {
+                HStack(alignment: .top, spacing: 12) {
+                    if viewModel.canGoBackToPreviousState {
+                        LevelRepeatStepButton(
+                            isDisabled: viewModel.isTransitioning,
+                            action: viewModel.goBackToPreviousState
+                        )
+                    }
 
                     if viewModel.phase == .review {
                         Level3InfoMenu(
@@ -163,7 +157,7 @@ struct Level3FlowView: View {
             if !viewModel.arSceneViewModel.isObjectPlaced {
                 Level3DialogTapCatcher(
                     isEnabled: viewModel.canAdvanceCurrentDialog,
-                    action: viewModel.advanceOnboarding
+                    action: advanceDialog(viewModel.advanceOnboarding)
                 )
             } else {
                 EmptyView()
@@ -187,13 +181,13 @@ struct Level3FlowView: View {
         case .shadowTrivia:
             Level3DialogTapCatcher(
                 isEnabled: viewModel.canAdvanceCurrentDialog,
-                action: viewModel.advanceShadowTrivia
+                action: advanceDialog(viewModel.advanceShadowTrivia)
             )
 
         case .closing:
             Level3DialogTapCatcher(
                 isEnabled: viewModel.canAdvanceCurrentDialog,
-                action: viewModel.advanceClosing
+                action: advanceDialog(viewModel.advanceClosing)
             )
 
         case .shadowTypesInteraction:
@@ -207,7 +201,7 @@ struct Level3FlowView: View {
 
         case .review:
             if viewModel.reviewIndex == Level3Content.reviewDialog.count - 1 {
-                Level3NextButton(title: "Selanjutnya", action: viewModel.advanceReview)
+                Level3NextButton(title: "Selanjutnya", action: advanceDialog(viewModel.advanceReview))
             } else {
                 EmptyView()
             }
@@ -216,7 +210,7 @@ struct Level3FlowView: View {
             Level3NextButton(
                 title: "Selanjutnya",
                 isDisabled: !viewModel.canAdvanceCurrentDialog,
-                action: viewModel.requestFreezeSceneForDrawing
+                action: advanceDialog(viewModel.requestFreezeSceneForDrawing)
             )
 
         case .drawingReady:
@@ -224,7 +218,7 @@ struct Level3FlowView: View {
                 text: viewModel.currentDrawingLine.text,
                 actionTitle: "Sudah Menggambar",
                 isActionDisabled: !viewModel.canAdvanceCurrentDialog,
-                action: viewModel.finishDrawing
+                action: advanceDialog(viewModel.finishDrawing)
             )
 
         case .photoPrompt:
@@ -232,7 +226,7 @@ struct Level3FlowView: View {
                 text: viewModel.currentDrawingLine.text,
                 actionTitle: viewModel.isSavingDrawingPhoto ? "Menyimpan..." : "Foto Gambarku",
                 isActionDisabled: viewModel.isSavingDrawingPhoto || !viewModel.canAdvanceCurrentDialog,
-                action: viewModel.captureDrawingPhoto
+                action: advanceDialog(viewModel.captureDrawingPhoto)
             )
 
         case .photoComparison:
@@ -240,7 +234,7 @@ struct Level3FlowView: View {
                 frozenSceneImage: viewModel.frozenSceneImage,
                 userDrawingImage: viewModel.userDrawingImage,
                 isActionDisabled: !viewModel.canAdvanceCurrentDialog,
-                action: viewModel.completeLevelAfterPhotoComparison
+                action: advanceDialog(viewModel.completeLevelAfterPhotoComparison)
             )
 
         case .completed:
@@ -252,6 +246,24 @@ struct Level3FlowView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
+        }
+    }
+
+    /// Menghentikan narasi yang sedang berjalan dan menandainya selesai,
+    /// supaya efek samping fase (mis. pindah fase, menyelesaikan konsep
+    /// bayangan terpilih) tetap berjalan seperti biasa walau di-skip.
+    private func skipNarrationIfNeeded() {
+        guard !viewModel.isNarrationComplete else { return }
+        narrator.stop()
+        viewModel.narrationDidFinish()
+    }
+
+    /// Membungkus aksi lanjut dialog supaya ketukan pertama otomatis
+    /// men-skip narasi yang masih berjalan sebelum melanjutkan.
+    private func advanceDialog(_ advance: @escaping () -> Void) -> () -> Void {
+        {
+            skipNarrationIfNeeded()
+            advance()
         }
     }
 
@@ -298,14 +310,11 @@ private struct Level3InfoMenu: View {
         VStack(alignment: .trailing, spacing: 8) {
             Button("Info Bayangan", systemImage: "info.circle", action: onInfoTap)
                 .labelStyle(.iconOnly)
-                .font(.title2.bold())
-                .foregroundStyle(Color(hex: "21415D"))
-                .frame(width: 52, height: 52)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.black)
+                .frame(width: 48, height: 48)
                 .background(.thinMaterial, in: Circle())
-                .overlay {
-                    Circle()
-                        .stroke(Color(hex: "9FA60C").opacity(0.55), lineWidth: 2)
-                }
+                .shadow(radius: 3, y: 1)
                 .buttonStyle(.plain)
                 .overlay {
                     if showsGesture && !isOpen {

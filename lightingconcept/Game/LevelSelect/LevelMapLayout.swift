@@ -8,16 +8,19 @@ import SwiftUI
 enum LevelMapLayout {
     static let canvasSize = CGSize(width: 1_210, height: 834)
     static let previousOpenArtworkHeight: CGFloat = 259
-    static let openArtworkSize = CGSize(width: 300, height: 300)
+    static let openArtworkSize = CGSize(width: 355, height: 355)
     static let openPositionOffset = CGSize(
         width: 0,
         height: (previousOpenArtworkHeight - openArtworkSize.height) * 0.5
     )
-    static let lockedArtworkOriginalSize = CGSize(width: 325, height: 274)
-    static let lockedArtworkSize = CGSize(
-        width: lockedArtworkOriginalSize.width * 0.5,
-        height: lockedArtworkOriginalSize.height * 0.5
-    )
+    static func lockedArtworkSize(for levelID: Int) -> CGSize {
+        switch levelID {
+        case 3, 4, 5:
+            CGSize(width: 201, height: 169)
+        default:
+            CGSize(width: 201, height: 168)
+        }
+    }
     static let lockedPositionOffset = openPositionOffset
     static let buttonTouchSize = CGSize(width: 225, height: 194)
     static let backButtonCenter = CGPoint(x: 31, y: 54)
@@ -29,12 +32,12 @@ enum LevelMapLayout {
 
     static func position(for levelID: Int, isOpen: Bool) -> CGPoint {
         let basePosition: CGPoint = switch levelID {
-        case 1: CGPoint(x: 384, y: 522)
-        case 2: CGPoint(x: 422, y: 323)
-        case 3: CGPoint(x: 726, y: 513)
-        case 4: CGPoint(x: 625, y: 197)
-        case 5: CGPoint(x: 924, y: 348)
-        case 6: CGPoint(x: 854, y: 155)
+        case 1: CGPoint(x: 370, y: 570)
+        case 2: CGPoint(x: 405, y: 365)
+        case 3: CGPoint(x: 700, y: 555)
+        case 4: CGPoint(x: 605, y: 250)
+        case 5: CGPoint(x: 895, y: 400)
+        case 6: CGPoint(x: 850, y: 190)
         default: .zero
         }
 

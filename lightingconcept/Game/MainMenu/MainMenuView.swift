@@ -136,6 +136,6 @@ private struct InstantDimmingBackdrop: View {
     }
 }
 
-#Preview {
+#Preview(traits: .landscapeLeft) {
     MainMenuView()
 }

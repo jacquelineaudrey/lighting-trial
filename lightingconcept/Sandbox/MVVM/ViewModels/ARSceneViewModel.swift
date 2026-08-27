@@ -14,7 +14,15 @@ final class ARSceneViewModel: ObservableObject {
     /// Sandbox can use real-world mesh occlusion and collision. Learning levels
     /// that only need a horizontal placement plane disable it to avoid the
     /// continuous LiDAR depth and mesh reconstruction workload.
-    @Published var usesLiDARSceneReconstruction = true
+    @Published var usesLiDARSceneReconstruction = false
+    /// Separate from `usesLiDARSceneReconstruction`: whether the real-world
+    /// mesh should also become a RealityKit collision/physics surface (real
+    /// objects blocking raycasts, dynamic entities resting on real ground).
+    /// Occlusion only needs the mesh geometry for depth compositing, not this
+    /// — learning levels that don't raycast against or simulate physics on
+    /// the real world should disable it, since collision/physics generation
+    /// is a meaningfully heavier, CPU-bound cost on top of scene reconstruction.
+    @Published var usesLiDARPhysicsInteraction = false
     @Published var lidarScanProgress: Float = 0
     @Published var lidarScannedMeshCount = 0
     @Published var lidarScannedFaceCount = 0
@@ -47,6 +55,13 @@ final class ARSceneViewModel: ObservableObject {
     @Published var pendingPlaceSceneAtCenter = false
     @Published var placementFeedback: String?
     @Published var sceneRevision = 0
+
+    // MARK: - Transient light state (gesture-drag bypass)
+    // During an intensity or beam-spread drag, we write only to this non-published
+    // buffer so SwiftUI never sees objectWillChange until the gesture ends.
+    // `selectedLight` reads from this buffer when it's active.
+    private var _transientLight: LightConfiguration?
+    private(set) var hasTransientLight: Bool = false
 
     @Published var isViewFrozen = false
     @Published var pendingCaptureSnapshot = false
@@ -158,7 +173,8 @@ final class ARSceneViewModel: ObservableObject {
 
     var selectedLight: LightConfiguration {
         get {
-            lights.first(where: { $0.id == selectedLightID }) ?? lights[0]
+            if let t = _transientLight { return t }
+            return lights.first(where: { $0.id == selectedLightID }) ?? lights[0]
         }
         set {
             guard let index = lights.firstIndex(where: { $0.id == newValue.id }) else { return }
@@ -283,6 +299,44 @@ final class ARSceneViewModel: ObservableObject {
     func updateSelectedLight(_ update: (inout LightConfiguration) -> Void) {
         guard let index = lights.firstIndex(where: { $0.id == selectedLightID }) else { return }
         update(&lights[index])
+        sceneRevision += 1
+    }
+
+    func updateSelectedLightTransient(intensity: Float? = nil, beamOuterAngleDegrees: Float? = nil, yawDegrees: Float? = nil, pitchDegrees: Float? = nil) {
+        guard let index = lights.firstIndex(where: { $0.id == selectedLightID }) else { return }
+        // Seed the transient buffer from the published array on the first call.
+        var light = _transientLight ?? lights[index]
+        var changed = false
+        if let intensity, light.intensity != intensity {
+            light.intensity = intensity
+            changed = true
+        }
+        if let beamOuterAngleDegrees, light.beamOuterAngleDegrees != beamOuterAngleDegrees {
+            light.beamOuterAngleDegrees = beamOuterAngleDegrees
+            changed = true
+        }
+        if let yawDegrees, light.yawDegrees != yawDegrees {
+            light.yawDegrees = yawDegrees
+            changed = true
+        }
+        if let pitchDegrees, light.pitchDegrees != pitchDegrees {
+            light.pitchDegrees = pitchDegrees
+            changed = true
+        }
+        guard changed else { return }
+        // Write only to the transient buffer — no @Published mutation, no SwiftUI invalidation.
+        _transientLight = light
+        hasTransientLight = true
+    }
+
+    func commitSelectedLightState() {
+        if let transient = _transientLight,
+           let index = lights.firstIndex(where: { $0.id == transient.id }) {
+            // One @Published write for the whole gesture, not one per frame.
+            lights[index] = transient
+        }
+        _transientLight = nil
+        hasTransientLight = false
         sceneRevision += 1
     }
 

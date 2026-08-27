@@ -17,6 +17,7 @@ struct MainMenuSettingsButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint("Membuka pengaturan volume menu dan volume dalam permainan.")
+        .offset(x: 0, y: -5)
     }
 }
 

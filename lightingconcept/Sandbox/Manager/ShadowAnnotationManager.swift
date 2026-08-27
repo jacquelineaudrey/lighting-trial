@@ -109,11 +109,6 @@ final class ShadowAnnotationManager {
         // from the first shadow-search phase and avoids rebuilding meshes,
         // collision shapes, and pulse materials on every SwiftUI refresh.
         guard signature != lastMarkerSignature else { return }
-        clearRenderedMarkers()
-        lastMarkerSignature = signature
-        guard visible else { return }
-
-        subscribeToUpdatesIfNeeded()
 
         let concepts: [(ShadowConcept, SIMD3<Float>)]
         if objectType == .cube {
@@ -132,6 +127,22 @@ final class ShadowAnnotationManager {
             ]
         }
 
+        if let last = lastMarkerSignature,
+           last.visible == visible,
+           last.objectType == objectType,
+           last.hiddenConcepts == hiddenConcepts,
+           !dotsByConcept.isEmpty {
+            lastMarkerSignature = signature
+            updateMarkerPositions(concepts: concepts, objectPosition: objectPosition, hiddenConcepts: hiddenConcepts)
+            return
+        }
+
+        clearRenderedMarkers()
+        lastMarkerSignature = signature
+        guard visible else { return }
+
+        subscribeToUpdatesIfNeeded()
+
         for (concept, position) in concepts where !hiddenConcepts.contains(concept) {
             addMarker(concept: concept, position: position, objectPosition: objectPosition)
         }
@@ -139,6 +150,35 @@ final class ShadowAnnotationManager {
         // Kalau ada marker yang sedang dipilih, pertahankan warna merahnya
         // setelah rebuild (mis. saat progress dialog berubah).
         setSelected(selectedConcept)
+    }
+
+    private func updateMarkerPositions(
+        concepts: [(ShadowConcept, SIMD3<Float>)],
+        objectPosition: SIMD3<Float>,
+        hiddenConcepts: Set<ShadowConcept>
+    ) {
+        var dashIndex = 0
+        for (concept, position) in concepts where !hiddenConcepts.contains(concept) {
+            let offset = position - objectPosition
+            let direction = simd_length(offset) > 0.0001
+                ? simd_normalize(offset)
+                : SIMD3<Float>(0, 1, 0)
+            let markerPosition = position + direction * 0.15
+
+            if let dot = dotsByConcept[concept] {
+                dot.position = markerPosition
+            }
+            if let pulseRing = pulseRings.first(where: { $0.concept == concept }) {
+                pulseRing.entity.position = markerPosition
+            }
+
+            for fraction: Float in [0.25, 0.5, 0.75] {
+                if dashIndex < connectorDashes.count {
+                    connectorDashes[dashIndex].position = position + (markerPosition - position) * fraction
+                    dashIndex += 1
+                }
+            }
+        }
     }
 
     private func subscribeToUpdatesIfNeeded() {
@@ -230,7 +270,13 @@ final class ShadowAnnotationManager {
             let alpha = max(0.12, 1.0 - easedProgress)
             let tint = pulse.concept == selectedConcept ? palette.selected : palette.primary
             if var model = pulse.entity.components[ModelComponent.self] {
-                model.materials = [EducationalMarkerStyle.ringMaterial(alpha: alpha, tint: tint)]
+                if var material = model.materials.first as? UnlitMaterial {
+                    material.color = .init(tint: tint.withAlphaComponent(CGFloat(alpha)), texture: material.color.texture)
+                    material.blending = .transparent(opacity: .init(floatLiteral: alpha))
+                    model.materials = [material]
+                } else {
+                    model.materials = [EducationalMarkerStyle.ringMaterial(alpha: alpha, tint: tint)]
+                }
                 pulse.entity.components[ModelComponent.self] = model
             }
         }

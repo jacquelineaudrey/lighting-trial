@@ -21,6 +21,7 @@ final class BackgroundMusicPlayer {
     private var player: AVAudioPlayer?
     private var currentTrack = Track.menu
     private var loadedTrack: Track?
+    private var pendingLoadTracks: Set<Track> = []
     private var targetVolume: Float
     private var trackTransitionTask: Task<Void, Never>?
     private var isPlaybackRequested = false
@@ -49,11 +50,7 @@ final class BackgroundMusicPlayer {
 
         guard trackTransitionTask == nil else { return }
 
-        preparePlayerIfNeeded(for: currentTrack)
-
-        guard let player, !player.isPlaying else { return }
-        player.volume = targetVolume
-        player.play()
+        startCurrentTrack(fadesIn: false)
     }
 
     func pause() {
@@ -125,11 +122,25 @@ final class BackgroundMusicPlayer {
     }
 
     private func startCurrentTrack(fadesIn: Bool) {
-        preparePlayerIfNeeded(for: currentTrack)
+        let track = currentTrack
 
-        guard let player else { return }
+        if let player, loadedTrack == track {
+            apply(player, fadesIn: fadesIn)
+            return
+        }
+
+        guard !pendingLoadTracks.contains(track) else { return }
+        loadPlayer(for: track) { [weak self] loadedPlayer in
+            guard let self, self.currentTrack == track else { return }
+            guard let loadedPlayer else { return }
+            self.player = loadedPlayer
+            self.loadedTrack = track
+            self.apply(loadedPlayer, fadesIn: fadesIn)
+        }
+    }
+
+    private func apply(_ player: AVAudioPlayer, fadesIn: Bool) {
         player.volume = fadesIn ? 0 : targetVolume
-
         if isPlaybackRequested, !player.isPlaying {
             player.play()
         }
@@ -145,32 +156,35 @@ final class BackgroundMusicPlayer {
         trackTransitionTask = nil
     }
 
-    private func preparePlayerIfNeeded(for track: Track) {
-        guard player == nil || loadedTrack != track else { return }
-
-        if loadedTrack != track {
-            player?.stop()
-            player = nil
-            loadedTrack = nil
-        }
-
+    /// Membaca dan menyiapkan berkas BGM di background thread supaya tidak
+    /// memblokir main thread (mis. saat launch) dengan I/O membaca berkas mp3.
+    private func loadPlayer(for track: Track, completion: @escaping (AVAudioPlayer?) -> Void) {
         guard let musicURL = Bundle.main.url(
             forResource: track.rawValue,
             withExtension: "mp3"
         ) else {
             assertionFailure("BGM resource not found: \(track.rawValue).mp3")
+            completion(nil)
             return
         }
 
-        do {
-            let musicPlayer = try AVAudioPlayer(contentsOf: musicURL)
-            musicPlayer.numberOfLoops = -1
-            musicPlayer.volume = targetVolume
-            musicPlayer.prepareToPlay()
-            player = musicPlayer
-            loadedTrack = track
-        } catch {
-            assertionFailure("Failed to prepare BGM \(track.rawValue): \(error)")
+        pendingLoadTracks.insert(track)
+        Task.detached(priority: .utility) {
+            let preparedPlayer: AVAudioPlayer?
+            do {
+                let musicPlayer = try AVAudioPlayer(contentsOf: musicURL)
+                musicPlayer.numberOfLoops = -1
+                musicPlayer.prepareToPlay()
+                preparedPlayer = musicPlayer
+            } catch {
+                assertionFailure("Failed to prepare BGM \(track.rawValue): \(error)")
+                preparedPlayer = nil
+            }
+
+            await MainActor.run { [weak self] in
+                self?.pendingLoadTracks.remove(track)
+                completion(preparedPlayer)
+            }
         }
     }
 

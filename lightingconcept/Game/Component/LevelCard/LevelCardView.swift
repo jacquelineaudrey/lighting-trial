@@ -65,14 +65,9 @@ struct LevelCardView: View {
             Button(action: onBack) {
                 Image(systemName: "multiply")
                     .font(.system(size: 24, weight: .bold))
-                    .foregroundStyle(Color(hex: "21415D"))
+                    .foregroundStyle(Color(hex: "313131"))
                     .frame(width: 56, height: 56)
-                    .background(Color(hex: "FFF4C7"), in: Circle())
-                    .overlay {
-                        Circle()
-                            .stroke(Color(hex: "D6A83E"), lineWidth: 3)
-                    }
-                    .shadow(color: .black.opacity(0.18), radius: 5, y: 3)
+                    .glassEffect(.regular, in: .circle)
             }
             .buttonStyle(.plain)
             .contentShape(Circle())
@@ -80,6 +75,7 @@ struct LevelCardView: View {
             .accessibilityHint("Menutup kartu level dan kembali ke peta.")
             .padding(.top, 38)
             .padding(.trailing, 38)
+            .offset(x: 7, y: -19)
         }
     }
 }
