@@ -10,6 +10,7 @@ protocol ARSceneTelemetryDelegate: AnyObject {
     func lightDidSelect()
     func shadowConceptDidSelect(_ concept: ShadowConcept)
     func markerSurfaceToneDidChange(_ tone: EducationalMarkerStyle.SurfaceTone)
+    func safetyWarningDidChange(_ warning: SafetyProximityWarning?)
 }
 
 extension ARSceneTelemetryDelegate {
@@ -29,4 +30,5 @@ extension ARSceneTelemetryDelegate {
     func sceneDidReceiveWorldTap() {}
     func shadowConceptDidSelect(_ concept: ShadowConcept) {}
     func markerSurfaceToneDidChange(_ tone: EducationalMarkerStyle.SurfaceTone) {}
+    func safetyWarningDidChange(_ warning: SafetyProximityWarning?) {}
 }

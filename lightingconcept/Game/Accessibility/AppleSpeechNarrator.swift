@@ -20,7 +20,11 @@ final class AppleSpeechNarrator: NSObject, AVSpeechSynthesizerDelegate {
         )
     }
 
-    func speak(_ text: String, onCompletion: (() -> Void)? = nil) {
+    func speak(
+        _ text: String,
+        speedMultiplier: Float = 1.0,
+        onCompletion: (() -> Void)? = nil
+    ) {
         stop()
         configureAudioSession()
 
@@ -40,8 +44,8 @@ final class AppleSpeechNarrator: NSObject, AVSpeechSynthesizerDelegate {
 
         let utterance = AVSpeechUtterance(string: spokenText)
         utterance.voice = AVSpeechSynthesisVoice(language: "id-ID")
-        utterance.rate = 0.38
-        utterance.pitchMultiplier = 1.24
+        utterance.rate = min(max(0.38 * speedMultiplier, 0), 1)
+        utterance.pitchMultiplier = 1.50
         utterance.volume = 1
         utterance.prefersAssistiveTechnologySettings = true
         synthesizer.speak(utterance)

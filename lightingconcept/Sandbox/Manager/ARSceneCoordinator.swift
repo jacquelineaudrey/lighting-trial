@@ -36,6 +36,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     private let markerSurfaceToneEstimator = EducationalMarkerSurfaceToneEstimator()
     private let receiverManager = ShadowReceiverManager()
     private let lidarMeshOcclusionManager = LiDARMeshOcclusionManager()
+    private let safetyProximityDetector = SafetyProximityDetector()
     private static let lidarLightRadius: Float = 0.045
     private static let lidarClearance: Float = 0.006
     /// Nama stabil untuk anchor tempat scene (object + light) ditempel, supaya
@@ -384,7 +385,7 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         //   lewat `Level4ViewModel.init` supaya cube-nya tetap flat/game-like.
         // - LiDAR mesh reconstruction hanya jika device mendukung
         let configuration = ARWorldTrackingConfiguration()
-        configuration.planeDetection = [.horizontal]
+        configuration.planeDetection = [.horizontal, .vertical]
         if viewModel.usesRealisticEnvironmentLighting {
             configuration.environmentTexturing = .automatic
             configuration.isLightEstimationEnabled = true
@@ -399,11 +400,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
         if viewModel.usesLiDARSceneReconstruction,
            ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-            // Classification data (wall/floor/table/etc) isn't read anywhere in this
-            // codebase, only the raw mesh geometry is needed for occlusion. Plain
-            // `.mesh` skips ARKit's per-frame classification pass — matches Level1's
-            // lighter config and meaningfully reduces thermal load on LiDAR devices.
-            configuration.sceneReconstruction = .mesh
+            // Classification lets the shared safety detector distinguish nearby
+            // tables, seats, walls, doors, windows, and ceilings from the floor.
+            configuration.sceneReconstruction = ARWorldTrackingConfiguration
+                .supportsSceneReconstruction(.meshWithClassification)
+                ? .meshWithClassification
+                : .mesh
             usesSceneReconstruction = true
             publishLiDARAvailability(true, resetScanProgress: true)
             // Mesh cyan hanya feedback scan untuk user. Occlusion visual tetap memakai
@@ -1154,6 +1156,8 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         sceneAnchor = nil
         cachedSpotlightEntity = nil
         lastTexture = nil
+        safetyProximityDetector.reset()
+        viewModel.updateSafetyWarning(nil)
         telemetryDelegate?.sceneDidReset()
         receiverManager.reset()
         projectionRenderer.clear()
@@ -1360,8 +1364,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
 
     nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
         Task { @MainActor in
+            self.safetyProximityDetector.update(from: anchors)
             self.updateLiDARMeshOcclusion(from: anchors)
-            if anchors.contains(where: { $0 is ARPlaneAnchor }),
+            if anchors.contains(where: {
+                ($0 as? ARPlaneAnchor)?.alignment == .horizontal
+            }),
                self.viewModel.surfaceState == .scanning {
                 self.viewModel.surfaceState = .found
                 self.viewModel.placementFeedback = nil
@@ -1372,9 +1379,24 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
+    nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        Task { @MainActor in
+            self.safetyProximityDetector.update(from: anchors)
+            self.updateLiDARMeshOcclusion(from: anchors)
+        }
+    }
+
+    nonisolated func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
+        Task { @MainActor in
+            self.safetyProximityDetector.remove(anchors: anchors)
+            self.lidarMeshOcclusionManager.remove(anchors: anchors)
+        }
+    }
+
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
         guard frame.timestamp - lastDispatchedCameraTelemetryTimestamp >= (1.0 / 30.0) else { return }
         lastDispatchedCameraTelemetryTimestamp = frame.timestamp
+        let frameTimestamp = frame.timestamp
 
         let cameraTransform = frame.camera.transform
         let cameraPosition = SIMD3<Float>(
@@ -1401,6 +1423,16 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         Task { @MainActor in
             guard !self.viewModel.isViewFrozen else { return }
             guard self.lessonECSMode != .level2LightControl || self.viewModel.showShadowLabels else { return }
+
+            let safetyWarning = self.safetyProximityDetector.warning(
+                cameraPosition: cameraPosition,
+                timestamp: frameTimestamp
+            )
+            let previousSafetyWarning = self.viewModel.safetyWarning
+            self.viewModel.updateSafetyWarning(safetyWarning)
+            if previousSafetyWarning != self.viewModel.safetyWarning {
+                self.telemetryDelegate?.safetyWarningDidChange(self.viewModel.safetyWarning)
+            }
 
             if self.viewModel.showShadowLabels,
                let updatedMarkerSurfaceTone = self.markerSurfaceToneEstimator.updatedTone(for: frame) {

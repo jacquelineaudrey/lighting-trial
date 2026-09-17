@@ -39,6 +39,7 @@ final class ARSceneViewModel: ObservableObject {
 
     @Published var selectedConcept: ShadowConcept?
     @Published var selectedConceptTapLocation: CGPoint = .zero
+    @Published private(set) var safetyWarning: SafetyProximityWarning? = nil
     /// Posisi WORLD dari marker edukasi yang sedang dipilih. Dipakai
     /// Level 3 supaya Bayo bisa terbang mendekat ke titik yang dipencet, mirip
     /// cara Lumi menghampiri marker di Level 1. `nil` saat tidak ada yang dipilih.
@@ -101,6 +102,8 @@ final class ARSceneViewModel: ObservableObject {
     /// mesh reconstruction yang lambat di iPhone.
     @Published var requiresLiDARScanBeforePlacement = true
     @Published var additionalEntities: [Entity] = []
+
+    private var hasDismissedCurrentSafetyWarning = false
     
     init() {
         let initialObject = ObjectConfiguration.defaultObject()
@@ -113,6 +116,26 @@ final class ARSceneViewModel: ObservableObject {
 
     func addEntityToScene(_ entity: Entity) {
         additionalEntities.append(entity)
+    }
+
+    func updateSafetyWarning(_ warning: SafetyProximityWarning?) {
+        if let warning {
+            guard !hasDismissedCurrentSafetyWarning else { return }
+            if safetyWarning != warning {
+                safetyWarning = warning
+            }
+            return
+        }
+
+        hasDismissedCurrentSafetyWarning = false
+        if safetyWarning != nil {
+            safetyWarning = nil
+        }
+    }
+
+    func dismissSafetyWarning() {
+        hasDismissedCurrentSafetyWarning = true
+        safetyWarning = nil
     }
     
     var surfaceGuidanceText: String {

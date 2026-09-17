@@ -155,7 +155,15 @@ struct Level2FlowView: View {
                     .id(celebration.id)
                     .transition(.scale(scale: 0.7).combined(with: .opacity))
                     .padding(.top, 56)
-                    .allowsHitTesting(false)
+                .allowsHitTesting(false)
+            }
+        }
+        .overlay {
+            if let safetyWarning = viewModel.safetyWarning {
+                SafetyWarningDialog(
+                    warning: safetyWarning,
+                    onDismiss: viewModel.dismissSafetyWarning
+                )
             }
         }
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
