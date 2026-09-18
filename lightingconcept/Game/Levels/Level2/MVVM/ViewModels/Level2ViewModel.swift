@@ -51,6 +51,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     @ObservationIgnored private var guideCloud: Entity?
     @ObservationIgnored private var guideText: String?
     @ObservationIgnored private var guideNeedsPlacement = true
+    @ObservationIgnored private var shouldStartReplayAtSpreadTaskAfterPlacement = false
     @ObservationIgnored private weak var lightTapPromptParent: Entity?
     @ObservationIgnored private var lightTapPromptEntity: Entity?
     @ObservationIgnored private var markerSurfaceTone: EducationalMarkerStyle.SurfaceTone = .medium
@@ -239,7 +240,11 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     func continueAfterSurfaceCheck() {
         guard phase == .surfaceReady, !isTransitioning else { return }
         if arSceneViewModel.isObjectPlaced {
-            startSpreadTutorial()
+            if shouldStartReplayAtSpreadTaskAfterPlacement {
+                startSpreadReplayTask()
+            } else {
+                startSpreadTutorial()
+            }
         } else {
             arSceneViewModel.placeSceneAtScreenCenter()
         }
@@ -322,11 +327,24 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     func sceneDidPlace(at worldPosition: SIMD3<Float>) {
         switch phase {
         case .placingScene, .surfaceReady:
-            phase = .onboarding
-            onboardingIndex = 1
-            waitsForLightTap = false
+            if shouldStartReplayAtSpreadTaskAfterPlacement {
+                startSpreadReplayTask()
+            } else {
+                phase = .onboarding
+                onboardingIndex = 1
+                waitsForLightTap = false
+            }
         default:
             break
+        }
+    }
+
+    func startCompletedLevelReplayAtTask() {
+        shouldStartReplayAtSpreadTaskAfterPlacement = true
+        if arSceneViewModel.isObjectPlaced {
+            startSpreadReplayTask()
+        } else {
+            phase = .placingScene
         }
     }
 
@@ -674,6 +692,28 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         phase = .spreadTutorial
         spreadTutorialIndex = 0
         arSceneViewModel.showLightRays = true
+    }
+
+    private func startSpreadReplayTask() {
+        shouldStartReplayAtSpreadTaskAfterPlacement = false
+        cancelPendingTutorialAdvances()
+        activeTouchCount = 0
+        isAdjustingIntensity = false
+        spreadGestureStart = nil
+        intensityGestureStart = nil
+        isLookAroundMode = false
+        waitsForLightTap = false
+        hasReachedNarrowSpread = false
+        hasReachedWideSpread = false
+        hasReachedDimIntensity = false
+        hasReachedBrightIntensity = false
+        missionIndex = 0
+        closingIndex = 0
+        spreadTutorialIndex = 0
+        intensityTutorialIndex = 0
+        restoreLightSettings(beamSpread: 54, intensity: 3_200)
+        startSpreadTutorial()
+        isNarrationComplete = false
     }
 
     private var currentGuideLine: Level2OverlayLine? {

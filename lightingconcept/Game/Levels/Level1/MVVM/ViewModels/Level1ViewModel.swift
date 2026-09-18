@@ -157,6 +157,7 @@ final class Level1ViewModel: ObservableObject {
     private var guideNeedsPlacement = true
     private var activeNarrationID: String?
     private var transitionGateTask: Task<Void, Never>?
+    private var shouldStartReplayAtShapeTaskAfterRoomScan = false
 
     /// Set by the flow view so tap-driven actions can stop the narrator
     /// right away when the player taps to skip before it finishes.
@@ -405,6 +406,9 @@ final class Level1ViewModel: ObservableObject {
         arSceneViewModel.surfaceState = .placed
         phase = .surfaceReady
         syncEntities()
+        if shouldStartReplayAtShapeTaskAfterRoomScan {
+            startShapeFindingReplayTask()
+        }
     }
 
     private func safeRoomPlacement() -> Level1RoomPlacement? {
@@ -815,10 +819,21 @@ final class Level1ViewModel: ObservableObject {
 
     func startLessonAfterRoomScan() {
         guard phase == .surfaceReady else { return }
+        if shouldStartReplayAtShapeTaskAfterRoomScan {
+            startShapeFindingReplayTask()
+            return
+        }
         phase = .onboarding
         onboardingIndex = 0
         hasWaypointTarget = false
         syncEntities()
+    }
+
+    func startCompletedLevelReplayAtTask() {
+        shouldStartReplayAtShapeTaskAfterRoomScan = true
+        if hasPlacedScene {
+            startShapeFindingReplayTask()
+        }
     }
 
     func rescanSurface() {
@@ -1254,6 +1269,36 @@ final class Level1ViewModel: ObservableObject {
         recentlyExplainedCheckpointIndex = nil
         selectedRadarTarget = nil
         hasWaypointTarget = false
+    }
+
+    private func startShapeFindingReplayTask() {
+        shouldStartReplayAtShapeTaskAfterRoomScan = false
+        selectedRadarTarget = nil
+        activeExperimentPanel = nil
+        showsObjectModeBadge = false
+        recentlyExplainedCheckpointIndex = nil
+        isSceneFrozen = false
+        showsFreezeSceneConfirmation = false
+        isPreparingFrozenScene = false
+        showsDrawingCamera = false
+        showsPhotoComparisonPanel = false
+        frozenSceneImage = nil
+        userDrawingImage = nil
+        hasSelectedTexture = false
+        hasSelectedShape = false
+        hasOpenedTextureControls = false
+        hasOpenedShapeControls = false
+        hasContinuedToShapeSelection = false
+        visitedTextures = [0]
+        currentTextureIndex = 0
+        selectedShapeIndex = 0
+        visitedCheckpoints = [0]
+        currentCheckpointIndex = min(1, checkpoints.count - 1)
+        hasWaypointTarget = true
+        lastArrivedIndex = nil
+        phase = .findingShapes
+        isNarrationComplete = false
+        syncEntities()
     }
 
     private func restoreLatestShapeExplanation() {

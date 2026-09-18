@@ -13,10 +13,13 @@ struct LevelSelectView: View {
 
     @State private var progressStore = GameProgressStore.shared
     @State private var startLevel1 = false
+    @State private var shouldAskLevel1ToSkipIntro = false
     @State private var startLevel2 = false
     @State private var level2SessionID = UUID()
+    @State private var shouldAskLevel2ToSkipIntro = false
     @State private var startLevel3 = false
     @State private var level3SessionID = UUID()
+    @State private var shouldAskLevel3ToSkipIntro = false
 
     @StateObject private var cardViewModel = LevelCardViewModel()
     @State private var selectedLevel: Level?
@@ -29,9 +32,6 @@ struct LevelSelectView: View {
         2: Level2Content.levelTitle,
         3: Level3Content.levelTitle,
     ]
-
-    /// Hanya level dengan flow lengkap yang dapat dibuka dari peta.
-    private let levelsWithContent: Set<Int> = [1, 2, 3]
 
     var body: some View {
         ZStack {
@@ -93,19 +93,24 @@ struct LevelSelectView: View {
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: $startLevel1) {
             Level1FlowView(
+                shouldAskToSkipIntro: shouldAskLevel1ToSkipIntro,
                 onReturnToLevelMenu: { restoreLevelCard(for: 1) },
                 onNextLevel: { openNextLevel(after: 1) }
             )
         }
         .navigationDestination(isPresented: $startLevel2) {
             Level2FlowView(
+                shouldAskToSkipIntro: shouldAskLevel2ToSkipIntro,
                 onReturnToLevelMenu: { restoreLevelCard(for: 2) },
                 onNextLevel: { openNextLevel(after: 2) }
             )
                 .id(level2SessionID)
         }
         .navigationDestination(isPresented: $startLevel3) {
-            Level3FlowView(onReturnToLevelMenu: { restoreLevelCard(for: 3) })
+            Level3FlowView(
+                shouldAskToSkipIntro: shouldAskLevel3ToSkipIntro,
+                onReturnToLevelMenu: { restoreLevelCard(for: 3) }
+            )
                 .id(level3SessionID)
         }
     }
@@ -115,7 +120,7 @@ struct LevelSelectView: View {
     }
 
     private func isUnlocked(_ levelID: Int) -> Bool {
-        return levelsWithContent.contains(levelID) && progressStore.isLevelUnlocked(levelID)
+        progressStore.isLevelUnlocked(levelID)
     }
 
     private func dismissSelectedLevel() {
@@ -147,11 +152,14 @@ struct LevelSelectView: View {
 
         switch levelID {
         case 1:
+            shouldAskLevel1ToSkipIntro = progressStore.isLevelCompleted(1)
             startLevel1 = true
         case 2:
+            shouldAskLevel2ToSkipIntro = progressStore.isLevelCompleted(2)
             level2SessionID = UUID()
             startLevel2 = true
         case 3:
+            shouldAskLevel3ToSkipIntro = progressStore.isLevelCompleted(3)
             level3SessionID = UUID()
             startLevel3 = true
         default:

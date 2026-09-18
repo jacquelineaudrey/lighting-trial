@@ -6,13 +6,18 @@ struct Level2FlowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
+    @State private var showsSkipIntroPrompt: Bool
+    private let shouldAskToSkipIntro: Bool
     let onReturnToLevelMenu: (() -> Void)?
     let onNextLevel: (() -> Void)?
 
     init(
+        shouldAskToSkipIntro: Bool = false,
         onReturnToLevelMenu: (() -> Void)? = nil,
         onNextLevel: (() -> Void)? = nil
     ) {
+        self.shouldAskToSkipIntro = shouldAskToSkipIntro
+        _showsSkipIntroPrompt = State(initialValue: shouldAskToSkipIntro)
         self.onReturnToLevelMenu = onReturnToLevelMenu
         self.onNextLevel = onNextLevel
     }
@@ -161,10 +166,23 @@ struct Level2FlowView: View {
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
             returnToLevelMenu()
         }
+        .gameDialog(
+            isPresented: showsSkipIntroPrompt,
+            title: "Do you want to skip the intro?",
+            message: "",
+            primaryTitle: "Yes",
+            secondaryTitle: "No",
+            primaryAction: skipIntroForReplay,
+            secondaryAction: playIntroNormally
+        )
         .animation(reduceMotion ? nil : .easeInOut, value: viewModel.phase)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: viewModel.topModeTitle)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
-        .task(id: viewModel.narrationID) {
+        .task(id: "\(viewModel.narrationID)-skipPrompt-\(showsSkipIntroPrompt)") {
+            guard !showsSkipIntroPrompt else {
+                narrator.stop()
+                return
+            }
             viewModel.narrationWillStart()
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
@@ -174,7 +192,10 @@ struct Level2FlowView: View {
                 onCompletion: viewModel.narrationDidFinish
             )
         }
-        .onAppear(perform: BackgroundMusicPlayer.shared.playGameplayMusic)
+        .onAppear {
+            showsSkipIntroPrompt = shouldAskToSkipIntro
+            BackgroundMusicPlayer.shared.playGameplayMusic()
+        }
         .onDisappear {
             narrator.stop()
             BackgroundMusicPlayer.shared.playMenuMusic()
@@ -230,5 +251,16 @@ struct Level2FlowView: View {
     private func returnToLevelMenu() {
         onReturnToLevelMenu?()
         dismiss()
+    }
+
+    private func skipIntroForReplay() {
+        narrator.stop()
+        showsSkipIntroPrompt = false
+        viewModel.narrationDidFinish()
+        viewModel.startCompletedLevelReplayAtTask()
+    }
+
+    private func playIntroNormally() {
+        showsSkipIntroPrompt = false
     }
 }

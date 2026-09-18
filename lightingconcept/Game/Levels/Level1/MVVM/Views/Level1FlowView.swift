@@ -13,13 +13,18 @@ struct Level1FlowView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var narrator = LessonAudioNarrator()
     @State private var showsExitConfirmation = false
+    @State private var showsSkipIntroPrompt: Bool
+    private let shouldAskToSkipIntro: Bool
     let onReturnToLevelMenu: (() -> Void)?
     let onNextLevel: (() -> Void)?
 
     init(
+        shouldAskToSkipIntro: Bool = false,
         onReturnToLevelMenu: (() -> Void)? = nil,
         onNextLevel: (() -> Void)? = nil
     ) {
+        self.shouldAskToSkipIntro = shouldAskToSkipIntro
+        _showsSkipIntroPrompt = State(initialValue: shouldAskToSkipIntro)
         self.onReturnToLevelMenu = onReturnToLevelMenu
         self.onNextLevel = onNextLevel
     }
@@ -126,6 +131,15 @@ struct Level1FlowView: View {
             }
         }
         .gameDialog(
+            isPresented: showsSkipIntroPrompt,
+            title: "Do you want to skip the intro?",
+            message: "",
+            primaryTitle: "Yes",
+            secondaryTitle: "No",
+            primaryAction: skipIntroForReplay,
+            secondaryAction: playIntroNormally
+        )
+        .gameDialog(
             isPresented: viewModel.showsFreezeSceneConfirmation,
             title: viewModel.isPreparingFrozenScene ? "Menyiapkan scene" : "Scene akan dibekukan",
             message: "Pastikan layarmu menangkap objek.",
@@ -155,7 +169,11 @@ struct Level1FlowView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: viewModel.phase)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
-        .task(id: viewModel.narrationID) {
+        .task(id: "\(viewModel.narrationID)-skipPrompt-\(showsSkipIntroPrompt)") {
+            guard !showsSkipIntroPrompt else {
+                narrator.stop()
+                return
+            }
             // Saat scanning, anak hanya melihat instruksi scan. Lumi dan
             // narasinya baru mulai setelah surface stabil dan scene siap.
             guard viewModel.phase != .scanningSurface,
@@ -173,6 +191,7 @@ struct Level1FlowView: View {
         }
         .onAppear {
             viewModel.onNarrationSkipRequested = { narrator.stop() }
+            showsSkipIntroPrompt = shouldAskToSkipIntro
             BackgroundMusicPlayer.shared.playGameplayMusic()
         }
         .onDisappear {
@@ -185,6 +204,16 @@ struct Level1FlowView: View {
     private func returnToLevelMenu() {
         onReturnToLevelMenu?()
         dismiss()
+    }
+
+    private func skipIntroForReplay() {
+        narrator.stop()
+        showsSkipIntroPrompt = false
+        viewModel.startCompletedLevelReplayAtTask()
+    }
+
+    private func playIntroNormally() {
+        showsSkipIntroPrompt = false
     }
 
     private var guideBottomPadding: CGFloat {

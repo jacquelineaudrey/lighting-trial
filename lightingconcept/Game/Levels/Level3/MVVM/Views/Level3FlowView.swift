@@ -7,9 +7,16 @@ struct Level3FlowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
+    @State private var showsSkipIntroPrompt: Bool
+    private let shouldAskToSkipIntro: Bool
     let onReturnToLevelMenu: (() -> Void)?
 
-    init(onReturnToLevelMenu: (() -> Void)? = nil) {
+    init(
+        shouldAskToSkipIntro: Bool = false,
+        onReturnToLevelMenu: (() -> Void)? = nil
+    ) {
+        self.shouldAskToSkipIntro = shouldAskToSkipIntro
+        _showsSkipIntroPrompt = State(initialValue: shouldAskToSkipIntro)
         self.onReturnToLevelMenu = onReturnToLevelMenu
     }
 
@@ -89,6 +96,15 @@ struct Level3FlowView: View {
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
             returnToLevelMenu()
         }
+        .gameDialog(
+            isPresented: showsSkipIntroPrompt,
+            title: "Do you want to skip the intro?",
+            message: "",
+            primaryTitle: "Yes",
+            secondaryTitle: "No",
+            primaryAction: skipIntroForReplay,
+            secondaryAction: playIntroNormally
+        )
         .fullScreenCover(isPresented: $viewModel.showsDrawingCamera) {
             Level3DrawingCameraView(
                 onImagePicked: viewModel.completeUserDrawingPhoto,
@@ -99,7 +115,11 @@ struct Level3FlowView: View {
         .animation(reduceMotion ? nil : .easeInOut, value: viewModel.phase)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: viewModel.arSceneViewModel.selectedConcept)
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackTrigger)
-        .task(id: viewModel.narrationID) {
+        .task(id: "\(viewModel.narrationID)-skipPrompt-\(showsSkipIntroPrompt)") {
+            guard !showsSkipIntroPrompt else {
+                narrator.stop()
+                return
+            }
             guard viewModel.shouldSpeakNarration else {
                 narrator.stop()
                 return
@@ -113,7 +133,10 @@ struct Level3FlowView: View {
                 onCompletion: viewModel.narrationDidFinish
             )
         }
-        .onAppear(perform: BackgroundMusicPlayer.shared.playGameplayMusic)
+        .onAppear {
+            showsSkipIntroPrompt = shouldAskToSkipIntro
+            BackgroundMusicPlayer.shared.playGameplayMusic()
+        }
         .onDisappear {
             narrator.stop()
             BackgroundMusicPlayer.shared.playMenuMusic()
@@ -283,6 +306,17 @@ struct Level3FlowView: View {
     private func returnToLevelMenu() {
         onReturnToLevelMenu?()
         dismiss()
+    }
+
+    private func skipIntroForReplay() {
+        narrator.stop()
+        showsSkipIntroPrompt = false
+        viewModel.narrationDidFinish()
+        viewModel.startCompletedLevelReplayAtTask()
+    }
+
+    private func playIntroNormally() {
+        showsSkipIntroPrompt = false
     }
 }
 

@@ -97,6 +97,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     @ObservationIgnored private var lastExplainedShadowConcept: ShadowConcept?
     @ObservationIgnored private var lastExplainedConceptWorldPosition: SIMD3<Float>?
     @ObservationIgnored private var pendingHiddenShadowConcept: ShadowConcept?
+    @ObservationIgnored private var shouldStartReplayAtShadowTaskAfterPlacement = false
 
     private let transitionDebounceDuration = Duration.milliseconds(320)
     
@@ -375,6 +376,11 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
             || phase == .surfaceReady
             || (phase == .onboarding && onboardingIndex == 1)
 
+        if shouldStartReplayAtShadowTaskAfterPlacement {
+            startShadowReplayTask()
+            return
+        }
+
         if shouldContinueOnboardingAfterPlacement {
             phase = .onboarding
             onboardingIndex = min(2, Level3Content.onboardingDialog.count - 1)
@@ -387,8 +393,12 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     func continueAfterSurfaceCheck() {
         guard phase == .surfaceReady else { return }
         if arSceneViewModel.isObjectPlaced {
-            phase = resumePhaseAfterPlacement ?? .shadowExploration
-            resumePhaseAfterPlacement = nil
+            if shouldStartReplayAtShadowTaskAfterPlacement {
+                startShadowReplayTask()
+            } else {
+                phase = resumePhaseAfterPlacement ?? .shadowExploration
+                resumePhaseAfterPlacement = nil
+            }
         } else {
             arSceneViewModel.placeSceneAtScreenCenter()
         }
@@ -404,6 +414,11 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
 
     func surfaceDidBecomeReady() {
         guard phase == .placingScene, arSceneViewModel.surfaceState == .found else { return }
+        if shouldStartReplayAtShadowTaskAfterPlacement {
+            phase = .surfaceReady
+            syncGuidePresentation()
+            return
+        }
         phase = .onboarding
         onboardingIndex = min(1, Level3Content.onboardingDialog.count - 1)
         isNarrationComplete = false
@@ -489,6 +504,16 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
 
     func sceneDidReceiveWorldTap() {
         advancePhaseOnTap()
+    }
+
+    func startCompletedLevelReplayAtTask() {
+        shouldStartReplayAtShadowTaskAfterPlacement = true
+        if arSceneViewModel.isObjectPlaced {
+            startShadowReplayTask()
+        } else {
+            phase = .placingScene
+            syncGuidePresentation()
+        }
     }
 
     func shadowConceptDidSelect(_ concept: ShadowConcept) {
@@ -635,6 +660,37 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.selectedConcept = nil
         arSceneViewModel.selectedConceptWorldPosition = nil
         chooseObjectTypeForShadowTypes(.sphere)
+        phase = .shadowExploration
+        isNarrationComplete = true
+        syncShadowConceptSelectionAvailability()
+        syncGuidePresentation()
+    }
+
+    private func startShadowReplayTask() {
+        shouldStartReplayAtShadowTaskAfterPlacement = false
+        markerCompletionTask?.cancel()
+        markerCompletionTask = nil
+        arSceneViewModel.selectedConcept = nil
+        arSceneViewModel.selectedConceptWorldPosition = nil
+        clearLastExplainedMarker()
+        isShadowInfoOpen = false
+        hasSelectedShadowTypesMenu = false
+        arSceneViewModel.showShadowInformation = false
+        showsFreezeSceneConfirmation = false
+        showsDrawingCamera = false
+        isSavingDrawingPhoto = false
+        photoSaveMessage = nil
+        frozenSceneImage = nil
+        userDrawingImage = nil
+        progressCelebration = nil
+        markerRound = .cube
+        visitedShadowConcepts.removeAll()
+        visitedShadowConceptHistory.removeAll()
+        hasCompletedShadowTask = false
+        reviewIndex = 0
+        drawingIndex = 0
+        resetHiddenShadowConceptsForCurrentRound()
+        chooseObjectTypeForShadowTypes(.cube)
         phase = .shadowExploration
         isNarrationComplete = true
         syncShadowConceptSelectionAvailability()

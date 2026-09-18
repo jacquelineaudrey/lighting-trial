@@ -24,6 +24,10 @@ final class GameProgressStore {
     /// Level 4-6 masih dalam pengembangan dan tidak ikut skema unlock.
     let playableBelajarLevelIDs: Set<Int> = [1, 2, 3]
 
+    /// Override sementara untuk mengecek tampilan peta saat semua level selesai.
+    /// Hapus atau ubah ke `false` sebelum rilis agar progres pemain kembali normal.
+    private let usesCompletedLevelsTestState = true
+
     private(set) var completedLevelIDs: Set<Int>
 
     private let defaultsKey = "belajar.completedLevelIDs"
@@ -42,13 +46,19 @@ final class GameProgressStore {
     /// level sebelumnya sudah selesai. Level yang masih dikembangkan tetap
     /// terkunci meskipun Level 3 sudah selesai.
     func isLevelUnlocked(_ levelID: Int) -> Bool {
+        if usesCompletedLevelsTestState {
+            return belajarLevelIDs.contains(levelID)
+        }
         guard playableBelajarLevelIDs.contains(levelID) else { return false }
         guard levelID > 1 else { return true }
         return Set(1..<levelID).isSubset(of: completedLevelIDs)
     }
 
     func isLevelCompleted(_ levelID: Int) -> Bool {
-        playableBelajarLevelIDs.contains(levelID) && completedLevelIDs.contains(levelID)
+        if usesCompletedLevelsTestState {
+            return belajarLevelIDs.contains(levelID)
+        }
+        return playableBelajarLevelIDs.contains(levelID) && completedLevelIDs.contains(levelID)
     }
 
     func markLevelCompleted(_ levelID: Int) {
@@ -61,7 +71,10 @@ final class GameProgressStore {
 
     /// Sandbox baru terbuka setelah SEMUA level Belajar selesai.
     var isSandboxUnlocked: Bool {
-        belajarLevelIDs.isSubset(of: completedLevelIDs)
+        if usesCompletedLevelsTestState {
+            return true
+        }
+        return belajarLevelIDs.isSubset(of: completedLevelIDs)
     }
 
     private var belajarLevelIDs: Set<Int> {
