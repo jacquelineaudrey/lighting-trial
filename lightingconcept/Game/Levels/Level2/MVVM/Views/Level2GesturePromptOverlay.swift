@@ -5,6 +5,7 @@ struct Level2GesturePromptOverlay: View {
     let text: String?
     var intensityPercentage: Int = 50
     var showsBrightnessControl = true
+    var verticalSlideHorizontalPosition: CGFloat = 0.12
 
     var body: some View {
         GeometryReader { proxy in
@@ -49,7 +50,7 @@ struct Level2GesturePromptOverlay: View {
     private func verticalSlidePrompt(in size: CGSize) -> some View {
         Level2GestureAssetImage(prompt: .verticalSlide, showsPulse: false)
             .frame(width: min(size.width * 0.18, 210), height: min(size.height * 0.28, 230))
-            .position(x: size.width * 0.12, y: size.height * 0.47)
+            .position(x: size.width * verticalSlideHorizontalPosition, y: size.height * 0.47)
     }
 
     private func brightnessControl(in size: CGSize, fillPercentage: Int) -> some View {

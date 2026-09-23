@@ -127,7 +127,15 @@ struct Level1FlowView: View {
                     .padding(.vertical, 12)
                     .background(Color(red: 0.74, green: 0.88, blue: 1.0), in: Capsule())
                     .overlay(Capsule().stroke(.blue, lineWidth: 2))
-                    .padding(.top, 28)
+                .padding(.top, 28)
+            }
+        }
+        .overlay {
+            if let safetyWarning = viewModel.safetyWarning {
+                SafetyWarningDialog(
+                    warning: safetyWarning,
+                    onDismiss: viewModel.dismissSafetyWarning
+                )
             }
         }
         .gameDialog(

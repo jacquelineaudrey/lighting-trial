@@ -200,7 +200,6 @@ struct Level2FreeExploreInstructionsOverlay: View {
 
                 LevelActionButton(
                     title: "Oke, Sudah Ingat!",
-                    systemImage: "checkmark",
                     action: action
                 )
             }

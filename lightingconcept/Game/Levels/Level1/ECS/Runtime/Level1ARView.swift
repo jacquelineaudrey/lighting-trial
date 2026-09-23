@@ -45,7 +45,10 @@ struct Level1ARView: UIViewRepresentable {
         
         let supportsLiDAR = ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh)
         if supportsLiDAR {
-            config.sceneReconstruction = .mesh
+            config.sceneReconstruction = ARWorldTrackingConfiguration
+                .supportsSceneReconstruction(.meshWithClassification)
+                ? .meshWithClassification
+                : .mesh
         }
         context.coordinator.noteInitialSceneReconstructionState(isActive: supportsLiDAR)
         // `makeUIView` dijalankan di dalam update SwiftUI. Menunda publish ke
@@ -124,6 +127,7 @@ struct Level1ARView: UIViewRepresentable {
         private let sceneUpdateInterval: TimeInterval = 1.0 / 30.0
         private let projectionUpdateInterval: TimeInterval = 1.0 / 30.0
         private let markerSurfaceToneEstimator = EducationalMarkerSurfaceToneEstimator()
+        private let safetyProximityDetector = SafetyProximityDetector()
         weak var arView: ARView?
         private let realWorldOcclusionManager = LiDARMeshOcclusionManager(
             renderMode: .invisibleOccluder
@@ -150,6 +154,16 @@ struct Level1ARView: UIViewRepresentable {
             if now - lastSceneUpdateTime >= sceneUpdateInterval {
                 lastSceneUpdateTime = now
                 viewModel.processCameraFrame(cameraTransform: cameraTransform)
+                let cameraPosition = SIMD3<Float>(
+                    cameraTransform.columns.3.x,
+                    cameraTransform.columns.3.y,
+                    cameraTransform.columns.3.z
+                )
+                let safetyWarning = safetyProximityDetector.warning(
+                    cameraPosition: cameraPosition,
+                    timestamp: frame.timestamp
+                )
+                viewModel.updateSafetyWarning(safetyWarning)
             }
 
             guard now - lastProjectionUpdateTime >= projectionUpdateInterval else { return }
@@ -169,22 +183,19 @@ struct Level1ARView: UIViewRepresentable {
         }
 
         func setSceneReconstructionActive(_ isActive: Bool, in arView: ARView) {
-            guard ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
-                  isSceneReconstructionActive != isActive,
+            guard isActive,
+                  ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
+                  isSceneReconstructionActive != true,
                   let configuration = arView.session.configuration as? ARWorldTrackingConfiguration else {
                 return
             }
 
-            isSceneReconstructionActive = isActive
-            if isActive {
-                realWorldOcclusionManager.reset()
-                configuration.sceneReconstruction = .mesh
-            } else {
-                // Pertahankan mesh akhir sebagai depth occluder, lalu hentikan
-                // pekerjaan rekonstruksi ARKit tanpa reset tracking/anchor game.
-                realWorldOcclusionManager.freeze()
-                configuration.sceneReconstruction = []
-            }
+            isSceneReconstructionActive = true
+            realWorldOcclusionManager.reset()
+            configuration.sceneReconstruction = ARWorldTrackingConfiguration
+                .supportsSceneReconstruction(.meshWithClassification)
+                ? .meshWithClassification
+                : .mesh
             arView.session.run(configuration)
         }
 
@@ -250,14 +261,17 @@ struct Level1ARView: UIViewRepresentable {
         }
         
         func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+            safetyProximityDetector.update(from: anchors)
             process(anchors)
         }
-        
+
         func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+            safetyProximityDetector.update(from: anchors)
             process(anchors)
         }
 
         func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
+            safetyProximityDetector.remove(anchors: anchors)
             realWorldOcclusionManager.remove(anchors: anchors)
             viewModel.removeScannedAnchors(anchors)
         }

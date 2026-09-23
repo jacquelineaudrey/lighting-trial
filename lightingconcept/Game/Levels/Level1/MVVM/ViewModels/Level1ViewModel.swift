@@ -112,6 +112,7 @@ final class Level1ViewModel: ObservableObject {
     @Published private(set) var isTransitioning = false
     @Published private(set) var roomScanProgress: Double = 0
     @Published private(set) var roomScanGuidanceText = "Putar badan pelan-pelan dan arahkan kamera ke sekeliling ruangan."
+    @Published private(set) var safetyWarning: SafetyProximityWarning? = nil
 
     private var visitedCheckpoints: Set<Int> = []
     private var visitedTextures: Set<Int> = [0]
@@ -865,6 +866,18 @@ final class Level1ViewModel: ObservableObject {
         isSceneFrozen = false
         resetRoomScanTracking()
         phase = .scanningSurface
+    }
+
+    func updateSafetyWarning(_ warning: SafetyProximityWarning?) {
+        arSceneViewModel.updateSafetyWarning(warning)
+        if safetyWarning != arSceneViewModel.safetyWarning {
+            safetyWarning = arSceneViewModel.safetyWarning
+        }
+    }
+
+    func dismissSafetyWarning() {
+        arSceneViewModel.dismissSafetyWarning()
+        safetyWarning = nil
     }
 
     func continueLightShadowIntro() {

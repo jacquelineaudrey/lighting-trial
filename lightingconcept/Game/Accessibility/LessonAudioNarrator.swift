@@ -5,12 +5,14 @@ import Observation
 @MainActor
 @Observable
 final class LessonAudioNarrator: NSObject, AVAudioPlayerDelegate {
+    private let playbackRate: Float
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private var speechNarrator = AppleSpeechNarrator()
     @ObservationIgnored private var playbackTask: Task<Void, Never>?
     @ObservationIgnored private var audioCompletion: CheckedContinuation<Bool, Never>?
 
-    override init() {
+    init(playbackRate: Float = 1.0) {
+        self.playbackRate = playbackRate
         super.init()
     }
 
@@ -23,7 +25,7 @@ final class LessonAudioNarrator: NSObject, AVAudioPlayerDelegate {
         configureAudioSession()
 
         guard !audioFileNames.isEmpty else {
-            speechNarrator.speak(text, onCompletion: onCompletion)
+            speechNarrator.speak(text, speedMultiplier: playbackRate, onCompletion: onCompletion)
             return
         }
 
@@ -43,6 +45,8 @@ final class LessonAudioNarrator: NSObject, AVAudioPlayerDelegate {
             }
 
             player = nextPlayer
+            nextPlayer.enableRate = true
+            nextPlayer.rate = playbackRate
             nextPlayer.prepareToPlay()
             let didFinish = await playToCompletion(nextPlayer)
             guard !Task.isCancelled else { return }
@@ -54,7 +58,11 @@ final class LessonAudioNarrator: NSObject, AVAudioPlayerDelegate {
         guard !Task.isCancelled else { return }
 
         if !didPlayAudio {
-            speechNarrator.speak(fallbackText, onCompletion: onCompletion)
+            speechNarrator.speak(
+                fallbackText,
+                speedMultiplier: playbackRate,
+                onCompletion: onCompletion
+            )
             return
         }
 

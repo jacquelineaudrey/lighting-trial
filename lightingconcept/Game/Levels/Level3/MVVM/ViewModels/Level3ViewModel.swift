@@ -71,6 +71,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     @ObservationIgnored private var visitedShadowConceptHistory: [ShadowConcept] = []
     private(set) var successFeedbackTrigger = 0
     private(set) var progressCelebration: LessonProgressCelebration?
+    private(set) var safetyWarning: SafetyProximityWarning? = nil
     private(set) var isTransitioning = false
     private(set) var guideOverlayScreenPosition: CGPoint?
     
@@ -124,6 +125,15 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
     init(progressStore: GameProgressStore? = nil) {
         self.progressStore = progressStore ?? .shared
         configureLearningScene()
+    }
+
+    func safetyWarningDidChange(_ warning: SafetyProximityWarning?) {
+        safetyWarning = warning
+    }
+
+    func dismissSafetyWarning() {
+        arSceneViewModel.dismissSafetyWarning()
+        safetyWarning = nil
     }
 
     var currentOnboardingLine: DialogLine { Level3Content.onboardingDialog[onboardingIndex] }

@@ -48,6 +48,14 @@ struct ContentView: View {
                 .transition(.opacity)
             }
         }
+        .overlay {
+            if let safetyWarning = viewModel.safetyWarning {
+                SafetyWarningDialog(
+                    warning: safetyWarning,
+                    onDismiss: viewModel.dismissSafetyWarning
+                )
+            }
+        }
         .animation(.easeInOut(duration: 0.2), value: viewModel.selectedConcept)
         .onAppear(perform: BackgroundMusicPlayer.shared.playGameplayMusic)
         .onDisappear(perform: BackgroundMusicPlayer.shared.playMenuMusic)

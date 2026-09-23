@@ -27,6 +27,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     private(set) var hasReachedBrightIntensity = false
     private(set) var successFeedbackTrigger = 0
     private(set) var progressCelebration: LessonProgressCelebration?
+    private(set) var safetyWarning: SafetyProximityWarning? = nil
     private(set) var activeTouchCount = 0
     private(set) var isAdjustingIntensity = false
     private(set) var waitsForLightTap = false
@@ -64,6 +65,15 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
     init(progressStore: GameProgressStore? = nil) {
         self.progressStore = progressStore ?? .shared
         configureLearningScene()
+    }
+
+    func safetyWarningDidChange(_ warning: SafetyProximityWarning?) {
+        safetyWarning = warning
+    }
+
+    func dismissSafetyWarning() {
+        arSceneViewModel.dismissSafetyWarning()
+        safetyWarning = nil
     }
 
     var currentOnboardingLine: Level2OverlayLine { Level2Content.onboardingDialog[onboardingIndex] }

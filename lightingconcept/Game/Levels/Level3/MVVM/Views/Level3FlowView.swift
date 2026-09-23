@@ -3,7 +3,7 @@ import UIKit
 
 struct Level3FlowView: View {
     @State private var viewModel = Level3ViewModel()
-    @State private var narrator = LessonAudioNarrator()
+    @State private var narrator = LessonAudioNarrator(playbackRate: 1.5)
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
@@ -75,6 +75,14 @@ struct Level3FlowView: View {
                 }
                 .padding(.trailing, 16)
                 .padding(.top, 12)
+            }
+        }
+        .overlay {
+            if let safetyWarning = viewModel.safetyWarning {
+                SafetyWarningDialog(
+                    warning: safetyWarning,
+                    onDismiss: viewModel.dismissSafetyWarning
+                )
             }
         }
         .gameDialog(
