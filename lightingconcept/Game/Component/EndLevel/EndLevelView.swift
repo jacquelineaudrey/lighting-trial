@@ -12,17 +12,23 @@ struct EndLevelView: View {
     let onBack: () -> Void
     let onNext: (() -> Void)?
     let backTitle: String
+    let nextTitle: String?
+    let nextSystemImage: String?
 
     init(
         data: EndLevelModel,
         onBack: @escaping () -> Void,
         onNext: (() -> Void)? = nil,
-        backTitle: String = "Pilih Level"
+        backTitle: String = "Pilih Level",
+        nextTitle: String? = nil,
+        nextSystemImage: String? = nil
     ) {
         self.data = data
         self.onBack = onBack
         self.onNext = onNext
         self.backTitle = backTitle
+        self.nextTitle = nextTitle
+        self.nextSystemImage = nextSystemImage
     }
 
     var body: some View {
@@ -59,7 +65,7 @@ struct EndLevelView: View {
                 HStack {
                     LevelActionButton(
                         title: backTitle,
-                        systemImage: backSystemImage,
+//                        systemImage: backSystemImage,
                         role: backButtonRole,
                         action: onBack
                     )
@@ -67,8 +73,8 @@ struct EndLevelView: View {
                     Spacer()
 
                     LevelActionButton(
-                        title: onNext == nil ? "Selesai" : "Selanjutnya",
-                        systemImage: onNext == nil ? "checkmark" : "arrow.right",
+                        title: nextTitle ?? (onNext == nil ? "Selesai" : "Selanjutnya"),
+//                        systemImage: nextSystemImage ?? (onNext == nil ? "checkmark" : "arrow.right"),
                         action: finishLevel
                     )
                 }
@@ -90,12 +96,16 @@ struct EndLevelView: View {
         }
     }
 
-    private var backSystemImage: String {
-        backTitle == "Kembali ke Menu" ? "house.fill" : "square.grid.2x2"
+    private var isMenuBackButton: Bool {
+        backTitle.localizedCaseInsensitiveContains("menu")
     }
 
+//    private var backSystemImage: String {
+//        isMenuBackButton ? "house.fill" : "square.grid.2x2"
+//    }
+
     private var backButtonRole: LevelActionButton.Role {
-        backTitle == "Kembali ke Menu" ? .menu : .secondary
+        isMenuBackButton ? .menu : .secondary
     }
 }
 

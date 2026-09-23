@@ -147,6 +147,13 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         }
     }
 
+    /// Redraws the educational rays from an ECS-owned light configuration.
+    /// Level 6 uses this while device-follow is active, so the orange rays stay
+    /// attached to the light without publishing frame-by-frame state to SwiftUI.
+    func refreshEducationalOverlays(using light: LightConfiguration) {
+        updateEducationalOverlays(lightOverride: light)
+    }
+
     private weak var cachedSpotlightEntity: Entity?
 
     /// Direct ECS write for transient light changes during gesture drags.
@@ -469,11 +476,15 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
             return
         }
 
-        if !viewModel.objectDirectManipulationLocked,
-           let entity = arView.entity(at: location),
-           selectObject(containing: entity) {
-            viewModel.interactionMode = .moveObject
-            synchronizeScene()
+        if let entity = arView.entity(at: location),
+           SceneObjectSystem.selectObject(containing: entity) != nil {
+            // A locked lesson object still consumes the tap. It must not be
+            // interpreted as an empty-world tap that switches interaction mode.
+            guard !viewModel.objectDirectManipulationLocked else { return }
+            if selectObject(containing: entity) {
+                viewModel.interactionMode = .moveObject
+                synchronizeScene()
+            }
             return
         }
 
@@ -1031,12 +1042,12 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
         return (resolvedPosition, didCollide)
     }
 
-    private func updateEducationalOverlays() {
+    private func updateEducationalOverlays(lightOverride: LightConfiguration? = nil) {
         guard let anchor = sceneAnchor,
               let objectEntity = objectEntity(id: viewModel.selectedObjectID) else { return }
         let selectedObject = viewModel.selectedObject
         let objectHeight = scaledObjectHeight
-        let selectedLight = viewModel.selectedLight
+        let selectedLight = lightOverride ?? viewModel.selectedLight
         let anchorTransform = anchor.transformMatrix(relativeTo: nil)
         let worldToAnchorTransform = simd_inverse(anchorTransform)
         let localLightDirection = SceneLightSystem.forwardVector(

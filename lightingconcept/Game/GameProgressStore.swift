@@ -27,6 +27,7 @@ final class GameProgressStore {
     private(set) var completedLevelIDs: Set<Int>
 
     private let defaultsKey = "belajar.completedLevelIDs"
+    private let sandboxLevel6Key = "belajar.sandboxUnlockedFromLevel6"
 
     private init() {
         let saved = UserDefaults.standard.array(forKey: defaultsKey) as? [Int] ?? []
@@ -61,7 +62,15 @@ final class GameProgressStore {
 
     /// Sandbox baru terbuka setelah SEMUA level Belajar selesai.
     var isSandboxUnlocked: Bool {
-        belajarLevelIDs.isSubset(of: completedLevelIDs)
+        UserDefaults.standard.bool(forKey: sandboxLevel6Key)
+            || belajarLevelIDs.isSubset(of: completedLevelIDs)
+    }
+
+    /// Level 6 adalah penutup kurikulum dan membuka eksperimen bebas.
+    func unlockSandboxFromLevel6() {
+        completedLevelIDs.insert(6)
+        UserDefaults.standard.set(completedLevelIDs.sorted(), forKey: defaultsKey)
+        UserDefaults.standard.set(true, forKey: sandboxLevel6Key)
     }
 
     private var belajarLevelIDs: Set<Int> {
@@ -82,6 +91,7 @@ final class GameProgressStore {
     func resetProgress() {
         completedLevelIDs = []
         UserDefaults.standard.removeObject(forKey: defaultsKey)
+        UserDefaults.standard.removeObject(forKey: sandboxLevel6Key)
     }
 
     #endif

@@ -17,6 +17,7 @@ struct lightingconceptApp: App {
         ECSRegistration.registerAll()
         Level2ECSRegistration.registerAll()
         Level3ECSRegistration.registerAll()
+        Level6ECSRegistration.registerAll()
     }
 
     var body: some SwiftUI.Scene {

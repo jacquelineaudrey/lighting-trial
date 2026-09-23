@@ -16,6 +16,10 @@ struct MainMenuView: View {
     @State private var showSandbox = false
     @State private var showsAudioSettings = false
 
+#if DEBUG
+    @State private var devLevel: DevLevel?
+#endif
+
     @StateObject private var lockAlertViewModel = LockAlertViewModel()
     @State private var showSimulationLockAlert = false
 
@@ -58,6 +62,13 @@ struct MainMenuView: View {
                             .frame(width: MainMenuLayout.settingsButtonSize.width,
                                    height: MainMenuLayout.settingsButtonSize.height)
                             .position(MainMenuLayout.settingsButtonCenter)
+
+#if DEBUG
+                        DevLevelMenu { level in
+                            devLevel = level
+                        }
+                        .position(x: 86, y: 64)
+#endif
                     }
                     .frame(width: MainMenuLayout.canvasSize.width,
                            height: MainMenuLayout.canvasSize.height)
@@ -83,6 +94,20 @@ struct MainMenuView: View {
             .navigationDestination(isPresented: $showSandbox) {
                 ContentView()
             }
+#if DEBUG
+            .navigationDestination(item: $devLevel) { level in
+                switch level {
+                case .one:
+                    Level1FlowView()
+                case .two:
+                    Level2FlowView()
+                case .three:
+                    Level3FlowView()
+                case .six:
+                    Level6FlowView()
+                }
+            }
+#endif
             .overlay {
                 if showSimulationLockAlert {
                     ZStack {
@@ -122,6 +147,48 @@ struct MainMenuView: View {
         showsAudioSettings = false
     }
 }
+
+#if DEBUG
+private enum DevLevel: Int, CaseIterable, Hashable, Identifiable {
+    case one = 1
+    case two = 2
+    case three = 3
+    case six = 6
+
+    var id: Self { self }
+}
+
+private struct DevLevelMenu: View {
+    let openLevel: (DevLevel) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(DevLevel.allCases) { level in
+                Button {
+                    openLevel(level)
+                } label: {
+                    Text(verbatim: "Level \(level.rawValue)")
+                }
+            }
+        } label: {
+            Label {
+                Text(verbatim: "DEV")
+                    .fontWeight(.bold)
+            } icon: {
+                Image(systemName: "wrench.and.screwdriver.fill")
+            }
+            .font(.headline)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.orange, in: Capsule())
+            .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
+        }
+        .accessibilityLabel("Developer level picker")
+        .accessibilityHint("Opens any implemented level without checking progress.")
+    }
+}
+#endif
 
 private struct InstantDimmingBackdrop: View {
     let action: () -> Void

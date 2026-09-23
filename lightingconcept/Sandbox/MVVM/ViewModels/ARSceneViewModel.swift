@@ -325,11 +325,21 @@ final class ARSceneViewModel: ObservableObject {
         sceneRevision += 1
     }
 
-    func updateSelectedLightTransient(intensity: Float? = nil, beamOuterAngleDegrees: Float? = nil, yawDegrees: Float? = nil, pitchDegrees: Float? = nil) {
+    func updateSelectedLightTransient(
+        position: SIMD3<Float>? = nil,
+        intensity: Float? = nil,
+        beamOuterAngleDegrees: Float? = nil,
+        yawDegrees: Float? = nil,
+        pitchDegrees: Float? = nil
+    ) {
         guard let index = lights.firstIndex(where: { $0.id == selectedLightID }) else { return }
         // Seed the transient buffer from the published array on the first call.
         var light = _transientLight ?? lights[index]
         var changed = false
+        if let position, light.position != position {
+            light.position = position
+            changed = true
+        }
         if let intensity, light.intensity != intensity {
             light.intensity = intensity
             changed = true
