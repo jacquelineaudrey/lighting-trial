@@ -20,6 +20,7 @@ struct LevelSelectView: View {
     @State private var startLevel3 = false
     @State private var level3SessionID = UUID()
     @State private var shouldAskLevel3ToSkipIntro = false
+    @State private var startLevel4 = false
 
     @StateObject private var cardViewModel = LevelCardViewModel()
     @State private var selectedLevel: Level?
@@ -31,6 +32,7 @@ struct LevelSelectView: View {
         1: Level1Content.levelTitle,
         2: Level2Content.levelTitle,
         3: Level3Content.levelTitle,
+        4: Level4Content.levelTitle,
     ]
 
     var body: some View {
@@ -113,6 +115,9 @@ struct LevelSelectView: View {
             )
                 .id(level3SessionID)
         }
+        .navigationDestination(isPresented: $startLevel4) {
+            Level4FlowView()
+        }
     }
 
     private func closeLevelSelect() {
@@ -162,6 +167,8 @@ struct LevelSelectView: View {
             shouldAskLevel3ToSkipIntro = progressStore.isLevelCompleted(3)
             level3SessionID = UUID()
             startLevel3 = true
+        case 4:
+            startLevel4 = true
         default:
             break
         }
@@ -187,6 +194,8 @@ struct LevelSelectView: View {
             }
         case 3:
             startLevel3 = false
+        case 4:
+            startLevel4 = false
         default:
             break
         }

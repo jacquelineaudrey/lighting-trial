@@ -12,6 +12,7 @@ class LevelCardViewModel: ObservableObject {
     @Published var levels: [Level] = [
         Level(id: 1, levelNumber: 1, title: "Bentuk dan\nTekstur", subtitle: "Yuk, lihat perbedaan\nbayangannya!"),
         Level(id: 2, levelNumber: 2, title: "Penyebaran\nCahaya", subtitle: "Yuk, lihat bagaimana\ncahaya bergerak!"),
-        Level(id: 3, levelNumber: 3, title: "Jenis\nBayangan", subtitle: "Yuk, kenali bagian-bagian\nbayangan ini!")
+        Level(id: 3, levelNumber: 3, title: "Jenis\nBayangan", subtitle: "Yuk, kenali bagian-bagian\nbayangan ini!"),
+        Level(id: 4, levelNumber: 4, title: "Posisi\nObjek", subtitle: "Yuk, geser benda dan lihat\nbayangannya berubah!")
     ]
 }

@@ -21,8 +21,8 @@ final class GameProgressStore {
     /// Total level Belajar yang direncanakan (fixed di 6 sesuai desain).
     let totalBelajarLevels = 6
 
-    /// Level 4-6 masih dalam pengembangan dan tidak ikut skema unlock.
-    let playableBelajarLevelIDs: Set<Int> = [1, 2, 3]
+    /// Level 4 sudah dapat dimainkan; Level 5-6 masih dalam pengembangan.
+    let playableBelajarLevelIDs: Set<Int> = [1, 2, 3, 4]
 
     /// Override sementara untuk mengecek tampilan peta saat semua level selesai.
     /// Hapus atau ubah ke `false` sebelum rilis agar progres pemain kembali normal.
@@ -93,7 +93,7 @@ final class GameProgressStore {
 
     private static func normalizedCompletedLevelIDs(from saved: Set<Int>) -> Set<Int> {
         var normalized: Set<Int> = []
-        for levelID in 1...3 {
+        for levelID in 1...4 {
             guard saved.contains(levelID) else { break }
             normalized.insert(levelID)
         }
