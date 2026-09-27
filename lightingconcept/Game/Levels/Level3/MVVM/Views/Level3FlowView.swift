@@ -6,6 +6,12 @@ struct Level3FlowView: View {
     @State private var narrator = LessonAudioNarrator(playbackRate: 1.5)
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var isCompactWidth: Bool {
+        horizontalSizeClass == .compact
+    }
+    
     @State private var showsExitConfirmation = false
     let onReturnToLevelMenu: (() -> Void)?
 
@@ -21,7 +27,7 @@ struct Level3FlowView: View {
             overlay
 
             if viewModel.showsGuideOverlay {
-                LevelGuideOverlay(
+                Level3ResponsiveGuideOverlay(
                     text: viewModel.narrationText,
                     assetName: viewModel.guideOverlayAssetName,
                     screenPosition: viewModel.guideOverlayScreenPosition,
@@ -35,15 +41,15 @@ struct Level3FlowView: View {
                 LessonProgressCelebrationOverlay(celebration: celebration)
                     .id(celebration.id)
                     .transition(.scale(scale: 0.7).combined(with: .opacity))
-                    .padding(.top, 56)
+                    .padding(.top, isCompactWidth ? 42 : 56)
                     .allowsHitTesting(false)
             }
         }
         .overlay(alignment: .topLeading) {
             if viewModel.phase != .completed, viewModel.phase != .photoComparison {
                 LevelBackButton(action: { showsExitConfirmation = true })
-                    .padding(.leading, 16)
-                    .padding(.top, 12)
+                    .padding(.leading, isCompactWidth ? 10 : 16)
+                    .padding(.top, isCompactWidth ? 8 : 12)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -66,8 +72,8 @@ struct Level3FlowView: View {
                         )
                     }
                 }
-                .padding(.trailing, 16)
-                .padding(.top, 12)
+                .padding(.trailing, isCompactWidth ? 10 : 16)
+                .padding(.top, isCompactWidth ? 8 : 12)
             }
         }
         .overlay {
@@ -150,11 +156,13 @@ struct Level3FlowView: View {
     private var guideBottomPadding: CGFloat {
         switch viewModel.phase {
         case .shapeComparison:
-            190
+            return isCompactWidth ? 120 : 190
+
         case .shadowTypesInteraction, .drawingPrompt:
-            112
+            return isCompactWidth ? 76 : 112
+
         default:
-            32
+            return isCompactWidth ? 20 : 32
         }
     }
 
@@ -247,7 +255,7 @@ struct Level3FlowView: View {
 
         case .completed:
             ZStack {
-                EndLevelView(
+                Level3ResponsiveEndLevelView(
                     data: EndLevelViewModel.data(for: Level3Content.levelID),
                     onBack: returnToLevelMenu
                 )
@@ -314,64 +322,70 @@ private struct Level3InfoMenu: View {
     let onInfoTap: () -> Void
     let onTypesTap: () -> Void
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
+
             Button("Info Bayangan", systemImage: "info.circle", action: onInfoTap)
-                .labelStyle(.iconOnly)
-                .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(.black)
-                .frame(width: 48, height: 48)
-                .background(.thinMaterial, in: Circle())
-                .shadow(radius: 3, y: 1)
-                .buttonStyle(.plain)
-                .overlay {
-                    if showsGesture && !isOpen {
-                        Level3InfoGestureImage()
-                            .frame(width: 82, height: 82)
-                            .offset(x: -23, y: 23)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
-                    }
+            .labelStyle(.iconOnly)
+            .font(.system(size: compact ? 18 : 22, weight: .bold))
+            .foregroundStyle(.black)
+            .frame(width: compact ? 42 : 48, height: compact ? 42 : 48)
+            .background(.thinMaterial, in: Circle())
+            .shadow(radius: 3, y: 1)
+            .buttonStyle(.plain)
+            .overlay {
+                if showsGesture && !isOpen {
+                    Level3InfoGestureImage()
+                        .frame(width: compact ? 64 : 82, height: compact ? 64 : 82)
+                        .offset(x: compact ? -18 : -23, y: compact ? 18 : 23)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
+            }
 
             if isOpen {
                 VStack(alignment: .leading, spacing: 0) {
                     Button(action: onTypesTap) {
                         Text(areMarkersVisible ? "Tutup Mark" : "Buka Mark")
-                            .font(.headline)
-                            .foregroundStyle(Color(hex: "21415D"))
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
+                        .font(compact ? .subheadline.weight(.semibold) : .headline)
+                        .foregroundStyle(Color(hex: "21415D"))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                     }
                     .buttonStyle(.plain)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
+                    .padding(.horizontal, compact ? 11 : 14)
+                    .padding(.vertical, compact ? 9 : 11)
                     .overlay {
                         if showsGesture {
                             Level3InfoGestureImage()
-                                .frame(width: 82, height: 82)
-                                .offset(x: -23, y: 23)
+                                .frame(width: compact ? 64 : 82, height: compact ? 64 : 82)
+                                .offset(x: compact ? -18 : -23, y: compact ? 18 : 23)
                                 .allowsHitTesting(false)
                                 .accessibilityHidden(true)
                         }
                     }
 
                     Divider()
-                        .padding(.horizontal, 14)
+                        .padding(.horizontal, compact ? 11 : 14)
 
                     Text("Jenis Bayangan")
-                        .font(.subheadline)
+                        .font(compact ? .caption : .subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 11)
+                        .padding(.horizontal, compact ? 11 : 14)
+                        .padding(.vertical, compact ? 9 : 11)
                 }
                 .fixedSize(horizontal: true, vertical: false)
-                .background(.thinMaterial, in: .rect(cornerRadius: 14))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(.white.opacity(0.35), lineWidth: 1)
+                .background(.thinMaterial, in: .rect(cornerRadius: compact ? 12 : 14))
+                .overlay(RoundedRectangle(cornerRadius: compact ? 12 : 14)
+                    .stroke(.white.opacity(0.35), lineWidth: 1)
                 )
             }
         }
@@ -407,19 +421,27 @@ private struct Level3FrozenDrawingOverlay: View {
     let isActionDisabled: Bool
     let action: () -> Void
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+
     var body: some View {
         VStack {
             Spacer()
-            HStack {
+
+            HStack(alignment: .bottom, spacing: compact ? 8 : 12) {
                 Spacer()
-                VStack(alignment: .trailing, spacing: 10) {
-                    HStack(alignment: .bottom, spacing: 12) {
+
+                VStack(alignment: .trailing, spacing: compact ? 8 : 10) {
+                    HStack(alignment: .bottom, spacing: compact ? 8 : 12) {
                         LevelSpeechBubble(text: text)
-                            .frame(maxWidth: 420)
+                            .frame(maxWidth: compact ? 300 : 420)
                             .fixedSize(horizontal: false, vertical: true)
 
                         LevelGuideCharacterImage(assetName: "bayoPointWink")
-                            .frame(width: 104, height: 144)
+                            .frame(width: compact ? 80 : 104, height: compact ? 112 : 144)
                     }
 
                     LevelActionButton(
@@ -427,10 +449,10 @@ private struct Level3FrozenDrawingOverlay: View {
                         isDisabled: isActionDisabled,
                         action: action
                     )
-                    .padding(.trailing, 116)
+                    .padding(.trailing, compact ? 92 : 116)
                 }
-                .padding(.trailing, 42)
-                .padding(.bottom, 22)
+                .padding(.trailing, compact ? 14 : 42)
+                .padding(.bottom, compact ? 12 : 22)
             }
         }
     }
@@ -442,36 +464,69 @@ private struct Level3PhotoComparisonOverlay: View {
     let isActionDisabled: Bool
     let action: () -> Void
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.35)
-                .ignoresSafeArea()
+        GeometryReader { proxy in
 
-            VStack(spacing: 18) {
-                HStack(spacing: 18) {
-                    comparisonImage(title: "Scene Freeze", image: frozenSceneImage)
-                    comparisonImage(title: "Gambar Kamu", image: userDrawingImage)
+            let horizontalPadding: CGFloat = compact ? 12 : 26
+
+            let spacing: CGFloat = compact ? 10 : 18
+
+            let availableWidth = proxy.size.width - (horizontalPadding * 2) - spacing
+
+            let imageWidth = compact ? min(310, max(140, availableWidth / 2)) : 480
+
+            let imageHeight = compact ? min(210, imageWidth * 0.70) : 440
+
+            ZStack {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+
+                VStack(spacing: compact ? 12 : 18) {
+
+                    HStack(spacing: spacing) {
+                        comparisonImage(
+                            title: "Scene Freeze",
+                            image: frozenSceneImage,
+                            width: imageWidth,
+                            height: imageHeight
+                        )
+
+                        comparisonImage(
+                            title: "Gambar Kamu",
+                            image: userDrawingImage,
+                            width: imageWidth,
+                            height: imageHeight
+                        )
+                    }
+
+                    LevelActionButton(
+                        title: "Selesai",
+                        systemImage: "checkmark",
+                        isDisabled: isActionDisabled,
+                        action: action
+                    )
                 }
-
-                LevelActionButton(
-                    title: "Selesai",
-                    systemImage: "checkmark",
-                    isDisabled: isActionDisabled,
-                    action: action
-                )
+                .padding(compact ? 14 : 26)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: compact ? 16 : 8))
+                .frame(maxWidth: compact ? proxy.size.width - 20 : 1080)
+                .padding(.horizontal, compact ? 10 : 32)
             }
-            .padding(26)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-            .frame(maxWidth: 1080)
-            .padding(.horizontal, 32)
         }
     }
 
-    private func comparisonImage(title: String, image: UIImage?) -> some View {
+    private func comparisonImage(title: String, image: UIImage?, width: CGFloat, height: CGFloat) -> some View {
         VStack(spacing: 8) {
             Text(title)
-                .font(.title3.bold())
+                .font(compact ? .subheadline.bold() : .title3.bold())
                 .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
 
             Group {
                 if let image {
@@ -482,7 +537,7 @@ private struct Level3PhotoComparisonOverlay: View {
                     Color.white.opacity(0.18)
                 }
             }
-            .frame(width: 480, height: 440)
+            .frame(width: width, height: height)
             .background(Color.black.opacity(0.18))
             .clipped()
         }
@@ -535,9 +590,16 @@ private struct Level3NextButton: View {
     var isDisabled = false
     let action: () -> Void
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+
     var body: some View {
         HStack {
             Spacer()
+
             LevelActionButton(
                 title: title,
                 systemImage: "arrow.right",
@@ -545,8 +607,8 @@ private struct Level3NextButton: View {
                 action: action
             )
         }
-        .padding(.trailing, 42)
-        .padding(.bottom, 36)
+        .padding(.trailing, compact ? 14 : 42)
+        .padding(.bottom, compact ? 14 : 36)
     }
 }
 
@@ -554,20 +616,27 @@ private struct Level3ShadowToggleButton: View {
     let title: String
     let action: () -> Void
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+
     var body: some View {
         VStack {
             Spacer()
+
             HStack {
                 LevelActionButton(
                     title: title,
                     systemImage: "eye.fill",
                     action: action
                 )
-                .padding(.leading, 42)
+                .padding(.leading, compact ? 14 : 42)
 
                 Spacer()
             }
-            .padding(.bottom, 36)
+            .padding(.bottom, compact ? 14 : 36)
         }
     }
 }
@@ -576,13 +645,22 @@ private struct Level3ShapeComparison: View {
     let viewModel: Level3ViewModel
     let replayNarration: () -> Void
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: compact ? 9 : 12) {
             Text("Bentuk berbeda, bayangan berbeda")
-                .font(.title3)
+                .font(compact ? .headline : .title3)
                 .bold()
-            HStack {
+                .multilineTextAlignment(.center)
+
+            HStack(spacing: compact ? 8 : 12) {
                 ForEach(Level3ViewModel.ComparisonShape.allCases) { shape in
+
                     LevelActionButton(
                         title: shape.rawValue,
                         systemImage: shape == .cube ? "cube.fill" : "circle.fill",
@@ -591,16 +669,148 @@ private struct Level3ShapeComparison: View {
                     )
                 }
             }
-            Text(viewModel.hasComparedShapes
-                 ? "Kedua bentuk sudah dibandingkan!"
-                 : "Pilih kedua bentuk, lalu bandingkan bayangannya.")
-            .font(.headline)
-            
+
+            Text(viewModel.hasComparedShapes ? "Kedua bentuk sudah dibandingkan!" : "Pilih kedua bentuk, lalu bandingkan bayangannya.")
+            .font(compact ? .subheadline : .headline)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+
             Level2ReplayNarrationButton(action: replayNarration)
         }
-        .padding(22)
-        .background(.thinMaterial, in: .rect(cornerRadius: 28))
-        .padding(.horizontal, 20)
-        .padding(.bottom, 36)
+        .padding(compact ? 14 : 22)
+        .frame(maxWidth: compact ? 560 : .infinity)
+        .background(.thinMaterial, in: .rect(cornerRadius: compact ? 20 : 28))
+        .padding(.horizontal, compact ? 12 : 20)
+        .padding(.bottom, compact ? 14 : 36)
+    }
+}
+
+private struct Level3ResponsiveGuideOverlay: View {
+    let text: String
+    let assetName: String
+    let screenPosition: CGPoint?
+    let showsTapToContinueCaption: Bool
+    let bottomPadding: CGFloat
+
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let bubbleWidth = min(compact ? 300 : 420, proxy.size.width * (compact ? 0.42 : 0.54))
+
+            let characterWidth: CGFloat = compact ? 80 : 104
+
+            let characterHeight: CGFloat = compact ? 112 : 144
+
+            let spacing: CGFloat = compact ? 8 : 12
+
+            let groupWidth = bubbleWidth + spacing + characterWidth
+
+            let groupHeight = max(bubbleWidth * 0.55, characterHeight)
+
+            HStack(alignment: .bottom, spacing: spacing) {
+
+                LevelSpeechBubble(text: text, showsTapToContinueCaption: showsTapToContinueCaption)
+                .frame(maxWidth: bubbleWidth)
+                .fixedSize(horizontal: false, vertical: true)
+
+                LevelGuideCharacterImage(assetName: assetName)
+                .frame(width: characterWidth, height: characterHeight)
+            }
+            .position(overlayPosition(in: proxy.size, groupWidth: groupWidth, groupHeight: groupHeight))
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    private func overlayPosition(in size: CGSize, groupWidth: CGFloat, groupHeight: CGFloat) -> CGPoint {
+        let halfWidth = groupWidth / 2
+        let halfHeight = groupHeight / 2
+
+        let proposed = screenPosition ?? CGPoint(x: size.width - halfWidth - (compact ? 12 : 20), y: size.height - bottomPadding - halfHeight)
+
+        let minX = halfWidth + 8
+
+        let maxX = max(minX, size.width - halfWidth - 8)
+
+        let minY = halfHeight + 8
+
+        let maxY = max(minY, size.height - bottomPadding - halfHeight)
+
+        return CGPoint(x: min(max(proposed.x, minX), maxX), y: min(max(proposed.y, minY), maxY))
+    }
+}
+
+private struct Level3ResponsiveEndLevelView: View {
+    let data: EndLevelModel
+    let onBack: () -> Void
+
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Image("containerWood")
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .clipped()
+
+                VStack(spacing: compact ? 22 : 70) {
+                    ZStack {
+                        Image("ribbonBlue")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: compact ? min(proxy.size.width * 0.45, 300) : 378)
+
+                        Text("LEVEL \(data.levelNumber)")
+                            .font(.system(size: compact ? 24 : 36, weight: .bold))
+                            .foregroundStyle(.white)
+                            .offset(y: compact ? -4 : -7)
+                    }
+
+                    Text(data.message)
+                        .font(compact ? .system(size: 20, weight: .semibold) : .title.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.78)
+                        .frame(width: min(compact ? 520 : 625, proxy.size.width - (compact ? 24 : 40)), height: compact ? 88 : 130)
+                        .background(RoundedRectangle(cornerRadius: compact ? 18 : 25)
+                            .fill(Color(hex: "C98928"))
+                        )
+                        .overlay(RoundedRectangle(cornerRadius: compact ? 18 : 25)
+                            .stroke(Color(hex: "7E520E"),lineWidth: 2)
+                        )
+
+                    HStack(spacing: compact ? 10 : 24) {
+                        LevelActionButton(
+                            title: "Kembali ke Menu",
+                            systemImage: "house.fill",
+                            role: .menu,
+                            action: onBack
+                        )
+                    }
+                    .frame(maxWidth: proxy.size.width - (compact ? 24 : 48))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.top, compact ? 8 : 20)
+
+                Image(data.mascotImageName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: compact ? 86 : 160, height: compact ? 120 : 220)
+                    .position(x: proxy.size.width - (compact ? 58 : 115), y: proxy.size.height - (compact ? 54 : 82))
+            }
+        }
+        .ignoresSafeArea()
     }
 }

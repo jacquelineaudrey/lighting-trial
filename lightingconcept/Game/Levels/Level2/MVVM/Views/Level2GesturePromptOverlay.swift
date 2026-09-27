@@ -1,6 +1,12 @@
 import SwiftUI
 
 struct Level2GesturePromptOverlay: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+    
     let prompt: Level2GesturePrompt
     let text: String?
     var intensityPercentage: Int = 50
@@ -40,16 +46,16 @@ struct Level2GesturePromptOverlay: View {
         .allowsHitTesting(false)
     }
 
-    private func gestureAsset(_ prompt: Level2GesturePrompt, in size: CGSize) -> some View {
+    private func gestureAsset(_ prompt: Level2GesturePrompt,in size: CGSize) -> some View {
         Level2GestureAssetImage(prompt: prompt)
-            .frame(width: min(size.width * 0.28, 300), height: min(size.height * 0.34, 260))
-            .position(x: size.width * 0.82, y: size.height * 0.70)
+            .frame(width: min(size.width * (compact ? 0.30 : 0.28),compact ? 230 : 300), height: min(size.height * (compact ? 0.38 : 0.34),compact ? 220 : 260))
+            .position(x: size.width * (compact ? 0.78 : 0.82), y: size.height * (compact ? 0.52 : 0.70))
     }
 
     private func verticalSlidePrompt(in size: CGSize) -> some View {
-        Level2GestureAssetImage(prompt: .verticalSlide, showsPulse: false)
-            .frame(width: min(size.width * 0.18, 210), height: min(size.height * 0.28, 230))
-            .position(x: size.width * 0.12, y: size.height * 0.47)
+        Level2GestureAssetImage(prompt: .verticalSlide,showsPulse: false)
+            .frame(width: min(size.width * (compact ? 0.20 : 0.18),compact ? 170 : 210), height: min(size.height * (compact ? 0.30 : 0.28),compact ? 210 : 230))
+            .position(x: size.width * (compact ? 0.11 : 0.12), y: size.height * 0.47)
     }
 
     private func brightnessControl(in size: CGSize, fillPercentage: Int) -> some View {
@@ -60,34 +66,70 @@ struct Level2GesturePromptOverlay: View {
 }
 
 struct Level2BrightnessControl: View {
+    
     let intensityPercentage: Int
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+        
     var body: some View {
-        let sliderHeight: CGFloat = 190
-        let fillRatio = min(max(CGFloat(intensityPercentage) / 100, 0), 1)
+        let sliderHeight: CGFloat = compact ? 150 : 190
+        let fillRatio = min(
+            max(CGFloat(intensityPercentage) / 100, 0),
+            1
+        )
 
         VStack(spacing: 10) {
             Image(systemName: "sun.max.fill")
-                .font(.system(size: 22, weight: .bold))
+                .font(
+                    .system(
+                        size: compact ? 19 : 22,
+                        weight: .bold
+                    )
+                )
                 .foregroundStyle(.white)
 
             ZStack(alignment: .bottom) {
                 Capsule()
                     .fill(.white.opacity(0.50))
-                    .frame(width: 15, height: sliderHeight)
+                    .frame(
+                        width: compact ? 13 : 15,
+                        height: sliderHeight
+                    )
+
                 Capsule()
                     .fill(Color(hex: "9FA60C"))
-                    .frame(width: 15, height: max(18, sliderHeight * fillRatio))
-                    .animation(.easeOut(duration: 0.12), value: intensityPercentage)
+                    .frame(
+                        width: compact ? 13 : 15,
+                        height: max(
+                            compact ? 16 : 18,
+                            sliderHeight * fillRatio
+                        )
+                    )
+                    .animation(
+                        .easeOut(duration: 0.12),
+                        value: intensityPercentage
+                    )
             }
 
             Image(systemName: "sun.min.fill")
-                .font(.system(size: 18, weight: .bold))
+                .font(
+                    .system(
+                        size: compact ? 16 : 18,
+                        weight: .bold
+                    )
+                )
                 .foregroundStyle(.white.opacity(0.92))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 14)
-        .background(.black.opacity(0.12), in: Capsule())
+        .padding(.horizontal, compact ? 9 : 12)
+        .padding(.vertical, compact ? 10 : 14)
+        .background(
+            .black.opacity(0.12),
+            in: Capsule()
+        )
     }
 }
 

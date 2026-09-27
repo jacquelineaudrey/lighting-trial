@@ -3,11 +3,17 @@ import SwiftUI
 struct Level2FlowView: View {
     @State private var viewModel = Level2ViewModel()
     @State private var narrator = LessonAudioNarrator()
+    @State private var showsExitConfirmation = false
+    
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
-    @State private var showsExitConfirmation = false
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    
     let onReturnToLevelMenu: (() -> Void)?
     let onNextLevel: (() -> Void)?
+    private var isCompactWidth: Bool {
+        horizontalSizeClass == .compact
+    }
 
     init(
         onReturnToLevelMenu: (() -> Void)? = nil,
@@ -94,18 +100,17 @@ struct Level2FlowView: View {
                 )
             case .completed:
                 ZStack {
-                    EndLevelView(
+                    Level2ResponsiveEndLevelView(
                         data: EndLevelViewModel.data(for: Level2Content.levelID),
                         onBack: returnToLevelMenu,
-                        onNext: onNextLevel,
-                        backTitle: "Kembali ke Menu"
+                        onNext: onNextLevel
                     )
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             }
 
             if viewModel.showsGuideOverlay {
-                LevelGuideOverlay(
+                Level2ResponsiveGuideOverlay(
                     text: viewModel.narrationText,
                     assetName: viewModel.guideOverlayAssetName,
                     screenPosition: viewModel.guideOverlayScreenPosition,
@@ -117,7 +122,10 @@ struct Level2FlowView: View {
             if viewModel.isAdjustingIntensity {
                 GeometryReader { proxy in
                     Level2BrightnessControl(intensityPercentage: viewModel.intensityPercentage)
-                        .position(x: proxy.size.width * 0.10, y: proxy.size.height * 0.50)
+                        .position(
+                            x: proxy.size.width * (isCompactWidth ? 0.09 : 0.10),
+                            y: proxy.size.height * 0.50
+                        )
                 }
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
@@ -127,8 +135,8 @@ struct Level2FlowView: View {
         .overlay(alignment: .topLeading) {
             if viewModel.phase != .completed {
                 LevelBackButton(action: { showsExitConfirmation = true })
-                    .padding(.leading, 16)
-                    .padding(.top, 12)
+                    .padding(.leading, isCompactWidth ? 10 : 16)
+                    .padding(.top, isCompactWidth ? 8 : 12)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -138,14 +146,14 @@ struct Level2FlowView: View {
                     isDisabled: viewModel.isTransitioning,
                     action: viewModel.goBackToPreviousState
                 )
-                .padding(.trailing, 16)
-                .padding(.top, 12)
+                .padding(.trailing, isCompactWidth ? 12 : 16)
+                .padding(.top, isCompactWidth ? 8 : 12)
             }
         }
         .overlay(alignment: .top) {
             if let topModeTitle = viewModel.topModeTitle {
                 Level2TopModeLabel(title: topModeTitle)
-                    .padding(.top, 34)
+                    .padding(.top, isCompactWidth ? 24 : 34)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -154,7 +162,7 @@ struct Level2FlowView: View {
                 LessonProgressCelebrationOverlay(celebration: celebration)
                     .id(celebration.id)
                     .transition(.scale(scale: 0.7).combined(with: .opacity))
-                    .padding(.top, 56)
+                    .padding(.top, isCompactWidth ? 44 : 56)
                 .allowsHitTesting(false)
             }
         }
@@ -227,11 +235,11 @@ struct Level2FlowView: View {
     private var guideBottomPadding: CGFloat {
         switch viewModel.phase {
         case .spreadFreeExploration:
-            112
+            return isCompactWidth ? 72 : 112
         case .mission where viewModel.missionIndex == 5:
-            112
+            return isCompactWidth ? 72 : 112
         default:
-            32
+            return isCompactWidth ? 20 : 32
         }
     }
 
