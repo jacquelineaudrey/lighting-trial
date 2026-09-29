@@ -81,6 +81,9 @@ enum Level6LightColor: String, CaseIterable, Identifiable, Hashable {
     case purple
     case orange
     case pink
+    case lightGreen
+    case lightPink
+    case brightYellow
     case white
 
     var id: Self {
@@ -115,6 +118,15 @@ enum Level6LightColor: String, CaseIterable, Identifiable, Hashable {
 
         case .pink:
             "Merah Muda"
+
+        case .lightGreen:
+            "Hijau Muda"
+
+        case .lightPink:
+            "Merah Muda Terang"
+
+        case .brightYellow:
+            "Kuning Terang"
 
         case .white:
             "Putih"
@@ -157,6 +169,15 @@ enum Level6LightColor: String, CaseIterable, Identifiable, Hashable {
 
         case .pink:
             SIMD3(0.96, 0.34, 0.66)
+
+        case .lightGreen:
+            SIMD3(0.56, 1.0, 0.56)
+
+        case .lightPink:
+            SIMD3(1.0, 0.72, 0.82)
+
+        case .brightYellow:
+            SIMD3(1.0, 1.0, 0.45)
 
         case .white:
             SIMD3(1.0, 1.0, 1.0)
@@ -204,16 +225,16 @@ enum Level6ColorMixing {
 
             // Secondary colors
             [.red, .yellow]: .orange,
-            [.red, .orange]: .orange,
-            [.red, .pink]: .pink,
+            [.red, .orange]: .red,
+            [.red, .pink]: .red,
 
             [.blue, .purple]: .purple,
-            [.blue, .lightBlue]: .lightBlue,
+            [.blue, .lightBlue]: .blue,
 
             [.green, .yellow]: .yellow,
             [.green, .lightBlue]: .lightBlue,
 
-            [.purple, .pink]: .pink,
+            [.purple, .pink]: .purple,
             [.yellow, .orange]: .orange
         ]
 
@@ -237,7 +258,7 @@ enum Level6ColorMixing {
     ) -> Level6LightColor {
         switch color {
         case .black:
-            return .white
+            return .black
 
         case .red:
             return .pink
@@ -246,7 +267,7 @@ enum Level6ColorMixing {
             return .lightBlue
 
         case .green:
-            return .lightBlue
+            return .lightGreen
 
         case .purple:
             return .pink
@@ -255,13 +276,22 @@ enum Level6ColorMixing {
             return .yellow
 
         case .pink:
-            return .pink
+            return .lightPink
 
         case .yellow:
-            return .yellow
+            return .brightYellow
 
         case .lightBlue:
             return .lightBlue
+
+        case .lightGreen:
+            return .lightGreen
+
+        case .lightPink:
+            return .lightPink
+
+        case .brightYellow:
+            return .brightYellow
 
         case .white:
             return .white
