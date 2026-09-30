@@ -9,24 +9,57 @@ import SwiftUI
 import UIKit
 
 private enum Level1ExperimentControlMetrics {
-    static let rowSpacing: CGFloat = 12
-    static let pickerWidth: CGFloat = 200
-    // Padding isi picker kiri-kanan
-    static let panelHorizontalPadding: CGFloat = 20
-    static let panelVerticalPadding: CGFloat = 20
-    static let panelCornerRadius: CGFloat = 30
-    static let swatchSize: CGFloat = 30
-    // MARK: Hand Gesture
-    static let handWidth: CGFloat = 70
-    static let handHeight: CGFloat = 140
-    // Setelah diputar 180 derajat, ujung telunjuk berada sekitar 48 pt di
-    // bawah pusat gambar. Offset ini membuat ujung jari tepat di pusat tombol.
-    static let buttonHandOffsetY: CGFloat = -48
+
+    static func rowSpacing(compact: Bool) -> CGFloat {
+        compact ? 6 : 12
+    }
+
+    static func pickerWidth(compact: Bool) -> CGFloat {
+        compact ? 170 : 200
+    }
+
+    static func panelHorizontalPadding(compact: Bool) -> CGFloat {
+        compact ? 14 : 20
+    }
+
+    static func panelVerticalPadding(compact: Bool) -> CGFloat {
+        compact ? 14 : 20
+    }
+
+    static func panelCornerRadius(compact: Bool) -> CGFloat {
+        compact ? 24 : 30
+    }
+
+    static func swatchSize(compact: Bool) -> CGFloat {
+        compact ? 26 : 30
+    }
+
+    static func modeButtonSize(compact: Bool) -> CGFloat {
+        compact ? 40 : 44
+    }
+
+    static func handWidth(compact: Bool) -> CGFloat {
+        compact ? 54 : 70
+    }
+
+    static func handHeight(compact: Bool) -> CGFloat {
+        compact ? 110 : 140
+    }
+
+    static func buttonHandOffsetY(compact: Bool) -> CGFloat {
+        compact ? -36 : -48
+    }
+
     static let handRotation: Double = 180
 }
 
 struct Level1ExperimentControls: View {
     @ObservedObject var viewModel: Level1ViewModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var isCompact: Bool {
+        horizontalSizeClass == .compact
+    }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -41,6 +74,7 @@ struct Level1ExperimentControls: View {
                             textures: viewModel.textureStops,
                             selectedIndex: viewModel.currentTextureIndex,
                             showsGesture: viewModel.showsTextureControlGesture,
+                            compact: isCompact,
                             onSelect: viewModel.selectTexture(at:)
                         )
                     } else if viewModel.activeExperimentPanel == .shape {
@@ -48,14 +82,15 @@ struct Level1ExperimentControls: View {
                             shapes: viewModel.shapeOptions,
                             selectedIndex: viewModel.selectedShapeIndex,
                             showsGesture: viewModel.showsShapeControlGesture,
+                            compact: isCompact,
                             onSelect: viewModel.selectShape(at:)
                         )
                     }
 
                     modeButtons
                 }
-                .padding(.leading, 26)
-                .padding(.bottom, 28)
+                .padding(.leading, isCompact ? 16 : 26)
+                .padding(.bottom, isCompact ? 16 : 28)
 
                 Spacer()
 
@@ -66,8 +101,8 @@ struct Level1ExperimentControls: View {
                         isDisabled: viewModel.isTransitioning,
                         action: viewModel.continueToShapeSelection
                     )
-                        .padding(.trailing, 42)
-                        .padding(.bottom, 36)
+                    .padding(.trailing, isCompact ? 16 : 42)
+                    .padding(.bottom, isCompact ? 16 : 36)
                 } else if viewModel.canConfirmDrawingChoices {
                     LevelActionButton(
                         title: "Aku Pilih Ini",
@@ -75,8 +110,8 @@ struct Level1ExperimentControls: View {
                         isDisabled: viewModel.isTransitioning,
                         action: viewModel.confirmDrawingChoices
                     )
-                        .padding(.trailing, 42)
-                        .padding(.bottom, 36)
+                    .padding(.trailing, isCompact ? 16 : 42)
+                    .padding(.bottom, isCompact ? 16 : 36)
                 }
             }
         }
@@ -117,11 +152,15 @@ struct Level1ExperimentControls: View {
     private var modeButtonGesture: some View {
         TouchGestureImage()
             .frame(
-                width: Level1ExperimentControlMetrics.handWidth,
-                height: Level1ExperimentControlMetrics.handHeight
+                width: Level1ExperimentControlMetrics.handWidth(compact: isCompact),
+                height: Level1ExperimentControlMetrics.handHeight(compact: isCompact)
             )
-            .rotationEffect(.degrees(Level1ExperimentControlMetrics.handRotation))
-            .offset(y: Level1ExperimentControlMetrics.buttonHandOffsetY)
+            .rotationEffect(
+                .degrees(Level1ExperimentControlMetrics.handRotation)
+            )
+            .offset(
+                y: Level1ExperimentControlMetrics.buttonHandOffsetY(compact: isCompact)
+            )
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }
@@ -131,7 +170,10 @@ struct Level1ExperimentControls: View {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(isSelected ? .white : .white.opacity(0.86))
-                .frame(width: 44, height: 44)
+                .frame(
+                    width: Level1ExperimentControlMetrics.modeButtonSize(compact: isCompact),
+                    height: Level1ExperimentControlMetrics.modeButtonSize(compact: isCompact)
+                )
                 .background(isSelected ? Color(hex: "9FA60C") : Color.white.opacity(0.10), in: Circle())
         }
         .buttonStyle(.plain)
@@ -143,14 +185,15 @@ private struct Level1TexturePickerPanel: View {
     let textures: [TextureStop]
     let selectedIndex: Int
     let showsGesture: Bool
+    let compact: Bool
     let onSelect: (Int) -> Void
 
     var body: some View {
 
-        pickerPanel(showsGesture: showsGesture) {
+        pickerPanel(showsGesture: showsGesture, compact: compact) {
 
             VStack(
-                spacing: Level1ExperimentControlMetrics.rowSpacing
+                spacing: Level1ExperimentControlMetrics.rowSpacing(compact: compact)
             ) {
 
                 ForEach(
@@ -173,10 +216,11 @@ private struct Level1TexturePickerPanel: View {
 
                             TextureSwatch(
                                 texture: texture.material,
-                                isSelected: index == selectedIndex
+                                isSelected: index == selectedIndex,
+                                compact: compact
                             )
                         }
-                        .frame(minHeight: 44)
+                        .frame(minHeight: compact ? 40 : 44)
                         .frame(maxWidth: .infinity)
                         .contentShape(.rect)
                     }
@@ -193,14 +237,15 @@ private struct Level1ShapePickerPanel: View {
     let shapes: [GameShape]
     let selectedIndex: Int
     let showsGesture: Bool
+    let compact: Bool
     let onSelect: (Int) -> Void
 
     var body: some View {
 
-        pickerPanel(showsGesture: showsGesture) {
+        pickerPanel(showsGesture: showsGesture, compact: compact) {
 
             VStack(
-                spacing: Level1ExperimentControlMetrics.rowSpacing
+                spacing: Level1ExperimentControlMetrics.rowSpacing(compact: compact)
             ) {
 
                 ForEach(
@@ -223,10 +268,11 @@ private struct Level1ShapePickerPanel: View {
 
                             ShapeSwatch(
                                 shape: shape,
-                                isSelected: index == selectedIndex
+                                isSelected: index == selectedIndex,
+                                compact: compact
                             )
                         }
-                        .frame(minHeight: 44)
+                        .frame(minHeight: compact ? 40 : 44)
                         .frame(maxWidth: .infinity)
                         .contentShape(.rect)
                     }
@@ -240,6 +286,7 @@ private struct Level1ShapePickerPanel: View {
 
 private func pickerPanel<Content: View>(
     showsGesture: Bool,
+    compact: Bool,
     @ViewBuilder content: () -> Content
 ) -> some View {
 
@@ -249,27 +296,27 @@ private func pickerPanel<Content: View>(
             .frame(maxWidth: .infinity)
             .padding(
                 .horizontal,
-                Level1ExperimentControlMetrics.panelHorizontalPadding
+                Level1ExperimentControlMetrics.panelHorizontalPadding(compact: compact)
             )
             .padding(
                 .vertical,
-                Level1ExperimentControlMetrics.panelVerticalPadding
+                Level1ExperimentControlMetrics.panelVerticalPadding(compact: compact)
             )
             .frame(
-                width: Level1ExperimentControlMetrics.pickerWidth
+                width: Level1ExperimentControlMetrics.pickerWidth(compact: compact)
             )
             .background(
                 .ultraThinMaterial,
                 in: RoundedRectangle(
                     cornerRadius:
-                        Level1ExperimentControlMetrics.panelCornerRadius
+                        Level1ExperimentControlMetrics.panelCornerRadius(compact: compact)
                 )
             )
             .overlay {
 
                 RoundedRectangle(
                     cornerRadius:
-                        Level1ExperimentControlMetrics.panelCornerRadius
+                        Level1ExperimentControlMetrics.panelCornerRadius(compact: compact)
                 )
                 .stroke(
                     .white.opacity(0.28),
@@ -282,9 +329,9 @@ private func pickerPanel<Content: View>(
             TouchGestureImage()
                 .frame(
                     width:
-                        Level1ExperimentControlMetrics.handWidth,
+                        Level1ExperimentControlMetrics.handWidth(compact: compact),
                     height:
-                        Level1ExperimentControlMetrics.handHeight
+                        Level1ExperimentControlMetrics.handHeight(compact: compact)
                 )
                 .rotationEffect(
                     .degrees(
@@ -293,7 +340,7 @@ private func pickerPanel<Content: View>(
                 )
                 .offset(
                     y:
-                        Level1ExperimentControlMetrics.buttonHandOffsetY
+                        Level1ExperimentControlMetrics.buttonHandOffsetY(compact: compact)
                 )
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
@@ -327,13 +374,14 @@ struct TouchGestureImage: View {
 private struct TextureSwatch: View {
     let texture: MaterialTexture
     let isSelected: Bool
+    let compact: Bool
 
     var body: some View {
         Circle()
             .fill(texture.fallbackColor.swiftUIColor)
             .frame(
-                width: Level1ExperimentControlMetrics.swatchSize,
-                height: Level1ExperimentControlMetrics.swatchSize
+                width: Level1ExperimentControlMetrics.swatchSize(compact: compact),
+                height: Level1ExperimentControlMetrics.swatchSize(compact: compact)
             )
             .overlay {
                 Image(systemName: texture.previewSystemImage)
@@ -351,13 +399,14 @@ private struct TextureSwatch: View {
 private struct ShapeSwatch: View {
     let shape: GameShape
     let isSelected: Bool
+    let compact: Bool
 
     var body: some View {
         Circle()
             .fill(.white.opacity(isSelected ? 0.95 : 0.22))
             .frame(
-                width: Level1ExperimentControlMetrics.swatchSize,
-                height: Level1ExperimentControlMetrics.swatchSize
+                width: Level1ExperimentControlMetrics.swatchSize(compact: compact),
+                height: Level1ExperimentControlMetrics.swatchSize(compact: compact)
             )
             .overlay {
                 Image(systemName: shape.quizSymbolName)
@@ -371,18 +420,18 @@ private struct ShapeSwatch: View {
     }
 }
 
-#Preview("Texture Picker") {
-    ZStack(alignment: .bottomLeading) {
-        Color.black.opacity(0.45).ignoresSafeArea()
-        Level1TexturePickerPanel(
-            textures: Level1Content.kubus.textures,
-            selectedIndex: 4,
-            showsGesture: true,
-            onSelect: { _ in }
-        )
-        .padding(30)
-    }
-}
+//#Preview("Texture Picker") {
+//    ZStack(alignment: .bottomLeading) {
+//        Color.black.opacity(0.45).ignoresSafeArea()
+//        Level1TexturePickerPanel(
+//            textures: Level1Content.kubus.textures,
+//            selectedIndex: 4,
+//            showsGesture: true,
+//            onSelect: { _ in }
+//        )
+//        .padding(30)
+//    }
+//}
 
 #if DEBUG
 
@@ -397,6 +446,11 @@ private struct Level1ExperimentControlsPreviewState: View {
     @State private var mode: Mode = .none
     @State private var selectedTextureIndex = 0
     @State private var selectedShapeIndex = 0
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -446,7 +500,8 @@ private struct Level1ExperimentControlsPreviewState: View {
                         Level1TexturePickerPanel(
                             textures: Level1Content.kubus.textures,
                             selectedIndex: selectedTextureIndex,
-                            showsGesture: false
+                            showsGesture: false,
+                            compact: compact
                         ) { index in
                             selectedTextureIndex = index
                         }
@@ -455,7 +510,8 @@ private struct Level1ExperimentControlsPreviewState: View {
                         Level1ShapePickerPanel(
                             shapes: Level1Content.allShapes,
                             selectedIndex: selectedShapeIndex,
-                            showsGesture: false
+                            showsGesture: false,
+                            compact: compact
                         ) { index in
                             selectedShapeIndex = index
                         }
@@ -496,14 +552,14 @@ private struct Level1ExperimentControlsPreviewState: View {
 
                 TouchGestureImage()
                     .frame(
-                        width: Level1ExperimentControlMetrics.handWidth,
-                        height: Level1ExperimentControlMetrics.handHeight
+                        width: Level1ExperimentControlMetrics.handWidth(compact: compact),
+                        height: Level1ExperimentControlMetrics.handHeight(compact: compact)
                     )
                     .rotationEffect(
                         .degrees(Level1ExperimentControlMetrics.handRotation)
                     )
                     .offset(
-                        y: Level1ExperimentControlMetrics.buttonHandOffsetY
+                        y: Level1ExperimentControlMetrics.buttonHandOffsetY(compact: compact)
                     )
                     .allowsHitTesting(false)
             }

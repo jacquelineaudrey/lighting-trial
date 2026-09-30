@@ -1879,7 +1879,7 @@ final class Level1ViewModel: ObservableObject {
         let time = Float(CACurrentMediaTime())
         let position = cameraPosition
             + normalizedForward * (max(0.3, min(1.15, distanceMeters - 0.4)) + sin(time * 2.4) * 0.10)
-            + SIMD3<Float>(0, -0.35 + sin(time * 2.0) * 0.015, 0)
+            + SIMD3<Float>(0, -0.55 + sin(time * 2.0) * 0.015, 0)
 
         root.look(at: SIMD3<Float>(targetPosition.x, position.y, targetPosition.z), from: position, relativeTo: nil)
         updateIndicatorDistanceLabel(

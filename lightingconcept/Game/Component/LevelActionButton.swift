@@ -15,6 +15,12 @@ struct LevelActionButton: View {
     var isDisabled = false
     let action: () -> Void
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var isCompactWidth: Bool {
+        horizontalSizeClass == .compact
+    }
+    
     var body: some View {
         Button(action: action) {
             Group {
@@ -24,11 +30,11 @@ struct LevelActionButton: View {
                     Text(title)
                 }
             }
-            .font(.headline.bold())
+            .font(.system(size: isCompactWidth ? 15 : 17, weight: .bold))
             .lineLimit(1)
             .minimumScaleFactor(0.82)
             .foregroundStyle(foregroundStyle)
-            .frame(width: 220, height: 52)
+            .frame(width: isCompactWidth ? 180 : 220, height: isCompactWidth ? 48 : 52)
             .background(backgroundStyle, in: Capsule())
             .overlay {
                 Capsule()

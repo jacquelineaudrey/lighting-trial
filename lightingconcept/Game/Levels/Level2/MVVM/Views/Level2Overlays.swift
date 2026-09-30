@@ -19,14 +19,20 @@ struct Level2ReplayNarrationButton: View {
 
 struct Level2TopModeLabel: View {
     let title: String
+    
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
 
     var body: some View {
         Text(title)
-            .font(.system(size: 20, weight: .bold))
+            .font(.system(size: compact ? 17 : 20, weight: .bold))
             .foregroundStyle(Color(hex: "2B1A08"))
             .lineLimit(1)
             .minimumScaleFactor(0.8)
-            .frame(width: 280, height: 52)
+            .frame(width: compact ? 224 : 280, height: compact ? 44 : 52)
             .background(fillColor, in: Capsule())
             .overlay(Capsule().stroke(strokeColor, lineWidth: 2))
             .shadow(color: .black.opacity(0.10), radius: 5, y: 2)
@@ -73,11 +79,21 @@ struct Level2DialogOverlay: View {
 struct Level2PlacementOverlay: View {
     @ObservedObject var sceneViewModel: ARSceneViewModel
     let replayNarration: () -> Void
+    
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
 
     var body: some View {
         VStack(spacing: 12) {
             SurfaceScanInstruction(sceneViewModel: sceneViewModel)
-            Text(guidanceText).font(.headline).multilineTextAlignment(.center)
+            Text(guidanceText)
+                .font(compact ? .subheadline.weight(.semibold) : .headline)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .minimumScaleFactor(0.8)
             LevelActionButton(
                 title: "Taruh Benda di Tengah",
                 systemImage: "cube.fill",
@@ -90,10 +106,11 @@ struct Level2PlacementOverlay: View {
             }
             Level2ReplayNarrationButton(action: replayNarration)
         }
-        .padding(20)
-        .background(.thinMaterial, in: .rect(cornerRadius: 24))
-        .padding(.horizontal, 16)
-        .padding(.bottom, 28)
+        .padding(compact ? 12 : 20)
+        .frame(maxWidth: compact ? 540 : 620)
+        .background(.thinMaterial, in: .rect(cornerRadius: compact ? 18 : 24))
+        .padding(.horizontal, compact ? 12 : 16)
+        .padding(.bottom, compact ? 16 : 28)
     }
 
     private var guidanceText: String {
@@ -113,6 +130,12 @@ struct Level2MascotDialogOverlay: View {
     var showsButton: Bool = false
     var advancesOnTap: Bool = true
     let action: () -> Void
+    
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
 
     var body: some View {
         ZStack {
@@ -130,8 +153,8 @@ struct Level2MascotDialogOverlay: View {
                             systemImage: "arrow.right",
                             action: action
                         )
-                            .padding(.trailing, 42)
-                            .padding(.bottom, 36)
+                        .padding(.trailing, compact ? 16 : 42)
+                        .padding(.bottom, compact ? 16 : 36)
                     }
                 }
             }
@@ -182,12 +205,18 @@ struct Level2SpreadTutorialOverlay: View {
 struct Level2FreeExploreInstructionsOverlay: View {
     let action: () -> Void
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+    
     var body: some View {
         ZStack {
             Color.black.opacity(0.52).ignoresSafeArea()
 
-            VStack(spacing: 28) {
-                HStack(spacing: 78) {
+            VStack(spacing: compact ? 16 : 28) {
+                HStack(spacing: compact ? 18 : 78) {
                     Level2GestureReminder(
                         prompt: .pinchIn,
                         title: "Rapatkan dua jari untuk\nmengecilkan cahaya"
@@ -203,11 +232,11 @@ struct Level2FreeExploreInstructionsOverlay: View {
                     action: action
                 )
             }
-            .padding(44)
-            .frame(maxWidth: 840)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 28))
-            .overlay(RoundedRectangle(cornerRadius: 28).stroke(.white.opacity(0.28), lineWidth: 1))
-            .padding(.horizontal, 44)
+            .padding(compact ? 18 : 44)
+            .frame(maxWidth: compact ? 560 : 840)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: compact ? 20 : 28))
+            .overlay(RoundedRectangle(cornerRadius: compact ? 20 : 28).stroke(.white.opacity(0.28), lineWidth: 1))
+            .padding(.horizontal, compact ? 12 : 44)
         }
     }
 }
@@ -215,6 +244,12 @@ struct Level2FreeExploreInstructionsOverlay: View {
 struct Level2FreeExploreOverlay: View {
     let action: () -> Void
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+    
     var body: some View {
         VStack {
             Spacer()
@@ -225,8 +260,8 @@ struct Level2FreeExploreOverlay: View {
                     systemImage: "arrow.right",
                     action: action
                 )
-                    .padding(.trailing, 42)
-                    .padding(.bottom, 36)
+                .padding(.trailing, compact ? 16 : 42)
+                .padding(.bottom, compact ? 16 : 36)
             }
         }
     }
@@ -294,20 +329,26 @@ private struct Level2StaticPulse: View {
 
 private struct Level2BottomInstruction: View {
     let text: String
+    
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+    
     var body: some View {
         VStack {
             Spacer()
             highlightedText(text, highlightedWords: [])
-                .font(.system(size: 20, weight: .regular))
+                .font(.system(size: compact ? 16 : 20, weight: .regular))
                 .foregroundStyle(.black)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .minimumScaleFactor(0.82)
-                .padding(.horizontal, 34)
-                .frame(minHeight: 66)
+                .padding(.horizontal, compact ? 18 : 34)
+                .frame(minHeight: compact ? 54 : 66)
                 .background(.regularMaterial, in: Capsule())
-                .padding(.bottom, 34)
+                .padding(.bottom, compact ? 16 : 34)
         }
     }
 }
@@ -315,14 +356,20 @@ private struct Level2BottomInstruction: View {
 private struct Level2GestureReminder: View {
     let prompt: Level2GesturePrompt
     let title: String
+    
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
 
     var body: some View {
-        VStack(spacing: 24) {
-            Level2GestureAssetImage(prompt: prompt, pulseScale: 0.72)
-                .frame(width: 230, height: 170)
+        VStack(spacing: compact ? 10 : 24) {
+            Level2GestureAssetImage(prompt: prompt, pulseScale: compact ? 0.62 : 0.72)
+            .frame(width: compact ? 160 : 230, height: compact ? 118 : 170)
 
             Text(title)
-                .font(.system(size: 21, weight: .medium))
+                .font(.system(size: compact ? 16 : 21, weight: .medium))
                 .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
@@ -522,19 +569,188 @@ func highlightedText(_ text: String, highlightedWords: [String]) -> Text {
     return Text(text)
 }
 
+// MARK: - Level 2 Responsive Guide
+
+struct Level2ResponsiveGuideOverlay: View {
+    let text: String
+    let assetName: String
+    let screenPosition: CGPoint?
+    let showsTapToContinueCaption: Bool
+    let bottomPadding: CGFloat
+
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let bubbleWidth = min(compact ? 320 : 420, proxy.size.width * (compact ? 0.40 : 0.54))
+
+            let characterSize = CGSize(width: compact ? 80 : 104, height: compact ? 110 : 144)
+
+            let spacing: CGFloat = compact ? 8 : 12
+
+            let groupHeight = max(characterSize.height, compact ? 150 : 180)
+
+            HStack(alignment: .bottom, spacing: spacing) {
+
+                LevelSpeechBubble(text: text, showsTapToContinueCaption: showsTapToContinueCaption)
+                .frame(width: bubbleWidth)
+                .fixedSize(horizontal: false, vertical: true)
+
+                LevelGuideCharacterImage(assetName: assetName)
+                .frame(width: characterSize.width, height: characterSize.height)
+            }
+            .position(overlayPosition(in: proxy.size, groupWidth: bubbleWidth + spacing + characterSize.width, groupHeight: groupHeight))
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    private func overlayPosition(in size: CGSize, groupWidth: CGFloat, groupHeight: CGFloat) -> CGPoint {
+
+        let halfWidth = groupWidth / 2
+        let halfHeight = groupHeight / 2
+
+        let proposed = screenPosition
+            ?? CGPoint(
+                x: size.width - halfWidth - (compact ? 12 : 20), y: size.height - bottomPadding - halfHeight
+            )
+
+        let minX = halfWidth + (compact ? 8 : 12)
+        let maxX = max(minX, size.width - halfWidth - (compact ? 8 : 12))
+        let minY = halfHeight + 8
+        let maxY = max(minY, size.height - bottomPadding - halfHeight)
+
+        return CGPoint(
+            x: min(max(proposed.x, minX), maxX), y: min(max(proposed.y, minY), maxY)
+        )
+    }
+}
+
+// MARK: - Level 2 Responsive Completion
+
+struct Level2ResponsiveEndLevelView: View {
+    let data: EndLevelModel
+    let onBack: () -> Void
+    let onNext: (() -> Void)?
+
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Image("containerWood")
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .clipped()
+
+                VStack(spacing: compact ? 22 : 56) {
+                    ZStack {
+                        Image("ribbonBlue")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: compact ? min(proxy.size.width * 0.44, 300) : 378)
+
+                        Text("LEVEL \(data.levelNumber)")
+                            .font(.system(size: compact ? 24 : 36, weight: .bold))
+                            .foregroundStyle(.white)
+                            .offset(y: compact ? -3 : -7)
+                    }
+
+                    Text(data.message)
+                        .font(compact ? .system(size: 20, weight: .semibold) : .title.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.78)
+                        .padding(.horizontal, compact ? 18 : 20)
+                        .frame(width: min(compact ? 520 : 625, proxy.size.width - (compact ? 24 : 40)), height: compact ? 88 : 130)
+                        .background(RoundedRectangle(cornerRadius: compact ? 18 : 25)
+                            .fill(Color(hex: "C98928")))
+                        .overlay(RoundedRectangle(cornerRadius: compact ? 18 : 25)
+                            .stroke(Color(hex: "7E520E"), lineWidth: 2))
+
+                    HStack(spacing: compact ? 10 : 24) {
+
+                        LevelActionButton(
+                            title: "Kembali ke Menu",
+                            systemImage: "house.fill",
+                            role: .menu,
+                            action: onBack
+                        )
+
+                        LevelActionButton(
+                            title:
+                                onNext == nil
+                                    ? "Selesai"
+                                    : "Selanjutnya",
+                            systemImage:
+                                onNext == nil
+                                    ? "checkmark"
+                                    : "arrow.right",
+                            action: finishLevel
+                        )
+                    }
+                    .frame(maxWidth: proxy.size.width - (compact ? 24 : 48))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.top, compact ? 10 : 20)
+
+                Image(data.mascotImageName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: compact ? 90 : 160, height: compact ? 125 : 220)
+                    .position(x: proxy.size.width - (compact ? 62 : 115), y: proxy.size.height - (compact ? 58 : 82))
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    private func finishLevel() {
+        if let onNext {
+            onNext()
+        } else {
+            onBack()
+        }
+    }
+}
+
 // MARK: - Completion
 
 struct Level2ReviewOverlay: View {
     let replayNarration: () -> Void
     let onFinish: () -> Void
+    
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Ingat Tiga Penemuanmu! 🌟").font(.title2).bold().frame(maxWidth: .infinity, alignment: .center)
+        VStack(alignment: .leading, spacing: compact ? 10 : 16) {
+            Text("Ingat Tiga Penemuanmu! 🌟")
+                .font(compact ? .headline.bold() : .title2.bold())
+                .frame(maxWidth: .infinity, alignment: .center)
+
             ForEach(Level2Content.reviewPoints, id: \.self) { point in
-                Label(point, systemImage: "star.fill").font(.headline).foregroundStyle(.primary)
+                Label(point, systemImage: "star.fill")
+                .font(compact ? .subheadline : .headline)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
             }
-            Level2ReplayNarrationButton(action: replayNarration).frame(maxWidth: .infinity)
+
+            Level2ReplayNarrationButton(action: replayNarration)
+            .frame(maxWidth: .infinity)
+
             LevelActionButton(
                 title: "Selesaikan Level 2",
                 systemImage: "checkmark",
@@ -542,20 +758,37 @@ struct Level2ReviewOverlay: View {
             )
             .frame(maxWidth: .infinity)
         }
-        .padding(22).background(.thinMaterial, in: .rect(cornerRadius: 24))
-        .padding(.horizontal, 16).padding(.bottom, 28)
+        .padding(compact ? 14 : 22)
+        .frame(maxWidth: compact ? 560 : .infinity)
+        .background(.thinMaterial, in: .rect(cornerRadius: compact ? 18 : 24))
+        .padding(.horizontal, compact ? 12 : 16)
+        .padding(.bottom, compact ? 16 : 28)
     }
 }
 
 struct Level2CompletedOverlay: View {
     let onFinish: () -> Void
     let onNext: (() -> Void)?
+    
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
+    private var compact: Bool {
+        horizontalSizeClass == .compact
+    }
+    
     var body: some View {
-        VStack(spacing: 16) {
-            Text("🏆").font(.largeTitle.scaled(by: 1.7)).accessibilityHidden(true)
-            Text("Level 2 Selesai!").font(.title).bold()
-            Text("Kamu hebat, Detektif Cahaya!").font(.title3).bold().multilineTextAlignment(.center)
+        VStack(spacing: compact ? 10 : 16) {
+            Text("🏆")
+                .font(compact ? .largeTitle.scaled(by: 1.35) : .largeTitle.scaled(by: 1.7))
+                .accessibilityHidden(true)
+
+            Text("Level 2 Selesai!")
+                .font(compact ? .title2.bold() : .title.bold())
+
+            Text("Kamu hebat, Detektif Cahaya!")
+                .font(compact ? .headline.bold() : .title3.bold())
+                .multilineTextAlignment(.center)
+
             LevelActionButton(
                 title: onNext == nil ? "Kembali ke Menu" : "Selanjutnya",
                 systemImage: onNext == nil ? "house.fill" : "arrow.right",
@@ -563,8 +796,11 @@ struct Level2CompletedOverlay: View {
                 action: finish
             )
         }
-        .padding(24).background(.thinMaterial, in: .rect(cornerRadius: 28))
-        .padding(.horizontal, 24).padding(.bottom, 48)
+        .padding(compact ? 16 : 24)
+        .frame(maxWidth: compact ? 520 : .infinity)
+        .background(.thinMaterial, in: .rect(cornerRadius: compact ? 20 : 28))
+        .padding(.horizontal, compact ? 12 : 24)
+        .padding(.bottom, compact ? 20 : 48)
     }
 
     private func finish() {

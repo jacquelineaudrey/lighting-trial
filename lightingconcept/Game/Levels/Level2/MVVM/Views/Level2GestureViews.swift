@@ -291,21 +291,29 @@ private final class Level2TouchCaptureUIView: UIView {
     }
 
     private func createIndicatorView() -> UIView {
-        let container = UIView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
+        // Slightly smaller touch indicator on narrow screens.
+        let diameter: CGFloat = bounds.width < 700 ? 38 : 44
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: diameter, height: diameter))
+
         container.isUserInteractionEnabled = false
 
-        let outerRing = UIView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
-        outerRing.layer.cornerRadius = 22
+        let outerRing = UIView(frame: CGRect(x: 0, y: 0, width: diameter, height: diameter))
+        outerRing.layer.cornerRadius = diameter / 2
         outerRing.layer.borderWidth = 1.5
         outerRing.layer.borderColor = UIColor.white.withAlphaComponent(0.7).cgColor
         outerRing.backgroundColor = .clear
+
         container.addSubview(outerRing)
 
-        let dot = UIView(frame: CGRect(x: 8, y: 8, width: 28, height: 28))
-        dot.layer.cornerRadius = 14
+        let dotInset = diameter * 0.18
+        let dotDiameter = diameter * 0.64
+
+        let dot = UIView(frame: CGRect(x: dotInset, y: dotInset, width: dotDiameter, height: dotDiameter))
+        dot.layer.cornerRadius = dotDiameter / 2
         dot.layer.borderWidth = 2
         dot.layer.borderColor = UIColor.white.cgColor
         dot.backgroundColor = .systemRed
+
         container.addSubview(dot)
 
         return container
