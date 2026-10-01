@@ -18,6 +18,23 @@ enum Level4Phase: Equatable {
     case completed
 }
 
+#if DEBUG
+enum Level4DevFlow: String, CaseIterable {
+    case placingScene = "Scan & Place"
+    case introduction = "Introduction"
+    case selectingObject = "Select Object"
+    case movingObject = "Move Object"
+    case objectExplanation = "Object Explanation"
+    case selectingLight = "Select Light"
+    case movingLight = "Move Light"
+    case lightExplanation = "Light Explanation"
+    case exploring = "Free Exploration"
+    case closing = "Closing"
+    case review = "Review"
+    case completed = "Completed"
+}
+#endif
+
 struct Level4Dialog: Equatable {
     let text: String
     let assetName: String

@@ -29,7 +29,7 @@ struct Level1FlowView: View {
         onNextLevel: (() -> Void)? = nil
     ) {
         self.shouldAskToSkipIntro = shouldAskToSkipIntro
-        _showsSkipIntroPrompt = State(initialValue: shouldAskToSkipIntro)
+        _showsSkipIntroPrompt = State(initialValue: false)
         self.onReturnToLevelMenu = onReturnToLevelMenu
         self.onNextLevel = onNextLevel
     }
@@ -81,11 +81,11 @@ struct Level1FlowView: View {
             case .photoComparison:
                 Level1PhotoSavedOverlay(viewModel: viewModel, compact: isCompactWidth)
             case .completed:
-                Level1EndLevelView(
+                ResponsiveEndLevelView(
                     data: EndLevelViewModel.data(for: Level1Content.levelID),
                     onBack: returnToLevelMenu,
                     onNext: onNextLevel,
-                    compact: isCompactWidth
+                    backTitle: "Kembali"
                 )
             }
 
@@ -135,6 +135,12 @@ struct Level1FlowView: View {
                 .padding(.top, 28)
             }
         }
+#if DEBUG
+        .overlay(alignment: .bottomLeading) {
+            Level1DevFlowMenu(viewModel: viewModel)
+                .padding(16)
+        }
+#endif
         .overlay {
             if let safetyWarning = viewModel.safetyWarning {
                 SafetyWarningDialog(
@@ -187,10 +193,7 @@ struct Level1FlowView: View {
                 narrator.stop()
                 return
             }
-            // Saat scanning, anak hanya melihat instruksi scan. Lumi dan
-            // narasinya baru mulai setelah surface stabil dan scene siap.
-            guard viewModel.phase != .scanningSurface,
-                  viewModel.phase != .surfaceReady else {
+            guard viewModel.phase != .surfaceReady else {
                 narrator.stop()
                 return
             }
@@ -204,8 +207,13 @@ struct Level1FlowView: View {
         }
         .onAppear {
             viewModel.onNarrationSkipRequested = { narrator.stop() }
-            showsSkipIntroPrompt = shouldAskToSkipIntro
+            showsSkipIntroPrompt = false
             BackgroundMusicPlayer.shared.playGameplayMusic()
+        }
+        .onChange(of: viewModel.phase) { _, phase in
+            if phase == .surfaceReady && shouldAskToSkipIntro {
+                showsSkipIntroPrompt = true
+            }
         }
         .onDisappear {
             narrator.stop()
@@ -762,129 +770,5 @@ private struct Level1ResponsiveGuideOverlay: View {
                 maximumY
             )
         )
-    }
-}
-
-private struct Level1EndLevelView: View {
-    let data: EndLevelModel
-    let onBack: () -> Void
-    let onNext: (() -> Void)?
-    let compact: Bool
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                Image("containerWood")
-                    .resizable()
-                    .scaledToFill()
-                    .frame(
-                        width: proxy.size.width,
-                        height: proxy.size.height
-                    )
-                    .clipped()
-
-                VStack(spacing: compact ? 24 : 70) {
-                    ZStack {
-                        Image("ribbonBlue")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(
-                                width: compact
-                                    ? min(proxy.size.width * 0.52, 320)
-                                    : 378
-                            )
-
-                        Text("LEVEL \(data.levelNumber)")
-                            .font(
-                                .system(
-                                    size: compact ? 24 : 36,
-                                    weight: .bold
-                                )
-                            )
-                            .foregroundColor(.white)
-                            .offset(
-                                y: compact ? -4 : -7
-                            )
-                    }
-
-                    Text(data.message)
-                        .font(
-                            compact
-                                ? .title3.weight(.semibold)
-                                : .title.weight(.semibold)
-                        )
-                        .multilineTextAlignment(.center)
-                        .foregroundColor(.white)
-                        .frame(
-                            width: min(
-                                compact ? 430 : 625,
-                                proxy.size.width - 40
-                            ),
-                            height: compact ? 90 : 130
-                        )
-                        .background(
-                            RoundedRectangle(
-                                cornerRadius: 25
-                            )
-                            .fill(Color(hex: "C98928"))
-                        )
-                        .overlay(
-                            RoundedRectangle(
-                                cornerRadius: 25
-                            )
-                            .stroke(
-                                Color(hex: "7E520E"),
-                                lineWidth: 2
-                            )
-                        )
-
-                    HStack(spacing: compact ? 10 : 24) {
-                        LevelActionButton(
-                            title: "Kembali ke Menu",
-                            systemImage: "house.fill",
-                            role: .menu,
-                            action: onBack
-                        )
-
-                        LevelActionButton(
-                            title: onNext == nil
-                                ? "Selesai"
-                                : "Selanjutnya",
-                            systemImage: onNext == nil
-                                ? "checkmark"
-                                : "arrow.right",
-                            action: {
-                                if let onNext {
-                                    onNext()
-                                } else {
-                                    onBack()
-                                }
-                            }
-                        )
-                    }
-                    .frame(
-                        maxWidth: proxy.size.width - 32
-                    )
-                }
-                .frame(maxHeight: .infinity)
-
-                Image(data.mascotImageName)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(
-                        width: compact ? 90 : 160,
-                        height: compact ? 140 : 220
-                    )
-                    .position(
-                        x: compact
-                            ? proxy.size.width - 70
-                            : proxy.size.width * 0.82,
-                        y: compact
-                            ? proxy.size.height - 70
-                            : proxy.size.height - 100
-                    )
-            }
-        }
-        .ignoresSafeArea()
     }
 }

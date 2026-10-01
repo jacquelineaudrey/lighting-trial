@@ -22,7 +22,7 @@ struct Level2FlowView: View {
         onNextLevel: (() -> Void)? = nil
     ) {
         self.shouldAskToSkipIntro = shouldAskToSkipIntro
-        _showsSkipIntroPrompt = State(initialValue: shouldAskToSkipIntro)
+        _showsSkipIntroPrompt = State(initialValue: false)
         self.onReturnToLevelMenu = onReturnToLevelMenu
         self.onNextLevel = onNextLevel
     }
@@ -104,10 +104,11 @@ struct Level2FlowView: View {
                 )
             case .completed:
                 ZStack {
-                    Level2ResponsiveEndLevelView(
+                    ResponsiveEndLevelView(
                         data: EndLevelViewModel.data(for: Level2Content.levelID),
                         onBack: returnToLevelMenu,
-                        onNext: onNextLevel
+                        onNext: onNextLevel,
+                        backTitle: "Kembali"
                     )
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -178,6 +179,20 @@ struct Level2FlowView: View {
                 )
             }
         }
+#if DEBUG
+        .overlay(alignment: .bottomLeading) {
+            let flows = Level2DevFlow.allCases
+            DeveloperPhaseMenu(
+                levelTitle: "Level 2 Phases",
+                phases: flows.map(\.rawValue),
+                onSelect: { index in
+                    narrator.stop()
+                    viewModel.jumpToDevFlow(flows[index])
+                }
+            )
+            .padding(16)
+        }
+#endif
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
             returnToLevelMenu()
         }
@@ -208,8 +223,13 @@ struct Level2FlowView: View {
             )
         }
         .onAppear {
-            showsSkipIntroPrompt = shouldAskToSkipIntro
+            showsSkipIntroPrompt = false
             BackgroundMusicPlayer.shared.playGameplayMusic()
+        }
+        .onChange(of: viewModel.phase) { _, phase in
+            if phase == .surfaceReady && shouldAskToSkipIntro {
+                showsSkipIntroPrompt = true
+            }
         }
         .onDisappear {
             narrator.stop()

@@ -90,6 +90,49 @@ final class Level6ViewModel: ObservableObject, ARSceneTelemetryDelegate {
         "Wah! \(firstColor.displayName.capitalized) dicampur \(secondColor.displayName) jadinya \(mixingResult.displayName)!"
     }
 
+#if DEBUG
+    func jumpToDevFlow(_ flow: Level6DevFlow) {
+        showsColorPanel = false
+        showsDrawingCamera = false
+        showsShadowExplanation = false
+        isLookAroundMode = false
+        positionGuidanceStep = .complete
+
+        let lights = sceneViewModel.lights
+        firstLightID = lights.first?.id
+        secondLightID = lights.dropFirst().first?.id
+
+        switch flow {
+        case .placingScene: phase = .placingScene
+        case .introduction: phase = .introduction(0)
+        case .selectingFirstLight: phase = .selectingFirstLight
+        case .changingFirstColor:
+            if let firstLightID { sceneViewModel.selectedLightID = firstLightID }
+            phase = .changingFirstColor
+        case .firstColorResult: phase = .firstColorResult
+        case .selectingSecondLight: phase = .selectingSecondLight
+        case .changingSecondColor:
+            if let secondLightID { sceneViewModel.selectedLightID = secondLightID }
+            phase = .changingSecondColor
+        case .colorShadowPrompt: phase = .colorShadowPrompt
+        case .colorExploration: phase = .colorExploration
+        case .positionExploration:
+            phase = .positionExploration
+            positionGuidanceStep = .complete
+        case .drawingChoice: phase = .drawingChoice
+        case .drawingOnPaper: phase = .drawingOnPaper
+        case .photoPrompt: phase = .photoPrompt
+        case .photoComparison: phase = .photoComparison
+        case .completed: phase = .completed
+        }
+    }
+#endif
+
+    func startCompletedLevelReplayAtTask() {
+        guard phase == .introduction(0) else { return }
+        phase = .selectingFirstLight
+    }
+
     func advanceIntroduction() {
         guard case let .introduction(index) = phase else { return }
         if index + 1 < Level6Content.introduction.count {

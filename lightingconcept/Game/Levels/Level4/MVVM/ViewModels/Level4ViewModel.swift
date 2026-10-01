@@ -37,7 +37,11 @@ final class Level4ViewModel: ObservableObject, ARSceneTelemetryDelegate {
         }
     }
 
-    var narrationText: String { dialog?.text ?? "" }
+    var narrationText: String {
+        phase == .placingScene
+            ? "Arahkan titik tengah layar ke meja atau lantai, lalu tekan tombol di bawah."
+            : dialog?.text ?? ""
+    }
     var narrationID: String {
         switch phase {
         case let .introduction(index): "level4-intro-\(index)"
@@ -48,9 +52,14 @@ final class Level4ViewModel: ObservableObject, ARSceneTelemetryDelegate {
         default: "level4-\(String(describing: phase))"
         }
     }
-    var shouldSpeakNarration: Bool { dialog != nil }
+    var shouldSpeakNarration: Bool { phase == .placingScene || dialog != nil }
     var showsGuideOverlay: Bool { dialog != nil }
     var guideAssetName: String { dialog?.assetName ?? "lumiIdle" }
+
+    func startCompletedLevelReplayAtTask() {
+        guard phase == .introduction(0) else { return }
+        phase = .selectingObject
+    }
 
     func advanceDialog() {
         switch phase {
@@ -190,6 +199,31 @@ final class Level4ViewModel: ObservableObject, ARSceneTelemetryDelegate {
         isDeviceFollowing = false
         gestureTouchPoint = nil
     }
+
+#if DEBUG
+    func jumpToDevFlow(_ flow: Level4DevFlow) {
+        clearDeviceFollowState()
+        switch flow {
+        case .placingScene: phase = .placingScene
+        case .introduction: phase = .introduction(0)
+        case .selectingObject: phase = .selectingObject
+        case .movingObject:
+            hasSelectedObject = true
+            sceneViewModel.interactionMode = .moveObject
+            phase = .movingObject
+        case .objectExplanation: phase = .objectExplanation(0)
+        case .selectingLight: phase = .selectingLight
+        case .movingLight:
+            sceneViewModel.interactionMode = .moveLight
+            phase = .movingLight
+        case .lightExplanation: phase = .lightExplanation(0)
+        case .exploring: phase = .exploring
+        case .closing: phase = .closing(0)
+        case .review: phase = .review
+        case .completed: phase = .completed
+        }
+    }
+#endif
     func cameraDidUpdate(position: SIMD3<Float>) {}
     func lightDidSelect() {
         selectLight(sceneViewModel.selectedLightID)

@@ -11,14 +11,18 @@ struct SafetyWarningDialog: View {
 
             VStack(spacing: 18) {
                 Label("Hati-Hati!", systemImage: "exclamationmark.triangle.fill")
-                    .font(.headline.weight(.bold))
+                    .font(.system(size: 18, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .foregroundStyle(Color(hex: "313131"))
 
                 Text(warning.message)
-                    .font(.body)
+                    .font(.system(size: 16))
                     .foregroundStyle(Color(hex: "313131"))
                     .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(4)
+                    .minimumScaleFactor(0.72)
+                    .allowsTightening(true)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button("Oke", action: onDismiss)

@@ -16,14 +16,17 @@ struct Level3FlowView: View {
     @State private var showsSkipIntroPrompt: Bool
     private let shouldAskToSkipIntro: Bool
     let onReturnToLevelMenu: (() -> Void)?
+    let onNextLevel: (() -> Void)?
 
     init(
         shouldAskToSkipIntro: Bool = false,
-        onReturnToLevelMenu: (() -> Void)? = nil
+        onReturnToLevelMenu: (() -> Void)? = nil,
+        onNextLevel: (() -> Void)? = nil
     ) {
         self.shouldAskToSkipIntro = shouldAskToSkipIntro
-        _showsSkipIntroPrompt = State(initialValue: shouldAskToSkipIntro)
+        _showsSkipIntroPrompt = State(initialValue: false)
         self.onReturnToLevelMenu = onReturnToLevelMenu
+        self.onNextLevel = onNextLevel
     }
 
     var body: some View {
@@ -107,6 +110,20 @@ struct Level3FlowView: View {
             primaryTitle: "OK",
             primaryAction: viewModel.clearPhotoSaveMessage
         )
+#if DEBUG
+        .overlay(alignment: .bottomLeading) {
+            let flows = Level3DevFlow.allCases
+            DeveloperPhaseMenu(
+                levelTitle: "Level 3 Phases",
+                phases: flows.map(\.rawValue),
+                onSelect: { index in
+                    narrator.stop()
+                    viewModel.jumpToDevFlow(flows[index])
+                }
+            )
+            .padding(16)
+        }
+#endif
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
             returnToLevelMenu()
         }
@@ -148,8 +165,13 @@ struct Level3FlowView: View {
             )
         }
         .onAppear {
-            showsSkipIntroPrompt = shouldAskToSkipIntro
+            showsSkipIntroPrompt = false
             BackgroundMusicPlayer.shared.playGameplayMusic()
+        }
+        .onChange(of: viewModel.phase) { _, phase in
+            if phase == .surfaceReady && shouldAskToSkipIntro {
+                showsSkipIntroPrompt = true
+            }
         }
         .onDisappear {
             narrator.stop()
@@ -163,6 +185,7 @@ struct Level3FlowView: View {
         }
         .onChange(of: viewModel.markerNarrationTrigger) { _, _ in
             guard viewModel.arSceneViewModel.selectedConcept != nil else { return }
+            narrator.stop()
             viewModel.narrationWillStart()
             narrator.speak(
                 viewModel.narrationText,
@@ -278,9 +301,11 @@ struct Level3FlowView: View {
 
         case .completed:
             ZStack {
-                Level3ResponsiveEndLevelView(
+                ResponsiveEndLevelView(
                     data: EndLevelViewModel.data(for: Level3Content.levelID),
-                    onBack: returnToLevelMenu
+                    onBack: returnToLevelMenu,
+                    onNext: onNextLevel,
+                    backTitle: "Kembali"
                 )
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -776,75 +801,5 @@ private struct Level3ResponsiveGuideOverlay: View {
         let maxY = max(minY, size.height - bottomPadding - halfHeight)
 
         return CGPoint(x: min(max(proposed.x, minX), maxX), y: min(max(proposed.y, minY), maxY))
-    }
-}
-
-private struct Level3ResponsiveEndLevelView: View {
-    let data: EndLevelModel
-    let onBack: () -> Void
-
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
-    private var compact: Bool {
-        horizontalSizeClass == .compact
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                Image("containerWood")
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    .clipped()
-
-                VStack(spacing: compact ? 22 : 70) {
-                    ZStack {
-                        Image("ribbonBlue")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: compact ? min(proxy.size.width * 0.45, 300) : 378)
-
-                        Text("LEVEL \(data.levelNumber)")
-                            .font(.system(size: compact ? 24 : 36, weight: .bold))
-                            .foregroundStyle(.white)
-                            .offset(y: compact ? -4 : -7)
-                    }
-
-                    Text(data.message)
-                        .font(compact ? .system(size: 20, weight: .semibold) : .title.weight(.semibold))
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.white)
-                        .lineLimit(3)
-                        .minimumScaleFactor(0.78)
-                        .frame(width: min(compact ? 520 : 625, proxy.size.width - (compact ? 24 : 40)), height: compact ? 88 : 130)
-                        .background(RoundedRectangle(cornerRadius: compact ? 18 : 25)
-                            .fill(Color(hex: "C98928"))
-                        )
-                        .overlay(RoundedRectangle(cornerRadius: compact ? 18 : 25)
-                            .stroke(Color(hex: "7E520E"),lineWidth: 2)
-                        )
-
-                    HStack(spacing: compact ? 10 : 24) {
-                        LevelActionButton(
-                            title: "Kembali ke Menu",
-                            systemImage: "house.fill",
-                            role: .menu,
-                            action: onBack
-                        )
-                    }
-                    .frame(maxWidth: proxy.size.width - (compact ? 24 : 48))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.top, compact ? 8 : 20)
-
-                Image(data.mascotImageName)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: compact ? 86 : 160, height: compact ? 120 : 220)
-                    .position(x: proxy.size.width - (compact ? 58 : 115), y: proxy.size.height - (compact ? 54 : 82))
-            }
-        }
-        .ignoresSafeArea()
     }
 }

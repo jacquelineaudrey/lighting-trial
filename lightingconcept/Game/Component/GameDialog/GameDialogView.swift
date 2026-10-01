@@ -29,15 +29,17 @@ struct GameDialogView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(title)
-                    .font(.system(size: 17))
-                    .fontWeight(.semibold)
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundColor(Color(hex: "313131"))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.78)
 
                 Text(isLoading ? (loadingMessage ?? message) : message)
-                    .font(.system(size: 17))
-                    .fontWeight(.regular)
+                    .font(.system(size: 16, weight: .regular))
                     .foregroundColor(Color(hex: "313131"))
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.72)
+                    .allowsTightening(true)
             }
             .frame(width: 286, height: 86, alignment: .topLeading)
             .padding(.top, 24)
@@ -51,8 +53,9 @@ struct GameDialogView: View {
                 VStack(spacing: 12) {
                     Button(action: primaryAction) {
                         Text(primaryTitle)
-                            .font(.system(size: 17))
-                            .fontWeight(.semibold)
+                            .font(.system(size: 16, weight: .semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                             .foregroundColor(.white)
                             .frame(width: 292, height: 52)
                             .background(

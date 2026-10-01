@@ -3,12 +3,26 @@ import UIKit
 
 struct Level6FlowView: View {
     @StateObject private var viewModel = Level6ViewModel()
+    @State private var narrator = LessonAudioNarrator()
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
-    @State private var showsSandbox = false
+    @State private var showsSkipIntroPrompt = false
+    private let shouldAskToSkipIntro: Bool
+    let onReturnToLevelMenu: (() -> Void)?
+    let onFinish: (() -> Void)?
+
+    init(
+        shouldAskToSkipIntro: Bool = false,
+        onReturnToLevelMenu: (() -> Void)? = nil,
+        onFinish: (() -> Void)? = nil
+    ) {
+        self.shouldAskToSkipIntro = shouldAskToSkipIntro
+        self.onReturnToLevelMenu = onReturnToLevelMenu
+        self.onFinish = onFinish
+    }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
             Level6ARContainerView(
                 sceneViewModel: viewModel.sceneViewModel,
                 viewModel: viewModel
@@ -25,8 +39,9 @@ struct Level6FlowView: View {
 
             Level6PhaseOverlay(
                 viewModel: viewModel,
-                returnToMenu: { dismiss() },
-                openSandbox: { showsSandbox = true }
+                replayPlacementNarration: replayPlacementNarration,
+                returnToMenu: returnToLevelMenu,
+                onFinish: onFinish ?? returnToLevelMenu
             )
 
             if viewModel.showsShadowExplanation {
@@ -37,6 +52,20 @@ struct Level6FlowView: View {
                 )
             }
         }
+#if DEBUG
+        .overlay(alignment: .bottomLeading) {
+            let flows = Level6DevFlow.allCases
+            DeveloperPhaseMenu(
+                levelTitle: "Level 6 Phases",
+                phases: flows.map(\.rawValue),
+                onSelect: { index in
+                    narrator.stop()
+                    viewModel.jumpToDevFlow(flows[index])
+                }
+            )
+            .padding(16)
+        }
+#endif
         .overlay(alignment: .topLeading) {
             if viewModel.phase != .completed {
                 LevelBackButton(action: { showsExitConfirmation = true })
@@ -45,8 +74,17 @@ struct Level6FlowView: View {
             }
         }
         .navigationBarBackButtonHidden(true)
+        .gameDialog(
+            isPresented: showsSkipIntroPrompt,
+            title: "Lewati pengenalan?",
+            message: "",
+            primaryTitle: "Ya, langsung bermain",
+            secondaryTitle: "Tidak",
+            primaryAction: skipIntroForReplay,
+            secondaryAction: { showsSkipIntroPrompt = false }
+        )
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
-            dismiss()
+            returnToLevelMenu()
         }
         .fullScreenCover(isPresented: $viewModel.showsDrawingCamera) {
             Level6DrawingCameraView(
@@ -55,14 +93,27 @@ struct Level6FlowView: View {
             )
             .ignoresSafeArea()
         }
-        .navigationDestination(isPresented: $showsSandbox) {
-            ContentView()
-        }
         .task(id: viewModel.phase) {
-            guard viewModel.phase == .drawingOnPaper else { return }
+            if viewModel.phase == .placingScene {
+                replayPlacementNarration()
+                return
+            }
+
+            guard viewModel.phase == .drawingOnPaper else {
+                narrator.stop()
+                return
+            }
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled, viewModel.phase == .drawingOnPaper else { return }
             viewModel.finishDrawingOnPaper()
+        }
+        .onChange(of: viewModel.phase) { _, phase in
+            if phase == .introduction(0) && shouldAskToSkipIntro {
+                showsSkipIntroPrompt = true
+            }
+        }
+        .onDisappear {
+            narrator.stop()
         }
         .overlay {
             if let warning = viewModel.sceneViewModel.safetyWarning {
@@ -74,20 +125,42 @@ struct Level6FlowView: View {
         }
     }
 
+    private func skipIntroForReplay() {
+        narrator.stop()
+        showsSkipIntroPrompt = false
+        viewModel.startCompletedLevelReplayAtTask()
+    }
+
+    private func returnToLevelMenu() {
+        onReturnToLevelMenu?()
+        dismiss()
+    }
+
     private var shouldShowFrozenScene: Bool {
         viewModel.phase == .drawingOnPaper || viewModel.phase == .photoPrompt
+    }
+
+    private func replayPlacementNarration() {
+        narrator.speak(
+            Level3Content.placementNarration.text,
+            audioFileName: Level3Content.placementNarration.audioFileName
+        )
     }
 }
 
 private struct Level6PhaseOverlay: View {
     @ObservedObject var viewModel: Level6ViewModel
+    let replayPlacementNarration: () -> Void
     let returnToMenu: () -> Void
-    let openSandbox: () -> Void
+    let onFinish: () -> Void
 
     var body: some View {
         switch viewModel.phase {
         case .placingScene:
-            Level6PlacementOverlay(sceneViewModel: viewModel.sceneViewModel)
+            Level2PlacementOverlay(
+                sceneViewModel: viewModel.sceneViewModel,
+                replayNarration: replayPlacementNarration
+            )
         case .introduction:
             if let dialog = viewModel.currentIntroduction {
                 Level6TappableDialog(
@@ -199,7 +272,7 @@ private struct Level6PhaseOverlay: View {
                 action: viewModel.completeLevel
             )
         case .completed:
-            Level6CompletionOverlay(returnToMenu: returnToMenu, openSandbox: openSandbox)
+            Level6CompletionOverlay(returnToMenu: returnToMenu, onFinish: onFinish)
         }
     }
 }
@@ -254,12 +327,18 @@ private struct Level6TappableDialog: View {
     var footer: String?
     var action: (() -> Void)?
 
+    @State private var canAdvance = true
+
     var body: some View {
         ZStack {
             if let action {
                 Color.clear
                     .contentShape(.rect)
-                    .onTapGesture(perform: action)
+                    .onTapGesture {
+                        guard canAdvance else { return }
+                        canAdvance = false
+                        action()
+                    }
             }
 
             VStack {
@@ -268,7 +347,7 @@ private struct Level6TappableDialog: View {
                     text: dialog.text,
                     assetName: dialog.assetName,
                     screenPosition: screenPosition,
-                    showsTapToContinueCaption: action != nil,
+                    showsTapToContinueCaption: action != nil && canAdvance,
                     bottomPadding: 36
                 )
                 if let footer {
@@ -280,6 +359,9 @@ private struct Level6TappableDialog: View {
                         .padding(.bottom, 18)
                 }
             }
+        }
+        .onChange(of: dialog.text) { _, _ in
+            canAdvance = action != nil
         }
     }
 }
@@ -543,10 +625,10 @@ private struct Level6PhotoComparison: View {
 
 private struct Level6CompletionOverlay: View {
     let returnToMenu: () -> Void
-    let openSandbox: () -> Void
+    let onFinish: () -> Void
 
     var body: some View {
-        EndLevelView(
+        ResponsiveEndLevelView(
             data: EndLevelModel(
                 id: 6,
                 levelNumber: 6,
@@ -554,9 +636,9 @@ private struct Level6CompletionOverlay: View {
                 mascotImageName: "lumiPointwink"
             ),
             onBack: returnToMenu,
-            onNext: openSandbox,
-            backTitle: "Balik ke menu",
-            nextTitle: "Mulai eksperimen"
+            onNext: onFinish,
+            backTitle: "Kembali",
+            nextTitle: "Selesai"
         )
         .padding(.bottom, 24)
     }

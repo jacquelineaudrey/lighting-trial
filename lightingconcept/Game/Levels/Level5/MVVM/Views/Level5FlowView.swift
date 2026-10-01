@@ -13,15 +13,24 @@ struct Level5FlowView: View {
     @State private var viewModel = Level5ViewModel()
     @State private var narrator = LessonAudioNarrator()
     @State private var showsExitConfirmation = false
+    @State private var showsSkipIntroPrompt = false
     
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
+    private let shouldAskToSkipIntro: Bool
     let onReturnToLevelMenu: (() -> Void)?
+    let onNextLevel: (() -> Void)?
 
-    init(onReturnToLevelMenu: (() -> Void)? = nil) {
+    init(
+        shouldAskToSkipIntro: Bool = false,
+        onReturnToLevelMenu: (() -> Void)? = nil,
+        onNextLevel: (() -> Void)? = nil
+    ) {
+        self.shouldAskToSkipIntro = shouldAskToSkipIntro
         self.onReturnToLevelMenu = onReturnToLevelMenu
+        self.onNextLevel = onNextLevel
     }
 
     private var compact: Bool {
@@ -29,10 +38,19 @@ struct Level5FlowView: View {
     }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
             Level5ARContainerView(viewModel: viewModel).ignoresSafeArea()
             
             overlay
+
+            if viewModel.showsGuide {
+                LevelGuideOverlay(
+                    text: viewModel.guideText,
+                    assetName: viewModel.guideCharacterAsset.rawValue,
+                    screenPosition: viewModel.guideOverlayScreenPosition,
+                    showsTapToContinueCaption: false
+                )
+            }
 
             if let warning = viewModel.arSceneViewModel.safetyWarning {
                 SafetyWarningDialog(warning: warning, onDismiss: viewModel.dismissSafetyWarning)
@@ -52,13 +70,12 @@ struct Level5FlowView: View {
         .overlay(alignment: .top) {
 
             if viewModel.phase == .exploration {
-                Text("Mode Lihat-Lihat")
-                    .font(.system(size: compact ? 15 : 19, weight: .bold))
-                    .foregroundStyle(Color(hex: "21415D"))
-                    .padding(.horizontal, compact ? 18 : 24)
-                    .padding(.vertical, compact ? 8 : 10)
-                    .background(.white.opacity(0.92), in: Capsule())
-                    .padding(.top, compact ? 18 : 28)
+                Level2TopModeLabel(
+                    title: viewModel.isLookAroundMode
+                        ? "Mode lihat-lihat"
+                        : "Kamu jadi cahaya!"
+                )
+                .padding(.top, compact ? 18 : 28)
             }
         }
 
@@ -76,6 +93,29 @@ struct Level5FlowView: View {
             }
         }
 
+#if DEBUG
+        .overlay(alignment: .bottomLeading) {
+            let flows = Level5DevFlow.allCases
+            DeveloperPhaseMenu(
+                levelTitle: "Level 5 Phases",
+                phases: flows.map(\.rawValue),
+                onSelect: { index in
+                    narrator.stop()
+                    viewModel.jumpToDevFlow(flows[index])
+                }
+            )
+            .padding(16)
+        }
+#endif
+        .gameDialog(
+            isPresented: showsSkipIntroPrompt,
+            title: "Lewati pengenalan?",
+            message: "",
+            primaryTitle: "Ya, langsung bermain",
+            secondaryTitle: "Tidak",
+            primaryAction: skipIntroForReplay,
+            secondaryAction: { showsSkipIntroPrompt = false }
+        )
         .gameDialog(
             isPresented: viewModel.photoSaveMessage != nil,
             title: "Foto Gambar",
@@ -103,6 +143,12 @@ struct Level5FlowView: View {
 
         .onAppear {
             BackgroundMusicPlayer.shared.playGameplayMusic()
+        }
+
+        .onChange(of: viewModel.phase) { _, phase in
+            if phase == .singleLightIntro && shouldAskToSkipIntro {
+                showsSkipIntroPrompt = true
+            }
         }
 
         .onDisappear {
@@ -133,7 +179,9 @@ struct Level5FlowView: View {
 
             narrator.speak(
                 viewModel.narrationText,
-                audioFileName: nil,
+                audioFileName: viewModel.phase == .placingScene
+                    ? Level3Content.placementNarration.audioFileName
+                    : nil,
                 onCompletion:
                     viewModel.narrationDidFinish
             )
@@ -167,43 +215,23 @@ struct Level5FlowView: View {
 
         case .placingScene:
 
-            Level5PlacementOverlay(
-                compact:
-                    compact
+            Level2PlacementOverlay(
+                sceneViewModel: viewModel.arSceneViewModel,
+                replayNarration: replayPlacementNarration
             )
 
         case .singleLightIntro:
-
-            Level5ActionPanel(
-                text:
-                    Level5Content
-                        .singleLightIntroText,
-
-                buttonTitle:
-                    "Tambahkan Lampu 2",
-
-                compact:
-                    compact,
-
-                action:
-                    viewModel.addSecondLight
+            Level5GuideActionButton(
+                title: "Tambahkan Lampu 2",
+                compact: compact,
+                action: advanceImmediately(viewModel.addSecondLight)
             )
 
         case .twoLightIntro:
-
-            Level5ActionPanel(
-                text:
-                    Level5Content
-                        .twoLightIntroText,
-
-                buttonTitle:
-                    "Masuk Mode Lihat-Lihat",
-
-                compact:
-                    compact,
-
-                action:
-                    viewModel.beginExploration
+            Level5GuideActionButton(
+                title: "Masuk Mode Lihat-Lihat",
+                compact: compact,
+                action: advanceImmediately(viewModel.beginExploration)
             )
 
         case .exploration:
@@ -213,12 +241,6 @@ struct Level5FlowView: View {
                     viewModel
                         .explorationInstruction,
 
-                hasMovedLeft:
-                    viewModel.hasMovedLeft,
-
-                hasMovedRight:
-                    viewModel.hasMovedRight,
-
                 canLockArrangement:
                     viewModel
                         .canLockArrangement,
@@ -227,7 +249,7 @@ struct Level5FlowView: View {
                     compact,
 
                 action:
-                    viewModel.confirmArrangement
+                    advanceImmediately(viewModel.confirmArrangement)
             )
 
         case .drawingActive:
@@ -237,7 +259,7 @@ struct Level5FlowView: View {
                     compact,
 
                 action:
-                    viewModel.finishDrawing
+                    advanceImmediately(viewModel.finishDrawing)
             )
 
         case .photoPrompt:
@@ -263,8 +285,7 @@ struct Level5FlowView: View {
                         .isSavingSnapshot,
 
                 action:
-                    viewModel
-                        .captureDrawingPhoto
+                    advanceImmediately(viewModel.captureDrawingPhoto)
             )
 
         case .photoComparison:
@@ -280,20 +301,46 @@ struct Level5FlowView: View {
                     compact,
 
                 action:
-                    viewModel
-                        .completePhotoComparison
+                    advanceImmediately(viewModel.completePhotoComparison)
             )
 
         case .completed:
 
-            Level5CompletedOverlay(
-                compact:
-                    compact,
-
-                action:
-                    returnToLevelMenu
+            ResponsiveEndLevelView(
+                data: EndLevelModel(
+                    id: 5,
+                    levelNumber: 5,
+                    message: Level5Content.completionText,
+                    mascotImageName: "lumiPointwink"
+                ),
+                onBack: returnToLevelMenu,
+                onNext: onNextLevel,
+                backTitle: "Kembali"
             )
         }
+    }
+
+    private func skipIntroForReplay() {
+        narrator.stop()
+        showsSkipIntroPrompt = false
+        viewModel.startCompletedLevelReplayAtTask()
+    }
+
+    private func advanceImmediately(_ advance: @escaping () -> Void) -> () -> Void {
+        {
+            if !viewModel.isNarrationComplete {
+                narrator.stop()
+                viewModel.narrationDidFinish()
+            }
+            advance()
+        }
+    }
+
+    private func replayPlacementNarration() {
+        narrator.speak(
+            Level5Content.placementText,
+            audioFileName: Level3Content.placementNarration.audioFileName
+        )
     }
 
     private func returnToLevelMenu() {
@@ -504,11 +551,41 @@ private struct Level5LightPicker: View {
     }
 }
 
+/// Saat Lumi atau Bayo sudah menyampaikan instruksi di bubble, CTA ini
+/// menjaga layar tetap bersih tanpa mengulang dialog pada panel kedua.
+private struct Level5GuideActionButton: View {
+    let title: String
+    let compact: Bool
+    let action: () -> Void
+
+    @State private var canAdvance = false
+
+    var body: some View {
+        VStack {
+            Spacer()
+            LevelActionButton(
+                title: title,
+                isDisabled: !canAdvance,
+                action: {
+                    guard canAdvance else { return }
+                    canAdvance = false
+                    action()
+                }
+            )
+            .padding(.bottom, compact ? 14 : 28)
+        }
+        .task(id: title) {
+            canAdvance = false
+            try? await Task.sleep(for: .milliseconds(650))
+            guard !Task.isCancelled else { return }
+            canAdvance = true
+        }
+    }
+}
+
 private struct Level5ExplorationOverlay: View {
 
     let instruction: String
-    let hasMovedLeft: Bool
-    let hasMovedRight: Bool
     let canLockArrangement: Bool
     let compact: Bool
     let action: () -> Void
@@ -547,26 +624,6 @@ private struct Level5ExplorationOverlay: View {
                         .minimumScaleFactor(
                             0.8
                         )
-
-                    HStack(
-                        spacing:
-                            compact ? 8 : 10
-                    ) {
-
-                        movementBadge(
-                            title:
-                                "Kiri",
-                            done:
-                                hasMovedLeft
-                        )
-
-                        movementBadge(
-                            title:
-                                "Kanan",
-                            done:
-                                hasMovedRight
-                        )
-                    }
 
                     LevelActionButton(
                         title:
@@ -610,34 +667,6 @@ private struct Level5ExplorationOverlay: View {
         }
     }
 
-    private func movementBadge(
-        title: String,
-        done: Bool
-    ) -> some View {
-
-        Label(
-            title,
-            systemImage:
-                done
-                    ? "checkmark.circle.fill"
-                    : "circle"
-        )
-        .font(
-            .system(
-                size:
-                    compact ? 13 : 15,
-                weight: .semibold
-            )
-        )
-        .foregroundStyle(
-            done
-                ? Color(
-                    hex:
-                        "6E8E15"
-                )
-                : .secondary
-        )
-    }
 }
 
 private struct Level5DrawingOverlay: View {
@@ -971,7 +1000,7 @@ private struct Level5CompletedOverlay: View {
                 )
                 .frame(
                     maxWidth:
-                        compact ? 500 : 650
+                        compact ? 400 : 490
                 )
 
                 LevelActionButton(

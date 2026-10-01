@@ -33,6 +33,26 @@ enum Level6Phase: Equatable {
     case completed
 }
 
+#if DEBUG
+enum Level6DevFlow: String, CaseIterable {
+    case placingScene = "Scan & Place"
+    case introduction = "Introduction"
+    case selectingFirstLight = "Select First Light"
+    case changingFirstColor = "Change First Color"
+    case firstColorResult = "First Color Result"
+    case selectingSecondLight = "Select Second Light"
+    case changingSecondColor = "Change Second Color"
+    case colorShadowPrompt = "Find Colored Shadow"
+    case colorExploration = "Explore Colors"
+    case positionExploration = "Explore Position"
+    case drawingChoice = "Choose Drawing Scene"
+    case drawingOnPaper = "Draw on Paper"
+    case photoPrompt = "Photo"
+    case photoComparison = "Comparison"
+    case completed = "Completed"
+}
+#endif
+
 // MARK: - Content
 
 enum Level6Content {

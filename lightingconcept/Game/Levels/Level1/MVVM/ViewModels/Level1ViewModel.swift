@@ -1464,7 +1464,7 @@ final class Level1ViewModel: ObservableObject {
         case .onboarding:
             currentDialogLine.text
         case .scanningSurface:
-            "Arahkan iPad pelan-pelan ke lantai atau meja."
+            "Arahkan titik tengah layar ke meja atau lantai, lalu tunggu sampai pemindaian selesai."
         case .surfaceReady:
             "Permukaan sudah siap."
         case .lightShadowIntro:
@@ -1499,7 +1499,7 @@ final class Level1ViewModel: ObservableObject {
         case .onboarding:
             currentDialogLine.audioFileName
         case .scanningSurface:
-            "level-1/3 coba cari objek berbentuk kotak di sekitarmu.mp3"
+            Level2Content.placementAudioFileName
         case .surfaceReady:
             "level-1/4 yeay ketemu sekarang lumi hidupin lampu.mp3"
         case .lightShadowIntro:

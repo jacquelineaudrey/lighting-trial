@@ -2,12 +2,26 @@ import SwiftUI
 
 struct Level4FlowView: View {
     @StateObject private var viewModel = Level4ViewModel()
-    @State private var narrator = LessonAudioNarrator(playbackRate: 1.35)
+    @State private var narrator = LessonAudioNarrator()
     @Environment(\.dismiss) private var dismiss
     @State private var showsExitConfirmation = false
+    @State private var showsSkipIntroPrompt = false
+    private let shouldAskToSkipIntro: Bool
+    let onReturnToLevelMenu: (() -> Void)?
+    let onNextLevel: (() -> Void)?
+
+    init(
+        shouldAskToSkipIntro: Bool = false,
+        onReturnToLevelMenu: (() -> Void)? = nil,
+        onNextLevel: (() -> Void)? = nil
+    ) {
+        self.shouldAskToSkipIntro = shouldAskToSkipIntro
+        self.onReturnToLevelMenu = onReturnToLevelMenu
+        self.onNextLevel = onNextLevel
+    }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
             Level4ARContainerView(
                 sceneViewModel: viewModel.sceneViewModel,
                 viewModel: viewModel
@@ -16,7 +30,10 @@ struct Level4FlowView: View {
 
             Level4PhaseOverlay(
                 viewModel: viewModel,
-                returnToMenu: { dismiss() }
+                replayPlacementNarration: replayPlacementNarration,
+                advanceDialog: advanceDialog,
+                returnToMenu: returnToLevelMenu,
+                onNextLevel: onNextLevel
             )
         }
         .overlay(alignment: .topLeading) {
@@ -26,6 +43,20 @@ struct Level4FlowView: View {
                     .padding(.top, 12)
             }
         }
+#if DEBUG
+        .overlay(alignment: .bottomLeading) {
+            let flows = Level4DevFlow.allCases
+            DeveloperPhaseMenu(
+                levelTitle: "Level 4 Phases",
+                phases: flows.map(\.rawValue),
+                onSelect: { index in
+                    narrator.stop()
+                    viewModel.jumpToDevFlow(flows[index])
+                }
+            )
+            .padding(16)
+        }
+#endif
         .overlay {
             if let warning = viewModel.sceneViewModel.safetyWarning {
                 SafetyWarningDialog(
@@ -34,36 +65,84 @@ struct Level4FlowView: View {
                 )
             }
         }
+        .gameDialog(
+            isPresented: showsSkipIntroPrompt,
+            title: "Lewati pengenalan?",
+            message: "",
+            primaryTitle: "Ya, langsung bermain",
+            secondaryTitle: "Tidak",
+            primaryAction: skipIntroForReplay,
+            secondaryAction: { showsSkipIntroPrompt = false }
+        )
         .levelExitConfirmation(isPresented: $showsExitConfirmation) {
-            dismiss()
+            returnToLevelMenu()
         }
         .task(id: viewModel.narrationID) {
             guard viewModel.shouldSpeakNarration else {
                 narrator.stop()
                 return
             }
-            narrator.speak(viewModel.narrationText)
+            narrator.speak(
+                viewModel.narrationText,
+                audioFileName: viewModel.phase == .placingScene
+                    ? Level2Content.placementAudioFileName
+                    : nil
+            )
+        }
+        .onChange(of: viewModel.phase) { _, phase in
+            if phase == .introduction(0) && shouldAskToSkipIntro {
+                showsSkipIntroPrompt = true
+            }
         }
         .onDisappear { narrator.stop() }
         .navigationBarBackButtonHidden(true)
+    }
+
+    private func skipIntroForReplay() {
+        narrator.stop()
+        showsSkipIntroPrompt = false
+        viewModel.startCompletedLevelReplayAtTask()
+    }
+
+    private func returnToLevelMenu() {
+        onReturnToLevelMenu?()
+        dismiss()
+    }
+
+    private func advanceDialog() {
+        narrator.stop()
+        viewModel.advanceDialog()
+    }
+
+    private func replayPlacementNarration() {
+        narrator.speak(
+            "Arahkan titik tengah layar ke meja atau lantai, lalu tekan tombol di bawah.",
+            audioFileName: Level2Content.placementAudioFileName
+        )
     }
 }
 
 private struct Level4PhaseOverlay: View {
     @ObservedObject var viewModel: Level4ViewModel
+    let replayPlacementNarration: () -> Void
+    let advanceDialog: () -> Void
     let returnToMenu: () -> Void
+    let onNextLevel: (() -> Void)?
 
     var body: some View {
         switch viewModel.phase {
         case .placingScene:
-            Level4PlacementOverlay(sceneViewModel: viewModel.sceneViewModel)
+            Level2PlacementOverlay(
+                sceneViewModel: viewModel.sceneViewModel,
+                replayNarration: replayPlacementNarration
+            )
 
         case .introduction, .objectExplanation, .lightIntroduction, .lightExplanation, .closing:
             if let dialog = viewModel.dialog {
                 Level4TappableDialog(
                     dialog: dialog,
                     screenPosition: viewModel.guideOverlayScreenPosition,
-                    action: viewModel.advanceDialog
+                    action: advanceDialog
                 )
             }
 
@@ -130,7 +209,7 @@ private struct Level4PhaseOverlay: View {
             )
 
         case .completed:
-            EndLevelView(
+            ResponsiveEndLevelView(
                 data: EndLevelModel(
                     id: 4,
                     levelNumber: 4,
@@ -138,7 +217,8 @@ private struct Level4PhaseOverlay: View {
                     mascotImageName: "lumiPointwink"
                 ),
                 onBack: returnToMenu,
-                backTitle: "Balik ke menu"
+                onNext: onNextLevel,
+                backTitle: "Kembali"
             )
             .padding(.bottom, 24)
         }
@@ -194,11 +274,17 @@ private struct Level4TappableDialog: View {
     let screenPosition: CGPoint?
     let action: () -> Void
 
+    @State private var canAdvance = true
+
     var body: some View {
         ZStack {
             Color.clear
                 .contentShape(.rect)
-                .onTapGesture(perform: action)
+                .onTapGesture {
+                    guard canAdvance else { return }
+                    canAdvance = false
+                    action()
+                }
 
             VStack {
                 Spacer()
@@ -206,10 +292,13 @@ private struct Level4TappableDialog: View {
                     text: dialog.text,
                     assetName: dialog.assetName,
                     screenPosition: screenPosition,
-                    showsTapToContinueCaption: true,
+                    showsTapToContinueCaption: canAdvance,
                     bottomPadding: 36
                 )
             }
+        }
+        .onChange(of: dialog.text) { _, _ in
+            canAdvance = true
         }
     }
 }

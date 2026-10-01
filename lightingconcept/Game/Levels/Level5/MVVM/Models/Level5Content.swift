@@ -18,6 +18,19 @@ enum Level5Phase: String, Equatable {
     case completed
 }
 
+#if DEBUG
+enum Level5DevFlow: String, CaseIterable {
+    case placingScene = "Scan & Place"
+    case singleLightIntro = "One Light Intro"
+    case twoLightIntro = "Two Lights Intro"
+    case exploration = "Explore Two Lights"
+    case drawingActive = "Drawing"
+    case photoPrompt = "Photo"
+    case photoComparison = "Comparison"
+    case completed = "Completed"
+}
+#endif
+
 enum Level5Content {
     static let levelID = 5
 
@@ -25,7 +38,7 @@ enum Level5Content {
         "Dua Cahaya, Banyak Bayangan"
 
     static let placementText =
-        "Arahkan kamera ke meja atau lantai. Kita siapkan dunia cahaya kita!"
+        "Arahkan titik tengah layar ke meja atau lantai, lalu tekan tombol Taruh Benda di Tengah."
 
     static let singleLightIntroText =
         "Lihat! Ada satu lampu dan satu bayangan. Tekan tombol untuk menambahkan satu cahaya lagi."
@@ -34,7 +47,7 @@ enum Level5Content {
         "Sekarang ada dua cahaya! Coba lihat, satu benda bisa punya lebih dari satu bayangan."
 
     static let explorationText =
-        "Pilih Lampu 1 atau Lampu 2, lalu geser lampunya. Jalan sedikit ke kiri dan kanan untuk melihat perubahan bayangan dari sudut berbeda."
+        "Pilih Lampu 1 atau Lampu 2, lalu geser lampunya untuk melihat perubahan bayangan."
 
     static let drawingText =
         "Sekarang pilih susunan cahaya yang kamu suka. Perhatikan baik-baik, lalu gambar susunannya di kertasmu."

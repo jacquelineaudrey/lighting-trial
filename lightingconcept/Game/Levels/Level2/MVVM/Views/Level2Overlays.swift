@@ -29,7 +29,7 @@ struct Level2TopModeLabel: View {
     var body: some View {
         Text(title)
             .font(.system(size: compact ? 17 : 20, weight: .bold))
-            .foregroundStyle(Color(hex: "2B1A08"))
+            .foregroundStyle(textColor)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
             .frame(width: compact ? 224 : 280, height: compact ? 44 : 52)
@@ -40,11 +40,46 @@ struct Level2TopModeLabel: View {
     }
 
     private var fillColor: Color {
-        title == "Mode lihat-lihat" ? Color(hex: "C8FFD8") : Color(hex: "FFF0A1")
+        switch mode {
+        case .object:
+            Color(hex: "BDE0FF")
+        case .light:
+            Color(hex: "FFF0A1")
+        case .lookAround:
+            Color(hex: "C8FFD8")
+        }
     }
 
     private var strokeColor: Color {
-        title == "Mode lihat-lihat" ? Color(hex: "52B878") : Color(hex: "FF9533")
+        switch mode {
+        case .object:
+            Color(hex: "4E9FE6")
+        case .light:
+            Color(hex: "FF9533")
+        case .lookAround:
+            Color(hex: "52B878")
+        }
+    }
+
+    private var textColor: Color {
+        mode == .light ? Color(hex: "2B1A08") : Color(hex: "21415D")
+    }
+
+    private var mode: Mode {
+        let normalizedTitle = title.lowercased()
+        if normalizedTitle.contains("objek") {
+            return .object
+        }
+        if normalizedTitle.contains("lihat") {
+            return .lookAround
+        }
+        return .light
+    }
+
+    private enum Mode: Equatable {
+        case object
+        case light
+        case lookAround
     }
 }
 
@@ -95,7 +130,7 @@ struct Level2PlacementOverlay: View {
                 .lineLimit(3)
                 .minimumScaleFactor(0.8)
             LevelActionButton(
-                title: "Taruh Benda di Tengah",
+                title: "Taruh Benda",
                 systemImage: "cube.fill",
                 action: sceneViewModel.placeSceneAtScreenCenter
             )
@@ -627,99 +662,6 @@ struct Level2ResponsiveGuideOverlay: View {
         return CGPoint(
             x: min(max(proposed.x, minX), maxX), y: min(max(proposed.y, minY), maxY)
         )
-    }
-}
-
-// MARK: - Level 2 Responsive Completion
-
-struct Level2ResponsiveEndLevelView: View {
-    let data: EndLevelModel
-    let onBack: () -> Void
-    let onNext: (() -> Void)?
-
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
-    private var compact: Bool {
-        horizontalSizeClass == .compact
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                Image("containerWood")
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: proxy.size.width, height: proxy.size.height)
-                    .clipped()
-
-                VStack(spacing: compact ? 22 : 56) {
-                    ZStack {
-                        Image("ribbonBlue")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: compact ? min(proxy.size.width * 0.44, 300) : 378)
-
-                        Text("LEVEL \(data.levelNumber)")
-                            .font(.system(size: compact ? 24 : 36, weight: .bold))
-                            .foregroundStyle(.white)
-                            .offset(y: compact ? -3 : -7)
-                    }
-
-                    Text(data.message)
-                        .font(compact ? .system(size: 20, weight: .semibold) : .title.weight(.semibold))
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.white)
-                        .lineLimit(3)
-                        .minimumScaleFactor(0.78)
-                        .padding(.horizontal, compact ? 18 : 20)
-                        .frame(width: min(compact ? 520 : 625, proxy.size.width - (compact ? 24 : 40)), height: compact ? 88 : 130)
-                        .background(RoundedRectangle(cornerRadius: compact ? 18 : 25)
-                            .fill(Color(hex: "C98928")))
-                        .overlay(RoundedRectangle(cornerRadius: compact ? 18 : 25)
-                            .stroke(Color(hex: "7E520E"), lineWidth: 2))
-
-                    HStack(spacing: compact ? 10 : 24) {
-
-                        LevelActionButton(
-                            title: "Kembali ke Menu",
-                            systemImage: "house.fill",
-                            role: .menu,
-                            action: onBack
-                        )
-
-                        LevelActionButton(
-                            title:
-                                onNext == nil
-                                    ? "Selesai"
-                                    : "Selanjutnya",
-                            systemImage:
-                                onNext == nil
-                                    ? "checkmark"
-                                    : "arrow.right",
-                            action: finishLevel
-                        )
-                    }
-                    .frame(maxWidth: proxy.size.width - (compact ? 24 : 48))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.top, compact ? 10 : 20)
-
-                Image(data.mascotImageName)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: compact ? 90 : 160, height: compact ? 125 : 220)
-                    .position(x: proxy.size.width - (compact ? 62 : 115), y: proxy.size.height - (compact ? 58 : 82))
-            }
-        }
-        .ignoresSafeArea()
-    }
-
-    private func finishLevel() {
-        if let onNext {
-            onNext()
-        } else {
-            onBack()
-        }
     }
 }
 

@@ -218,7 +218,11 @@ final class Level4ARContainerCoordinator: NSObject, UIGestureRecognizerDelegate 
             target = selectedObjectEntity(in: arView)
             targetID = viewModel.sceneViewModel.selectedObjectID
             scale = 2.8
-        case .selectingLight:
+        case .selectingLight, .lightMovementTutorial, .movingLight, .lightExplanation:
+            target = selectedLightEntity(in: arView)
+            targetID = viewModel.sceneViewModel.selectedLightID
+            scale = 1
+        case .exploring where viewModel.sceneViewModel.interactionMode == .moveLight:
             target = selectedLightEntity(in: arView)
             targetID = viewModel.sceneViewModel.selectedLightID
             scale = 1

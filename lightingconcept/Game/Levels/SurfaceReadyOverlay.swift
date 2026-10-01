@@ -6,7 +6,6 @@ struct SurfaceScanInstruction: View {
     var progressOverride: Double? = nil
     var title = "Scan"
     var guidanceText: String? = nil
-    @State private var fallbackProgress = 0.08
 
     var body: some View {
         VStack(spacing: 10) {
@@ -52,7 +51,6 @@ struct SurfaceScanInstruction: View {
             .padding(.top, 24)
         }
         .frame(maxWidth: .infinity)
-        .onAppear(perform: startFallbackProgress)
     }
 
     private var scanProgress: Double {
@@ -60,21 +58,28 @@ struct SurfaceScanInstruction: View {
             return min(max(progressOverride, 0), 1)
         }
 
-        switch sceneViewModel.surfaceState {
-        case .found, .placed:
+        if sceneViewModel.surfaceState == .placed {
             return 1
-        case .scanning:
-            return sceneViewModel.isLiDARAvailable
-                ? Double(sceneViewModel.lidarPlacementProgress)
-                : fallbackProgress
         }
+
+        if sceneViewModel.isLiDARAvailable {
+            if sceneViewModel.requiresLiDARScanBeforePlacement {
+                return Double(sceneViewModel.lidarPlacementProgress)
+            }
+            return sceneViewModel.surfaceState == .found
+                ? 1
+                : Double(sceneViewModel.lidarPlacementProgress)
+        }
+
+        return sceneViewModel.surfaceState == .found ? 1 : 0
     }
 
     private var isComplete: Bool {
         if progressOverride != nil {
             return scanProgress >= 0.999
         }
-        return sceneViewModel.surfaceState == .found || sceneViewModel.surfaceState == .placed
+        return sceneViewModel.surfaceState == .placed
+            || (sceneViewModel.surfaceState == .found && sceneViewModel.isReadyForPlacement)
     }
 
     private func scanDot(isActive: Bool) -> some View {
@@ -83,12 +88,6 @@ struct SurfaceScanInstruction: View {
             .frame(width: 8, height: 8)
     }
 
-    private func startFallbackProgress() {
-        guard !sceneViewModel.isLiDARAvailable else { return }
-        withAnimation(.easeInOut(duration: 3.8).repeatForever(autoreverses: false)) {
-            fallbackProgress = 0.82
-        }
-    }
 }
 
 /// Konfirmasi singkat setelah permukaan dan posisi benda sudah dipilih.

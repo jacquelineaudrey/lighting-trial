@@ -17,6 +17,20 @@ enum Level2Phase: String, Equatable {
     case completed
 }
 
+#if DEBUG
+enum Level2DevFlow: String, CaseIterable {
+    case placingScene = "Scan & Place"
+    case onboarding = "Onboarding"
+    case spreadTutorial = "Spread Tutorial"
+    case spreadFreeExploration = "Spread Exploration"
+    case intensityTutorial = "Intensity Tutorial"
+    case mission = "Missions"
+    case closing = "Closing"
+    case review = "Review"
+    case completed = "Completed"
+}
+#endif
+
 enum Level2Content {
     static let levelID = 2
     static let levelTitle = "Bayangan dan Cahaya"

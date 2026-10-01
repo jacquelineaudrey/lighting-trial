@@ -23,15 +23,17 @@ struct LockAlertView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 Text(data.title)
-                    .font(.system(size: 17))
-                    .fontWeight(.semibold)
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundColor(Color(hex: "313131"))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.78)
 
                 Text(data.subtitle)
-                    .font(.system(size: 17))
-                    .fontWeight(.regular)
+                    .font(.system(size: 16, weight: .regular))
                     .foregroundColor(Color(hex: "313131"))
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.72)
+                    .allowsTightening(true)
             }
             .frame(width: 311, alignment: .topLeading)
             .padding(.top, 24)
@@ -39,8 +41,9 @@ struct LockAlertView: View {
 
             Button(action: onBackTapped) {
                 Text("Kembali")
-                    .font(.system(size: 17))
-                    .fontWeight(.semibold)
+                    .font(.system(size: 16, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
                     .foregroundColor(.white)
                     .frame(width: 327, height: 48)
                     .background(

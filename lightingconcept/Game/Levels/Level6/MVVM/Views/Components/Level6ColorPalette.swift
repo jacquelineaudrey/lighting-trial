@@ -354,15 +354,3 @@ private struct Level6ColorPalettePreview: View {
         )
     }
 }
-
-// MARK: - iPad Canvas Preview
-
-#Preview("Color Picker Apple Style - iPad") {
-    Level6ColorPalettePreview()
-        .previewDevice(
-            PreviewDevice(
-                rawValue: "iPad Pro 11-inch (M4)"
-            )
-        )
-        .previewInterfaceOrientation(.landscapeLeft)
-}

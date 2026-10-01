@@ -235,6 +235,49 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         isNarrationComplete = true
     }
 
+#if DEBUG
+    func jumpToDevFlow(_ flow: Level2DevFlow) {
+        spreadAdvanceTask?.cancel()
+        intensityAdvanceTask?.cancel()
+        transitionGateTask?.cancel()
+        isTransitioning = false
+        isNarrationComplete = true
+        waitsForLightTap = false
+        progressCelebration = nil
+
+        switch flow {
+        case .placingScene:
+            phase = .placingScene
+        case .onboarding:
+            phase = .onboarding
+            onboardingIndex = 0
+        case .spreadTutorial:
+            phase = .spreadTutorial
+            spreadTutorialIndex = 0
+        case .spreadFreeExploration:
+            phase = .spreadFreeExploration
+            hasReachedNarrowSpread = true
+            hasReachedWideSpread = true
+        case .intensityTutorial:
+            phase = .intensityTutorial
+            intensityTutorialIndex = 0
+        case .mission:
+            phase = .mission
+            missionIndex = 0
+            hasReachedDimIntensity = true
+            hasReachedBrightIntensity = true
+        case .closing:
+            phase = .closing
+            closingIndex = 0
+        case .review:
+            phase = .review
+        case .completed:
+            phase = .completed
+        }
+        syncGuidePresentation()
+    }
+#endif
+
     func advanceOnboarding() {
         guard phase == .onboarding, !isTransitioning else { return }
         if onboardingIndex == 0, !arSceneViewModel.isObjectPlaced {

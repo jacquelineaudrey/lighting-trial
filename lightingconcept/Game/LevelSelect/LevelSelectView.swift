@@ -21,6 +21,11 @@ struct LevelSelectView: View {
     @State private var level3SessionID = UUID()
     @State private var shouldAskLevel3ToSkipIntro = false
     @State private var startLevel4 = false
+    @State private var shouldAskLevel4ToSkipIntro = false
+    @State private var startLevel5 = false
+    @State private var shouldAskLevel5ToSkipIntro = false
+    @State private var startLevel6 = false
+    @State private var shouldAskLevel6ToSkipIntro = false
 
     @StateObject private var cardViewModel = LevelCardViewModel()
     @State private var selectedLevel: Level?
@@ -33,6 +38,8 @@ struct LevelSelectView: View {
         2: Level2Content.levelTitle,
         3: Level3Content.levelTitle,
         4: Level4Content.levelTitle,
+        5: Level5Content.levelTitle,
+        6: Level6Content.levelTitle,
     ]
 
     var body: some View {
@@ -111,12 +118,31 @@ struct LevelSelectView: View {
         .navigationDestination(isPresented: $startLevel3) {
             Level3FlowView(
                 shouldAskToSkipIntro: shouldAskLevel3ToSkipIntro,
-                onReturnToLevelMenu: { restoreLevelCard(for: 3) }
+                onReturnToLevelMenu: { restoreLevelCard(for: 3) },
+                onNextLevel: { openNextLevel(after: 3) }
             )
                 .id(level3SessionID)
         }
         .navigationDestination(isPresented: $startLevel4) {
-            Level4FlowView()
+            Level4FlowView(
+                shouldAskToSkipIntro: shouldAskLevel4ToSkipIntro,
+                onReturnToLevelMenu: { restoreLevelCard(for: 4) },
+                onNextLevel: { openNextLevel(after: 4) }
+            )
+        }
+        .navigationDestination(isPresented: $startLevel5) {
+            Level5FlowView(
+                shouldAskToSkipIntro: shouldAskLevel5ToSkipIntro,
+                onReturnToLevelMenu: { restoreLevelCard(for: 5) },
+                onNextLevel: { openNextLevel(after: 5) }
+            )
+        }
+        .navigationDestination(isPresented: $startLevel6) {
+            Level6FlowView(
+                shouldAskToSkipIntro: shouldAskLevel6ToSkipIntro,
+                onReturnToLevelMenu: { restoreLevelCard(for: 6) },
+                onFinish: { openNextLevel(after: 6) }
+            )
         }
     }
 
@@ -168,7 +194,14 @@ struct LevelSelectView: View {
             level3SessionID = UUID()
             startLevel3 = true
         case 4:
+            shouldAskLevel4ToSkipIntro = progressStore.isLevelCompleted(4)
             startLevel4 = true
+        case 5:
+            shouldAskLevel5ToSkipIntro = progressStore.isLevelCompleted(5)
+            startLevel5 = true
+        case 6:
+            shouldAskLevel6ToSkipIntro = progressStore.isLevelCompleted(6)
+            startLevel6 = true
         default:
             break
         }
@@ -183,6 +216,7 @@ struct LevelSelectView: View {
             startLevel1 = false
             level2SessionID = UUID()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                shouldAskLevel2ToSkipIntro = progressStore.isLevelCompleted(2)
                 startLevel2 = true
             }
         case 2:
@@ -190,12 +224,32 @@ struct LevelSelectView: View {
             startLevel2 = false
             level3SessionID = UUID()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                shouldAskLevel3ToSkipIntro = progressStore.isLevelCompleted(3)
                 startLevel3 = true
             }
         case 3:
+            guard progressStore.isLevelUnlocked(4) else { return }
             startLevel3 = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                shouldAskLevel4ToSkipIntro = progressStore.isLevelCompleted(4)
+                startLevel4 = true
+            }
         case 4:
+            guard progressStore.isLevelUnlocked(5) else { return }
             startLevel4 = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                shouldAskLevel5ToSkipIntro = progressStore.isLevelCompleted(5)
+                startLevel5 = true
+            }
+        case 5:
+            guard progressStore.isLevelUnlocked(6) else { return }
+            startLevel5 = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                shouldAskLevel6ToSkipIntro = progressStore.isLevelCompleted(6)
+                startLevel6 = true
+            }
+        case 6:
+            startLevel6 = false
         default:
             break
         }

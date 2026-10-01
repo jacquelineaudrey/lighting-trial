@@ -23,6 +23,7 @@ struct lightingconceptApp: App {
     var body: some SwiftUI.Scene {
         WindowGroup {
             MainMenuView()
+                .preferredColorScheme(.light)
                 .onAppear(perform: BackgroundMusicPlayer.shared.playMenuMusic)
                 .onChange(of: scenePhase) { _, newPhase in
                     handleScenePhase(newPhase)

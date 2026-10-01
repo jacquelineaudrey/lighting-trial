@@ -24,6 +24,12 @@ final class Level5GuideController {
     private var speechCloud:
         Entity?
 
+    private var character:
+        Entity?
+
+    private var displayedCharacterAsset:
+        CharacterGuideAsset?
+
     private var displayedText:
         String?
 
@@ -58,7 +64,7 @@ final class Level5GuideController {
             Entity()
 
         guide.name =
-            "Level 5 Guide — Lumi & Bayo"
+            "Level 5 Guide"
 
         guide.components.set(
             Level5GuideComponent(
@@ -69,62 +75,6 @@ final class Level5GuideController {
 
         guide.isEnabled =
             false
-
-        if let lumi =
-            CharacterGuideFactory
-                .makeCharacter(
-                    asset:
-                        .lumiIdle,
-
-                    width:
-                        0.30,
-
-                    height:
-                        0.44
-                ) {
-
-            lumi.name =
-                "Lumi Character"
-
-            lumi.position =
-                SIMD3<Float>(
-                    -0.19,
-                    0,
-                    0
-                )
-
-            guide.addChild(
-                lumi
-            )
-        }
-
-        if let bayo =
-            CharacterGuideFactory
-                .makeCharacter(
-                    asset:
-                        .bayoIdle,
-
-                    width:
-                        0.30,
-
-                    height:
-                        0.44
-                ) {
-
-            bayo.name =
-                "Bayo Character"
-
-            bayo.position =
-                SIMD3<Float>(
-                    0.19,
-                    0,
-                    0
-                )
-
-            guide.addChild(
-                bayo
-            )
-        }
 
         anchor.addChild(
             guide
@@ -185,6 +135,9 @@ final class Level5GuideController {
         text:
             String,
 
+        characterAsset:
+            CharacterGuideAsset,
+
         isVisible:
             Bool
     ) {
@@ -203,6 +156,11 @@ final class Level5GuideController {
             return
         }
 
+        synchronizeCharacter(
+            asset: characterAsset,
+            on: guide
+        )
+
         guard displayedText != text
         else {
             return
@@ -218,6 +176,28 @@ final class Level5GuideController {
             on:
                 guide
         )
+    }
+
+    private func synchronizeCharacter(
+        asset: CharacterGuideAsset,
+        on guide: Entity
+    ) {
+        guard displayedCharacterAsset != asset else { return }
+
+        character?.removeFromParent()
+        character = nil
+        displayedCharacterAsset = asset
+
+        guard let nextCharacter = CharacterGuideFactory.makeCharacter(
+            asset: asset,
+            width: 0.30,
+            height: 0.44
+        ) else { return }
+
+        nextCharacter.name = "Level 5 Guide Character — \(asset.rawValue)"
+        nextCharacter.position = SIMD3<Float>(0, 0, 0)
+        guide.addChild(nextCharacter)
+        character = nextCharacter
     }
 
     private func placeIfNeeded(
