@@ -78,7 +78,12 @@ final class Level4ViewModel: ObservableObject, ARSceneTelemetryDelegate {
                 ? .lightExplanation(index + 1)
                 : .exploring
         case let .closing(index):
-            phase = index + 1 < Level4Content.closing.count ? .closing(index + 1) : .review
+            if index + 1 < Level4Content.closing.count {
+                phase = .closing(index + 1)
+            } else {
+                progressStore.markLevelCompleted(Level4Content.levelID)
+                phase = .completed
+            }
         default:
             break
         }

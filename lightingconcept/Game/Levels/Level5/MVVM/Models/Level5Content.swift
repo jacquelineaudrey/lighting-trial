@@ -37,26 +37,51 @@ enum Level5Content {
     static let levelTitle =
         "Dua Cahaya, Banyak Bayangan"
 
+    static let singleLightDialogs = [
+        "Haloo, kali ini Lumi dan Bayo mau ajak kamu mencoba hal baru yang seruu!!",
+        "Kalau kamu lihat, di sana ada 1 lampu. Gimana ya kalau ada 2 lampu? Bayangannya bakal nambah?",
+        "Nah, sekarang tekan tombol ini untuk menambah lampu."
+    ]
+
+    static let twoLightDialogs = [
+        "Wahh, ternyata muncul bayangan baru!",
+        "Semakin banyak lampunya, bayangannya juga ikut bertambah! Ajaib kannn 😆"
+    ]
+
+    static let explorationDialogs = [
+        "Sekarang, ayuk kita ubah-ubah posisi kedua cahayanya ya. Apakah bayangannya berubah?",
+        "Pilih cahaya yang mau kamu ubah yuk!",
+        "Ingat, ditekan sekali dulu ya untuk pilih lampu.",
+        "Tahan lampunya, lalu gerakkan perangkatmu untuk mengubah posisinya.",
+        "Tekan sekali di tempat kosong untuk lihat-lihat!",
+        "Yuk, coba jalan ke kiri dan kanan! Lihat bayangannya dari arah lain.",
+        "Wah, kamu sudah mencoba banyak cahaya dan bayangan! Sekarang, pilih yang mau kamu gambar!",
+        "Atur sampai kamu suka. Kalau sudah, tekan tombol ini ya!"
+    ]
+
+    static let drawingDialogs = [
+        "Sekarang, mari kita menggambar!",
+        "Lihat baik-baik cahaya dan bayangannya!",
+        "Sekarang coba gambar di kertasmu!",
+        "Kalau sudah, tekan tombol ini ya!"
+    ]
+
     static let placementText =
         "Arahkan titik tengah layar ke meja atau lantai, lalu tekan tombol Taruh Benda di Tengah."
 
-    static let singleLightIntroText =
-        "Lihat! Ada satu lampu dan satu bayangan. Tekan tombol untuk menambahkan satu cahaya lagi."
+    static let singleLightIntroText = singleLightDialogs[0]
 
-    static let twoLightIntroText =
-        "Sekarang ada dua cahaya! Coba lihat, satu benda bisa punya lebih dari satu bayangan."
+    static let twoLightIntroText = twoLightDialogs[0]
 
-    static let explorationText =
-        "Pilih Lampu 1 atau Lampu 2, lalu geser lampunya untuk melihat perubahan bayangan."
+    static let explorationText = explorationDialogs[0]
 
-    static let drawingText =
-        "Sekarang pilih susunan cahaya yang kamu suka. Perhatikan baik-baik, lalu gambar susunannya di kertasmu."
+    static let drawingText = drawingDialogs[0]
 
     static let photoPromptText =
-        "Kalau gambar di kertasmu sudah selesai, foto gambarmu ya."
+        "Yeay, gambarmu sudah jadi! Sekarang, yuk foto gambarmu!"
 
     static let comparisonText =
-        "Bandingkan contoh susunan cahaya dengan gambar yang kamu buat."
+        "Keren! Gambarmu sudah tersimpan!"
 
     static let completionText =
         "Kamu hebat! Kamu sudah melihat bagaimana dua cahaya bisa membentuk banyak bayangan."

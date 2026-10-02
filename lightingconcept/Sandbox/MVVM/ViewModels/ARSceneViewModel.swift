@@ -89,6 +89,10 @@ final class ARSceneViewModel: ObservableObject {
     /// Ini hanya mengubah yaw/pitch, bukan posisi lampu.
     @Published var lightDirectionFollowsGesture = false
 
+    /// Mencegah gesture langsung mengubah yaw/pitch lampu tanpa mematikan
+    /// gesture pembelajaran lain seperti pinch untuk lebar cahaya.
+    @Published var isLightDirectionManipulationLocked = false
+
     /// Kalau `true` (default), ARKit environment texturing + light estimation
     /// dinyalakan supaya PBR material object menyerap pantulan & warna cahaya
     /// ruangan asli — bagus untuk mode sandbox yang memang soal belajar

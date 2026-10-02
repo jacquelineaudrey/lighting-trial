@@ -553,11 +553,31 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
             syncGuidePresentation()
             return
         }
+        // Memilih marker baru juga menyelesaikan penjelasan marker sebelumnya.
+        // Task narasi SwiftUI akan berganti ID, sehingga audio Bayo lama dihentikan
+        // dan penjelasan marker baru langsung dimulai.
+        if let previousConcept = lastExplainedShadowConcept,
+           previousConcept != concept,
+           visitedShadowConcepts.contains(previousConcept) {
+            markerCompletionTask?.cancel()
+            markerCompletionTask = nil
+            pendingHiddenShadowConcept = previousConcept
+        }
+
         hidePendingCompletedMarker()
         visitedShadowConcepts.insert(concept)
         visitedShadowConceptHistory.append(concept)
         lastExplainedShadowConcept = concept
         lastExplainedConceptWorldPosition = arSceneViewModel.selectedConceptWorldPosition
+
+        // Pada replay level yang sudah selesai, setiap marker langsung dicatat
+        // tanpa menunggu dialog/audio agar marker berikutnya dapat segera dipilih.
+        if canSkipCompletedLevelDialog {
+            isNarrationComplete = true
+            completeSelectedShadowConcept()
+            return
+        }
+
         arSceneViewModel.isShadowConceptSelectionEnabled = false
         scheduleMarkerCompletionFallback(for: concept)
         syncGuidePresentation()
@@ -633,13 +653,10 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.isShadowConceptSelectionEnabled =
             (
                 phase == .shadowExploration
-                && isNarrationComplete
-                && arSceneViewModel.selectedConcept == nil
                 && !hasCompletedShadowTask
             )
             || (
                 phase == .review
-                && arSceneViewModel.selectedConcept == nil
                 && areReviewMarkersVisible
             )
     }
@@ -1306,6 +1323,7 @@ final class Level3ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.directManipulationRotatesOnly = true
         arSceneViewModel.interactionMode = .moveLight
         arSceneViewModel.lightDirectionFollowsGesture = true
+        arSceneViewModel.isLightDirectionManipulationLocked = true
         arSceneViewModel.autoPlaceOnSurfaceFound = false
         arSceneViewModel.objectDirectManipulationLocked = true
         

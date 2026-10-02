@@ -1034,6 +1034,7 @@ final class Level2ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.directManipulationRotatesOnly = true
         arSceneViewModel.interactionMode = .moveLight
         arSceneViewModel.lightDirectionFollowsGesture = true
+        arSceneViewModel.isLightDirectionManipulationLocked = true
 
         let selectedObject = arSceneViewModel.selectedObject
         let objectCenter = selectedObject.position + SIMD3<Float>(

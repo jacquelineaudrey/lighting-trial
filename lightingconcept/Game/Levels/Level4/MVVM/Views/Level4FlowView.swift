@@ -202,13 +202,7 @@ private struct Level4PhaseOverlay: View {
                 action: viewModel.finishExploring
             )
 
-        case .review:
-            Level4ReviewOverlay(
-                points: Level4Content.reviewPoints,
-                action: viewModel.finishReview
-            )
-
-        case .completed:
+        case .review, .completed:
             ResponsiveEndLevelView(
                 data: EndLevelModel(
                     id: 4,
@@ -420,28 +414,4 @@ private struct Level4MovementFeedback: View {
     }
 }
 
-private struct Level4ReviewOverlay: View {
-    let points: [String]
-    let action: () -> Void
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Yuk, Ingat Lagi!")
-                .font(.title3.bold())
-                .frame(maxWidth: .infinity, alignment: .center)
-            ForEach(points, id: \.self) { point in
-                Label(point, systemImage: "star.fill")
-                    .foregroundStyle(.primary, .yellow)
-                    .font(.subheadline)
-            }
-            LevelActionButton(title: "Selesai", action: action)
-                .frame(maxWidth: .infinity)
-        }
-        .padding(20)
-        .frame(maxWidth: 560)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24))
-        .padding(.horizontal, 18)
-        .padding(.bottom, 28)
-        .frame(maxHeight: .infinity, alignment: .bottom)
-    }
-}

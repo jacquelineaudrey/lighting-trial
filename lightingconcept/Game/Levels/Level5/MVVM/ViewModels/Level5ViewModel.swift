@@ -27,10 +27,13 @@ final class Level5ViewModel: ARSceneTelemetryDelegate {
     private(set) var hasMovedLeft = false
     private(set) var hasMovedRight = false
     private(set) var isLookAroundMode = false
+    private(set) var isDeviceFollowing = false
+    private(set) var movedLightIDs: Set<UUID> = []
 
     private(set) var successFeedbackTrigger = 0
     private(set) var isNarrationComplete = false
     private(set) var isTransitioning = false
+    private(set) var dialogIndex = 0
 
     private(set) var guideOverlayScreenPosition: CGPoint?
 
@@ -112,32 +115,75 @@ final class Level5ViewModel: ARSceneTelemetryDelegate {
         arSceneViewModel.selectedLight.name
     }
 
+    var selectedLightModeTitle: String {
+        "Kamu menjadi \(selectedLightName)"
+    }
+
     var canLockArrangement: Bool {
         phase == .exploration
     }
 
     var explorationInstruction: String {
-        "Pilih Lampu 1 atau Lampu 2, lalu atur susunannya. Tekan tombol jika sudah memilih."
+        currentDialogText
+    }
+
+    private var currentDialogLines: [String] {
+        switch phase {
+        case .singleLightIntro: Level5Content.singleLightDialogs
+        case .twoLightIntro: Level5Content.twoLightDialogs
+        case .exploration: Level5Content.explorationDialogs
+        case .drawingActive: Level5Content.drawingDialogs
+        default: []
+        }
+    }
+
+    var currentDialogText: String {
+        currentDialogLines.indices.contains(dialogIndex)
+            ? currentDialogLines[dialogIndex]
+            : narrationTextWithoutDialogSequence
+    }
+
+    var movedLightCount: Int {
+        min(movedLightIDs.count, 2)
+    }
+
+    var isLightMovementCheckpoint: Bool {
+        phase == .exploration && dialogIndex == 3
+    }
+
+    var canAdvanceDialogLine: Bool {
+        hasMoreDialogLines && (!isLightMovementCheckpoint || movedLightCount >= 2)
+    }
+
+    var hasMoreDialogLines: Bool {
+        dialogIndex + 1 < currentDialogLines.count
+    }
+
+    var isAtDialogAction: Bool {
+        !hasMoreDialogLines
+    }
+
+    func advanceDialogLine() {
+        guard hasMoreDialogLines else { return }
+        dialogIndex += 1
+        isNarrationComplete = false
+    }
+
+    private var narrationTextWithoutDialogSequence: String {
+        switch phase {
+        case .placingScene: Level5Content.placementText
+        case .singleLightIntro: Level5Content.singleLightIntroText
+        case .twoLightIntro: Level5Content.twoLightIntroText
+        case .exploration: Level5Content.explorationText
+        case .drawingActive: Level5Content.drawingText
+        case .photoPrompt: Level5Content.photoPromptText
+        case .photoComparison: Level5Content.comparisonText
+        case .completed: Level5Content.completionText
+        }
     }
 
     var narrationText: String {
-        switch phase {
-        case .placingScene: Level5Content.placementText
-
-        case .singleLightIntro: Level5Content.singleLightIntroText
-
-        case .twoLightIntro: Level5Content.twoLightIntroText
-
-        case .exploration: explorationInstruction
-
-        case .drawingActive: Level5Content.drawingText
-
-        case .photoPrompt: Level5Content.photoPromptText
-
-        case .photoComparison: Level5Content.comparisonText
-
-        case .completed: Level5Content.completionText
-        }
+        currentDialogLines.isEmpty ? narrationTextWithoutDialogSequence : currentDialogText
     }
 
     var shouldSpeakNarration: Bool {
@@ -145,23 +191,26 @@ final class Level5ViewModel: ARSceneTelemetryDelegate {
         case .placingScene,
              .singleLightIntro,
              .twoLightIntro,
+             .exploration,
              .drawingActive,
              .photoPrompt,
              .completed:
             true
 
-        case .exploration,
-             .photoComparison:
+        case .photoComparison:
             false
         }
     }
 
     var narrationID: String {
-        "\(phase.rawValue)-\(hasMovedLeft)-\(hasMovedRight)-\(selectedLightIDForUI.uuidString)"
+        "\(phase.rawValue)-\(dialogIndex)-\(hasMovedLeft)-\(hasMovedRight)-\(selectedLightIDForUI.uuidString)"
     }
 
     var guideText: String {
-        narrationText
+        if isLightMovementCheckpoint {
+            return "\(narrationText)\n\nLampu digeser: \(movedLightCount)/2"
+        }
+        return narrationText
     }
 
     /// Setiap frame desain hanya menampilkan satu pemandu. Karakter diganti
@@ -319,6 +368,7 @@ final class Level5ViewModel: ARSceneTelemetryDelegate {
         configureFirstLight()
 
         phase = .singleLightIntro
+        dialogIndex = 0
 
         successFeedbackTrigger += 1
     }
@@ -372,11 +422,35 @@ final class Level5ViewModel: ARSceneTelemetryDelegate {
     func lightDidSelect() {
         isLookAroundMode = false
         arSceneViewModel.interactionMode = .moveLight
+        selectedLightIDForUI = arSceneViewModel.selectedLightID
+    }
+
+    func beginDeviceFollow() -> Bool {
+        guard phase == .exploration, !isLookAroundMode else { return false }
+        isDeviceFollowing = true
+        return true
+    }
+
+    func endDeviceFollow(configuration: LightConfiguration?) {
+        if let configuration,
+           configuration.id == arSceneViewModel.selectedLightID {
+            let previousPosition = arSceneViewModel.selectedLight.position
+            arSceneViewModel.updateSelectedLight { light in
+                light.position = configuration.position
+                light.yawDegrees = configuration.yawDegrees
+                light.pitchDegrees = configuration.pitchDegrees
+            }
+            if simd_distance(previousPosition, configuration.position) >= 0.015 {
+                movedLightIDs.insert(configuration.id)
+            }
+        }
+        isDeviceFollowing = false
     }
 
     func sceneDidReceiveWorldTap() {
         guard phase == .exploration else { return }
         isLookAroundMode = true
+        isDeviceFollowing = false
         resetExplorationTracking()
     }
 
@@ -432,6 +506,7 @@ final class Level5ViewModel: ARSceneTelemetryDelegate {
         selectedLightIDForUI = secondLightID
         arSceneViewModel.interactionMode = .moveLight
         phase = .twoLightIntro
+        dialogIndex = 0
         successFeedbackTrigger += 1
     }
 
@@ -441,8 +516,10 @@ final class Level5ViewModel: ARSceneTelemetryDelegate {
         }
 
         phase = .exploration
+        dialogIndex = 0
         arSceneViewModel.interactionMode = .moveLight
         resetExplorationTracking()
+        movedLightIDs.removeAll()
         isLookAroundMode = false
         successFeedbackTrigger += 1
     }
@@ -469,6 +546,7 @@ final class Level5ViewModel: ARSceneTelemetryDelegate {
 
         arSceneViewModel.isViewFrozen = true
         phase = .drawingActive
+        dialogIndex = 0
         isNarrationComplete = false
         successFeedbackTrigger += 1
     }
@@ -479,6 +557,7 @@ final class Level5ViewModel: ARSceneTelemetryDelegate {
         }
 
         phase = .photoPrompt
+        dialogIndex = 0
         isNarrationComplete = false
         successFeedbackTrigger += 1
     }

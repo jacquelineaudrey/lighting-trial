@@ -586,6 +586,11 @@ final class ARSceneCoordinator: NSObject, ARSessionDelegate, ARCoachingOverlayVi
     /// untuk lampu, sapuan horizontal mengubah yaw dan sapuan vertikal mengubah
     /// pitch. Tidak ada posisi yang disentuh di fungsi ini.
     private func rotateSelection(from gesture: UIPanGestureRecognizer, in arView: ARView) {
+        if viewModel.interactionMode == .moveLight,
+           viewModel.isLightDirectionManipulationLocked {
+            return
+        }
+
         let state = gesture.state
         guard state == .began || state == .changed || state == .ended || state == .cancelled || state == .failed else { return }
 

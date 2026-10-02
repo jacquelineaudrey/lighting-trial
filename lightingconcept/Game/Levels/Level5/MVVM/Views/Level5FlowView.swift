@@ -48,8 +48,15 @@ struct Level5FlowView: View {
                     text: viewModel.guideText,
                     assetName: viewModel.guideCharacterAsset.rawValue,
                     screenPosition: viewModel.guideOverlayScreenPosition,
-                    showsTapToContinueCaption: false
+                    showsTapToContinueCaption: viewModel.canAdvanceDialogLine
                 )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard viewModel.canAdvanceDialogLine else { return }
+                    narrator.stop()
+                    viewModel.advanceDialogLine()
+                }
+                .allowsHitTesting(viewModel.canAdvanceDialogLine)
             }
 
             if let warning = viewModel.arSceneViewModel.safetyWarning {
@@ -73,23 +80,9 @@ struct Level5FlowView: View {
                 Level2TopModeLabel(
                     title: viewModel.isLookAroundMode
                         ? "Mode lihat-lihat"
-                        : "Kamu jadi cahaya!"
+                        : viewModel.selectedLightModeTitle
                 )
                 .padding(.top, compact ? 18 : 28)
-            }
-        }
-
-        .overlay(alignment: .topTrailing) {
-            if viewModel.phase == .exploration {
-
-                Level5LightPicker(
-                    lights: viewModel.arSceneViewModel.lights,
-                    selectedLightID: viewModel.selectedLightIDForUI,
-                    compact: compact,
-                    onSelect: viewModel.selectLight
-                )
-                .padding(.trailing, compact ? 10 : 18)
-                .padding(.top, compact ? 56 : 72)
             }
         }
 
@@ -221,29 +214,28 @@ struct Level5FlowView: View {
             )
 
         case .singleLightIntro:
-            Level5GuideActionButton(
-                title: "Tambahkan Lampu 2",
-                compact: compact,
-                action: advanceImmediately(viewModel.addSecondLight)
-            )
+            if viewModel.isAtDialogAction {
+                Level5GuideActionButton(
+                    title: "Tambahkan Lampu 2",
+                    compact: compact,
+                    action: advanceImmediately(viewModel.addSecondLight)
+                )
+            }
 
         case .twoLightIntro:
-            Level5GuideActionButton(
-                title: "Masuk Mode Lihat-Lihat",
-                compact: compact,
-                action: advanceImmediately(viewModel.beginExploration)
-            )
+            if viewModel.isAtDialogAction {
+                Level5GuideActionButton(
+                    title: "Mulai Mengatur Cahaya",
+                    compact: compact,
+                    action: advanceImmediately(viewModel.beginExploration)
+                )
+            }
 
         case .exploration:
 
             Level5ExplorationOverlay(
-                instruction:
-                    viewModel
-                        .explorationInstruction,
-
                 canLockArrangement:
-                    viewModel
-                        .canLockArrangement,
+                    viewModel.canLockArrangement && viewModel.isAtDialogAction,
 
                 compact:
                     compact,
@@ -255,11 +247,17 @@ struct Level5FlowView: View {
         case .drawingActive:
 
             Level5DrawingOverlay(
+                text: viewModel.currentDialogText,
+                buttonTitle: viewModel.hasMoreDialogLines ? "Lanjut" : "Aku Selesai Gambar",
                 compact:
                     compact,
 
                 action:
-                    advanceImmediately(viewModel.finishDrawing)
+                    advanceImmediately(
+                        viewModel.hasMoreDialogLines
+                            ? viewModel.advanceDialogLine
+                            : viewModel.finishDrawing
+                    )
             )
 
         case .photoPrompt:
@@ -485,72 +483,6 @@ private struct Level5ActionPanel: View {
     }
 }
 
-private struct Level5LightPicker: View {
-
-    let lights: [LightConfiguration]
-    let selectedLightID: UUID
-    let compact: Bool
-    let onSelect: (UUID) -> Void
-
-    var body: some View {
-
-        HStack(
-            spacing:
-                compact ? 6 : 8
-        ) {
-
-            ForEach(
-                lights.prefix(2)
-            ) { light in
-
-                Button {
-                    onSelect(light.id)
-                } label: {
-
-                    Text(light.name)
-                        .font(
-                            .system(
-                                size:
-                                    compact ? 14 : 17,
-                                weight: .bold
-                            )
-                        )
-                        .foregroundStyle(
-                            light.id ==
-                                selectedLightID
-                            ? .white
-                            : Color(
-                                hex: "21415D"
-                            )
-                        )
-                        .padding(
-                            .horizontal,
-                            compact ? 12 : 16
-                        )
-                        .padding(
-                            .vertical,
-                            compact ? 8 : 10
-                        )
-                        .background(
-                            light.id ==
-                                selectedLightID
-                            ? Color(
-                                hex:
-                                    "9FA60C"
-                            )
-                            : Color.white
-                                .opacity(0.88),
-                            in: Capsule()
-                        )
-                }
-                .buttonStyle(
-                    .plain
-                )
-            }
-        }
-    }
-}
-
 /// Saat Lumi atau Bayo sudah menyampaikan instruksi di bubble, CTA ini
 /// menjaga layar tetap bersih tanpa mengulang dialog pada panel kedua.
 private struct Level5GuideActionButton: View {
@@ -563,15 +495,19 @@ private struct Level5GuideActionButton: View {
     var body: some View {
         VStack {
             Spacer()
-            LevelActionButton(
-                title: title,
-                isDisabled: !canAdvance,
-                action: {
-                    guard canAdvance else { return }
-                    canAdvance = false
-                    action()
-                }
-            )
+            HStack {
+                Spacer()
+                LevelActionButton(
+                    title: title,
+                    isDisabled: !canAdvance,
+                    action: {
+                        guard canAdvance else { return }
+                        canAdvance = false
+                        action()
+                    }
+                )
+            }
+            .padding(.trailing, compact ? 14 : 28)
             .padding(.bottom, compact ? 14 : 28)
         }
         .task(id: title) {
@@ -585,7 +521,6 @@ private struct Level5GuideActionButton: View {
 
 private struct Level5ExplorationOverlay: View {
 
-    let instruction: String
     let canLockArrangement: Bool
     let compact: Bool
     let action: () -> Void
@@ -597,68 +532,18 @@ private struct Level5ExplorationOverlay: View {
             Spacer()
 
             HStack {
-
-                VStack(
-                    alignment:
-                        .leading,
-
-                    spacing:
-                        compact ? 8 : 10
-                ) {
-
-                    Text(instruction)
-                        .font(
-                            .system(
-                                size:
-                                    compact ? 15 : 18,
-                                weight: .medium
-                            )
-                        )
-                        .foregroundStyle(
-                            .black
-                        )
-                        .multilineTextAlignment(
-                            .leading
-                        )
-                        .lineLimit(4)
-                        .minimumScaleFactor(
-                            0.8
-                        )
-
-                    LevelActionButton(
-                        title:
-                            "Aku Pilih Ini",
-
-                        isDisabled:
-                            !canLockArrangement,
-
-                        action:
-                            action
-                    )
-                }
-                .padding(
-                    compact ? 14 : 20
-                )
-                .frame(
-                    maxWidth:
-                        compact ? 420 : 520,
-                    alignment:
-                        .leading
-                )
-                .background(
-                    .regularMaterial,
-                    in:
-                        RoundedRectangle(
-                            cornerRadius:
-                                compact ? 18 : 24
-                        )
-                )
-
                 Spacer()
+
+                LevelActionButton(
+                    title: "Lanjut ke Menggambar",
+                    systemImage: "pencil",
+                    isDisabled: !canLockArrangement,
+                    action: action
+                )
             }
             .padding(
-                .horizontal,
-                compact ? 12 : 22
+                .trailing,
+                compact ? 14 : 28
             )
             .padding(
                 .bottom,
@@ -671,6 +556,8 @@ private struct Level5ExplorationOverlay: View {
 
 private struct Level5DrawingOverlay: View {
 
+    let text: String
+    let buttonTitle: String
     let compact: Bool
     let action: () -> Void
 
@@ -692,10 +579,7 @@ private struct Level5DrawingOverlay: View {
                         compact ? 10 : 14
                 ) {
 
-                    Text(
-                        Level5Content
-                            .drawingText
-                    )
+                    Text(text)
                     .font(
                         .system(
                             size:
@@ -732,7 +616,7 @@ private struct Level5DrawingOverlay: View {
 
                     LevelActionButton(
                         title:
-                            "Aku Selesai Gambar",
+                            buttonTitle,
 
                         action:
                             action

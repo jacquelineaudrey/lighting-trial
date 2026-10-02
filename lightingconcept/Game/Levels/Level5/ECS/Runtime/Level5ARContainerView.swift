@@ -52,7 +52,7 @@ struct Level5ARContainerView:
     }
 
     @MainActor
-    final class Coordinator {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
 
         private let viewModel:
             Level5ViewModel
@@ -91,7 +91,7 @@ struct Level5ARContainerView:
                             .arSceneViewModel,
 
                     gesturePolicy:
-                        .full,
+                        .placementOnly,
 
                     lessonECSMode:
                         .none,
@@ -99,6 +99,7 @@ struct Level5ARContainerView:
                     telemetryDelegate:
                         viewModel
                 )
+            super.init()
         }
 
         func configure(
@@ -114,6 +115,15 @@ struct Level5ARContainerView:
                     arView:
                         arView
                 )
+
+            let follow = UILongPressGestureRecognizer(
+                target: self,
+                action: #selector(handleDeviceFollow(_:))
+            )
+            follow.minimumPressDuration = 0.55
+            follow.allowableMovement = 18
+            follow.delegate = self
+            arView.addGestureRecognizer(follow)
 
             let guideAnchor = AnchorEntity(world: .zero)
             guideAnchor.name = "Level 5 Guide Root Anchor"
@@ -142,8 +152,95 @@ struct Level5ARContainerView:
                     let now = CACurrentMediaTime()
                     guard now - lastGuideUpdateTimestamp >= (1.0 / 30.0) else { return }
                     lastGuideUpdateTimestamp = now
+                    self.updateDeviceFollowCameraState(in: arView)
                     self.syncGuide(in: arView)
                 }
+        }
+
+        @objc private func handleDeviceFollow(_ gesture: UILongPressGestureRecognizer) {
+            guard let arView else { return }
+
+            switch gesture.state {
+            case .began:
+                guard viewModel.beginDeviceFollow(),
+                      let cameraTransform = arView.session.currentFrame?.camera.transform,
+                      let lightEntity = selectedLightEntity(in: arView) else { return }
+
+                let cameraPosition = Self.position(from: cameraTransform)
+                lightEntity.components.set(Level6DeviceFollowComponent(
+                    isActive: true,
+                    startCameraWorldPosition: cameraPosition,
+                    currentCameraWorldPosition: cameraPosition,
+                    startLightLocalPosition: lightEntity.position,
+                    minimumLocalPosition: SIMD3<Float>(-1.2, 0.18, -1.2),
+                    maximumLocalPosition: SIMD3<Float>(1.2, 2.0, 1.2),
+                    aimTargetLocalPosition: SIMD3<Float>(
+                        0,
+                        SceneObjectSystem.cubeSize * 0.85 / 2,
+                        0
+                    )
+                ))
+            case .ended, .cancelled, .failed:
+                stopDeviceFollow(in: arView)
+            default:
+                break
+            }
+        }
+
+        private func updateDeviceFollowCameraState(in arView: ARView) {
+            guard viewModel.isDeviceFollowing,
+                  let cameraTransform = arView.session.currentFrame?.camera.transform,
+                  let lightEntity = selectedLightEntity(in: arView),
+                  var follow = lightEntity.components[Level6DeviceFollowComponent.self],
+                  follow.isActive else { return }
+
+            follow.currentCameraWorldPosition = Self.position(from: cameraTransform)
+            lightEntity.components.set(follow)
+            if let configuration = lightEntity.components[SceneLightComponent.self]?.configuration {
+                arCoordinator.refreshEducationalOverlays(using: configuration)
+            }
+        }
+
+        private func stopDeviceFollow(in arView: ARView) {
+            guard let lightEntity = selectedLightEntity(in: arView) else {
+                viewModel.endDeviceFollow(configuration: nil)
+                return
+            }
+
+            if var follow = lightEntity.components[Level6DeviceFollowComponent.self] {
+                follow.isActive = false
+                lightEntity.components.set(follow)
+            }
+            viewModel.endDeviceFollow(
+                configuration: lightEntity.components[SceneLightComponent.self]?.configuration
+            )
+            arCoordinator.requestSceneSynchronization()
+        }
+
+        private func selectedLightEntity(in arView: ARView) -> Entity? {
+            let selectedID = viewModel.arSceneViewModel.selectedLightID
+            for anchor in arView.scene.anchors {
+                if let light = SceneLightSystem.entityWithLightID(selectedID, in: anchor) {
+                    return light
+                }
+            }
+            return nil
+        }
+
+        private static func position(from transform: simd_float4x4) -> SIMD3<Float> {
+            SIMD3<Float>(
+                transform.columns.3.x,
+                transform.columns.3.y,
+                transform.columns.3.z
+            )
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            gestureRecognizer is UITapGestureRecognizer
+                || otherGestureRecognizer is UITapGestureRecognizer
         }
 
         func requestSceneSynchronization() {
